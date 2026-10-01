@@ -1,0 +1,3 @@
+// Copy to Signing.local.xcconfig (git-ignored) and set your team ID: Xcode >
+// Settings > Accounts, or the Organizational Unit of your signing certificate.
+DEVELOPMENT_TEAM = YOUR_TEAM_ID

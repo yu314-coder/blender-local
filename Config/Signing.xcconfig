@@ -1,0 +1,6 @@
+// Signing. The development team is this Mac's own and lives in
+// Signing.local.xcconfig, which git ignores: copy
+// Signing.local.xcconfig.example beside it and set DEVELOPMENT_TEAM. Without
+// it the project still generates and builds for the simulator; a device or
+// App Store build asks for a team.
+#include? "Signing.local.xcconfig"

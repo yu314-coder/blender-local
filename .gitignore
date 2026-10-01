@@ -1,0 +1,19 @@
+.DS_Store
+build/
+*.xcuserstate
+*.xcworkspace/xcuserdata/
+DerivedData/
+
+# Generated from project.yml by xcodegen — run `xcodegen generate`.
+*.xcodeproj/
+Vendor/
+__pycache__/
+*.pyc
+
+# This Mac's own values, kept out of the repository: the App Store Connect key
+# and issuer IDs, the device, signing identity and profile (scripts/local.env),
+# the development team (Config/Signing.local.xcconfig, ExportOptions.plist).
+# Each has a committed .example beside it.
+scripts/local.env
+Config/Signing.local.xcconfig
+ExportOptions.plist

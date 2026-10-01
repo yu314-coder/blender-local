@@ -1,0 +1,142 @@
+name: BlenderLocal
+options:
+  bundleIdPrefix: com.yu314
+  deploymentTarget:
+    iOS: "17.0"
+  createIntermediateGroups: true
+
+# The development team comes from Config/Signing.local.xcconfig, which git
+# ignores (see Config/Signing.xcconfig).
+configFiles:
+  Debug: Config/Signing.xcconfig
+  Release: Config/Signing.xcconfig
+
+settings:
+  base:
+    SWIFT_VERSION: "5.9"
+    TARGETED_DEVICE_FAMILY: "1,2"
+    ENABLE_USER_SCRIPT_SANDBOXING: NO
+
+packages:
+  # The Scripting tab's console is BenchCode's terminal: the same emulator, at
+  # the version BenchCode pins, so the two apps' terminals behave alike.
+  SwiftTerm:
+    url: https://github.com/migueldeicaza/SwiftTerm
+    exactVersion: 1.13.0
+
+targets:
+  BlenderLocal:
+    type: application
+    platform: iOS
+    # Xcode's INFOPLIST_KEY_ settings cover most keys, but not
+    # UIFileSharingEnabled: set that way it never reaches the built plist
+    # (checked with plutil on the product). It goes in a file instead, which
+    # Xcode merges the generated keys into.
+    info:
+      path: Resources/Info.plist
+      properties:
+        UIFileSharingEnabled: true
+        # From the build settings, so this file cannot disagree with the
+        # number a push is made with (push-appstore.sh reads it back).
+        CFBundleVersion: $(CURRENT_PROJECT_VERSION)
+        CFBundleShortVersionString: $(MARKETING_VERSION)
+    sources:
+      - path: Sources
+      - path: Resources/Assets.xcassets
+      # Which of Apple's required-reason APIs the app uses, and why. See the
+      # comment in the file.
+      - path: Resources/PrivacyInfo.xcprivacy
+        buildPhase: resources
+      # Image to 3D Model's Relief mode: Depth Anything V2 Small, Apple's Core
+      # ML conversion (Apache 2.0). Xcode compiles it into the app as
+      # DepthAnythingV2SmallF16.mlmodelc. The licence notice ships beside it.
+      - path: Resources/Models/DepthAnythingV2SmallF16.mlpackage
+      - path: Resources/Models/NOTICE.md
+        buildPhase: resources
+    dependencies:
+      # Vendored by scripts/vendor-python.sh — the interpreter ships inside the
+      # app so scripting works with no network.
+      - framework: Vendor/Python.xcframework
+        embed: true
+        codeSign: true
+      - package: SwiftTerm
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: euleryu.blenderkit
+        # Automatic signing, so Xcode can create the profile for
+        # euleryu.blenderkit. Set the team in Signing & Capabilities once;
+        # command-line builds then inherit it.
+        CODE_SIGN_STYLE: Automatic
+        GENERATE_INFOPLIST_FILE: YES
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+        INFOPLIST_KEY_CFBundleDisplayName: Blender Local
+        INFOPLIST_KEY_CFBundleName: Blender Local
+        SWIFT_OBJC_BRIDGING_HEADER: Sources/BlenderLocalBridge/Python/BlenderLocal-Bridging-Header.h
+        INFOPLIST_KEY_UILaunchScreen_Generation: YES
+        INFOPLIST_KEY_UIStatusBarHidden: YES
+        INFOPLIST_KEY_UISupportedInterfaceOrientations: "UIInterfaceOrientationPortrait UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight"
+        INFOPLIST_KEY_UIRequiresFullScreen: YES
+        # The app's Documents folder holds what the user makes — saved .blend
+        # files, scripts, and now Documents/Renders — so the Files app shows
+        # it. Without these two keys the Render panel's "in Files ▸ Blender
+        # Local ▸ Renders" was a promise the app did not keep.
+        INFOPLIST_KEY_LSSupportsOpeningDocumentsInPlace: YES
+        # Blender Local is a new app record, so it starts at 1.0 (1) — it does
+        # not continue BenchCode's build numbering.
+        MARKETING_VERSION: "1.0"
+        # Build 1 was rejected in processing for ITMS-90683.
+        CURRENT_PROJECT_VERSION: "17"
+
+        # ITMS-90683. bpy links FFmpeg's libavdevice, whose AVFoundation input
+        # backend references AVCaptureDevice/AVCaptureSession. Blender Local
+        # never invokes it — there is no capture feature anywhere in the app —
+        # but Apple requires a purpose string for any referenced API, including
+        # ones reached only through a bundled library. These say exactly that,
+        # because inventing a camera feature to justify the string would be
+        # worse than explaining the dependency.
+        # Export compliance: the app does not use encryption.
+        #
+        # Apple asks whether the app *uses* encryption, and this one never does.
+        # Verified rather than assumed: the Swift and C sources contain no
+        # CryptoKit, CommonCrypto, SecKey or Security.framework call, and no
+        # URLSession or Network.framework call either — it is offline by design
+        # and makes no connections at all.
+        #
+        # Two OpenSSL-bearing frameworks are nonetheless present, _ssl and
+        # _hashlib, because they arrive with the standard CPython distribution.
+        # Nothing imports them: not the bootstrap, not sitecustomize, not any
+        # bundled module. They are carried, never called.
+        #
+        # Needs the INFOPLIST_KEY_ prefix. A bare key here becomes a build
+        # setting Xcode ignores and never reaches the built Info.plist — which
+        # is how the first attempt at this shipped without it.
+        INFOPLIST_KEY_ITSAppUsesNonExemptEncryption: NO
+
+        INFOPLIST_KEY_NSCameraUsageDescription: "Blender Local does not use the camera. This declaration is required because the bundled FFmpeg media library, used for video encoding, also contains camera-capture code that this app never calls."
+        INFOPLIST_KEY_NSMicrophoneUsageDescription: "Blender Local does not use the microphone. This declaration is required because the bundled FFmpeg media library, used for audio in video encoding, also contains audio-capture code that this app never calls."
+    postCompileScripts:
+      - name: Stage Python
+        basedOnDependencyAnalysis: false
+        script: |
+          "$SRCROOT/scripts/stage-python.sh"
+      - name: Stage Blender bpy
+        basedOnDependencyAnalysis: false
+        script: |
+          "$SRCROOT/scripts/stage-blender.sh"
+      # Apple rejects loose .dylib files in Frameworks/ ("binary file is not
+      # permitted"), and bpy links seven ffmpeg ones by @rpath. This wraps each
+      # as a .framework and rewrites every reference that pointed at it — so
+      # the bundle validates AND bpy still resolves its dependencies. Must run
+      # after the bpy staging and before signing.
+      - name: Wrap loose dylibs
+        basedOnDependencyAnalysis: false
+        script: |
+          "$SRCROOT/scripts/wrap-loose-dylibs.sh"
+      # The wrap script walks BenchCode's app_packages/ layout and never looks
+      # inside python/, so bpy is left pointing at dylibs that no longer exist.
+      # Without this the archive ships Blender with no ffmpeg and fails at
+      # dlopen — the same class of failure as builds 121 and 122.
+      - name: Repoint bpy at wrapped frameworks
+        basedOnDependencyAnalysis: false
+        script: |
+          "$SRCROOT/scripts/fix-bpy-dylib-refs.sh"
