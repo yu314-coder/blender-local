@@ -36,6 +36,13 @@ for p in root.rglob("*.swift"):
         if s.startswith("//"): continue
         for m in lit.findall(line):
             (debug if "DEBUG" in stack else other).add(m)
+# The C and Objective-C sources are compiled into the same binary and have no
+# DEBUG-only code, so their strings count as shipped. Without them a DEBUG
+# hook's "no active object" read as a leak in build 42's release binary, where
+# the string was PythonBootstrap.c's own error message.
+for p in [q for pattern in ("*.c", "*.m", "*.h") for q in root.rglob(pattern)]:
+    for line in p.read_text(errors="replace").splitlines():
+        other.update(lit.findall(line))
 markers = sorted(debug - other)
 
 bins = [b for b in app.iterdir()
