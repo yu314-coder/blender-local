@@ -19,13 +19,3 @@ AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
 LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
-
----
-
-Scope: this licence covers the source in this repository — Sources/,
-Resources/, scripts/, tests/ and docs/.
-
-It does NOT cover Blender's `bpy`, which builds of this app may bundle from
-python-ios-lib. Blender is copyright the Blender Foundation and its
-contributors and is licensed GPLv2-or-later; that licence governs it and any
-binary that includes it, regardless of who compiled it.

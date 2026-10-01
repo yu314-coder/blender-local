@@ -236,7 +236,7 @@ ignores, with a committed `.example` beside it:
 The device build bundles Blender's real `bpy` from
 [python-ios-lib](https://github.com/yu314-coder/python-ios-lib)
 (`scripts/stage-blender.sh`). Blender is GPL-2.0-or-later. This repository's own
-code is MIT; see `LICENSE`.
+code is MIT (`LICENSE`); `NOTICE.md` says what that covers.
 
 ---
 
