@@ -1,215 +1,111 @@
-# Blender Local
+<p align="center">
+  <img src="Resources/Assets.xcassets/AppIcon.appiconset/AppIcon-1024.png" width="160" alt="Blender Local app icon">
+</p>
 
-**Current implementation:** see the [September 10 upgrade notes](docs/blender-local.md#september-10-upgrade) for the two-tab UI, live Blender-aware assistance, RNA controls, real `.blend` persistence and remaining backend limitations. Several historical feature descriptions below predate this integration.
+<h1 align="center">Blender Local</h1>
 
-Bringing Blender's interface to iPad / iOS, on top of the `bpy` build already
-cross-compiled in [python-ios-lib](https://github.com/yu314-coder/python-ios-lib).
-
-> Status: **Route B implemented as a running app**, with real CPython 3.14
-> embedded. Builds and runs on iPad; both workspaces verified in the simulator.
-> Fully offline — see [What works today](#what-works-today).
-
-**[docs/blender-local.md](docs/blender-local.md)** is the reference for the app
-itself: where the files are, how the pieces fit, how to build and test it
-without a device, and the landmines worth knowing before touching any of it.
+<p align="center">
+  A Blender-style 3D app for iPad, built on the real Blender: the <code>bpy</code> module, bundled inside the app.
+</p>
 
 ---
 
-## The finding that shapes this project
+Blender Local bundles Blender's own `bpy`, cross-compiled for iOS arm64 in
+[python-ios-lib](https://github.com/yu314-coder/python-ios-lib), and draws a
+touch-native interface over it with SwiftUI and Metal. Blender holds the scene.
+Every button, menu and field runs Blender's own operators and properties, and
+the viewport draws what Blender evaluated after each change. Modifiers,
+sculpting, rendering and file formats are Blender's, not copies of them.
+Everything runs on the device, offline.
 
-The `bpy` currently shipping on iOS is a **headless build**. Probing the
-222 MB binary in the CodeBench bundle:
+**[docs/blender-local.md](docs/blender-local.md)** is the reference for the app:
+where the files are, how the pieces fit, how each feature was measured, and the
+landmines worth knowing before touching any of it.
 
-| Symbol group | Hits | Meaning |
-|---|---:|---|
-| `GHOST_` | 38 | windowing abstraction present |
-| `wm_event` | 37 | event plumbing present |
-| `WM_operator` | 11 | operator system present |
-| `ED_screen` / `ED_space` | 2 / 4 | screen/space stubs only |
-| **`UI_block`** | **0** | **interface layer absent** |
-| **`UI_but`** | **0** | **widgets absent** |
-| **`screen_draw`** | **0** | **UI drawing absent** |
+## How it works
 
-Blender draws its own interface — every button, panel and header is rendered by
-`source/blender/editors/interface` on top of the GPU module. Those symbols are
-not in this build, so **Blender's real UI cannot simply be switched on.** That
-rules out the cheapest version of "same UI" and forces an explicit choice.
+- **Blender owns the scene.** CPython 3.14 is embedded in the app, and Blender's
+  `bpy` is imported into it. The interface changes the scene only through the
+  bridge (`BpyBridge`), which runs Blender's operators on the main thread, one
+  undo step per action.
+- **The viewport mirrors Blender.** After every change,
+  `Resources/python/site/_blenderkit_sync.py` reads Blender's evaluated
+  depsgraph (meshes after their modifiers, curves, lights, cameras, the edit
+  mesh's selection) and hands it to the Metal viewport.
+- **Undo is Blender's undo.** Edit ▸ Undo and Redo step Blender's own undo
+  stack, with `.blend` checkpoints as the fallback. The scene autosaves, as a
+  `.blend`, and comes back on launch.
+- **Scripts drive the same Blender.** The Scripting tab runs Python against the
+  scene the 3D View shows.
 
-What *does* already work on iOS (device-verified, see
-`docs/bpy_ios_metal_gpu_backend` notes in python-ios-lib):
+The iOS Simulator has no arm64-iphoneos slice of `bpy`, so there a small Python
+stand-in plays Blender's part for UI testing. Device and Mac
+(Designed for iPad) builds run the real module.
 
-- the `gpu` module — `gpu.init()`, `GPUOffScreen`, GLSL→MSL translation
-- **Eevee rendering** through the Metal backend
-- Cycles (Metal) after `refresh_devices()`
-- USD import/export, MaterialX, audio, glTF with Draco/MeshOptimizer
+## What it does
 
-So the *engine* is there. Only the *interface* is missing.
+**3D View**
+- Add meshes, curves, lattices, empties, cameras, lights and text.
+- Select by tap, Box, Circle or Lasso, or from the Select menu and the Outliner.
+- Move, Rotate and Scale with a gizmo, with snapping, proportional editing,
+  pivots and the 3D cursor.
+- The Object menu: Duplicate, Join, Parent, Convert, Set Origin, Apply,
+  shading, QuadriFlow Remesh, and more.
+- An operator search that runs any of Blender's mesh, object, UV, sculpt,
+  paint, curve, animation and render operators by name.
 
----
+**Edit Mode**
+- Vertex, edge and face selection.
+- Extrude, Inset, Bevel, Loop Cut, Knife Project, Spin, Bisect, Merge,
+  Dissolve, Bridge, Fill, normals, and the redo panel to adjust the last step.
+- X, Y, Z and Topology Mirror editing.
+- Curves' and lattices' control points.
+- Vertex groups and shape keys.
 
-## Two routes
+**Modifiers** show every modifier Blender holds, in Blender's order, with
+Apply and reordering. These have their own rows:
+- **Generate:** Subdivision Surface, Multiresolution, Mirror, Array, Bevel,
+  Boolean, Solidify, Screw, Weld, Triangulate, Decimate, Remesh, Edge Split and
+  Geometry Nodes.
+- **Deform:** Smooth, Laplacian Smooth, Corrective Smooth, Cast, Simple Deform,
+  Displace, Wave, Shrinkwrap and Lattice.
+- **Normals:** Weighted Normal.
 
-### Route A — compile Blender's real UI (literal "same UI")
+Everything else can be edited through Every Property. A vertex budget keeps a
+subdivision or remesh from running the device out of memory.
 
-Build Blender with `editors/interface` + the window manager, add a **windowed**
-GHOST backend for iOS (today only an offscreen Metal factory exists), and
-translate touch into Blender events.
+**Sculpt Mode** uses Blender's Essentials brushes, with Dynamic Topology, Voxel
+Remesh, Multiresolution, masks, face sets and symmetry.
 
-- ✅ Pixel-accurate Blender, all editors, add-ons work unchanged
-- ❌ Very large: GHOST windowing, event loop, WM lifecycle, a build far bigger
-  than the current 222 MB, and an interface designed for a 3-button mouse +
-  keyboard on a device that has neither
-- ❌ Blender is **GPL** — shipping its UI means the app is GPL, which conflicts
-  with App Store distribution terms in the well-known way. **This needs a
-  licensing answer before any code is written.**
+**More**
+- UV editing: unwrap, Smart UV Project, seams and packing.
+- Texture paint.
+- Materials: the Principled BSDF's base colour, metallic and roughness.
+- Keyframes and a timeline.
+- Rendering with Cycles on the Metal GPU, Eevee or Workbench, with progress,
+  and camera and light panels.
 
-### Route B — native iOS interface driving headless `bpy` (recommended)
+**Image to 3D Model** turns a photo into a model, on the device:
+- **Relief:** depth from Depth Anything V2.
+- **Full 3D:** TripoSG, whose weights are downloaded on request.
 
-Rebuild Blender's *look and interaction model* in Swift (Metal viewport +
-SwiftUI/UIKit chrome), calling the existing headless `bpy` for scene state,
-modifiers, and rendering.
+**Scripting**
+- A Monaco editor with Blender-aware completion.
+- A Python console and the app's shell commands.
 
-- ✅ Works with the bpy that already ships — no Blender rebuild
-- ✅ Touch-native: gestures instead of mouse+numpad
-- ✅ Only *our* code is distributed; `bpy` stays a Python module the user drives
-- ❌ Every panel is hand-built; add-ons with UI won't render
-- ❌ "Similar", never identical
+**Files**
+- `.blend` save and open.
+- Import and export of glTF, OBJ, USD, STL, PLY, FBX and Alembic.
+- The app's Documents folder appears in the Files app.
 
-**Route B is what is built.** See below.
+## Testing
 
----
-
-## What works today
-
-A native SwiftUI + Metal app with the two workspaces Blender itself uses for
-this split — the tabs are Blender workspace tabs in the topbar, not iOS tabs.
-
-**Layout (tools)** — 3D viewport with **Solid, Wireframe and Material Preview**
-shading, the floor
-grid with red X and green Y axis lines, and an orange silhouette outline on the
-active object. Toolbar on the left, Outliner over Properties on the right,
-status bar beneath. Add / Select / Object menus create, select and delete
-objects; the Properties and sidebar transform fields drag like Blender's number
-fields. **Move, Rotate and Scale work**: pick one in the toolbar and a drag
-transforms the selection instead of orbiting, exactly as Blender's tools do.
-Properties carries a **modifier stack** (Subdivision Surface, Array, Mirror)
-and a viewport-display colour.
-
-**Apple Pencil** — input is split by what is touching the screen rather than by
-a mode: **finger navigates, Pencil acts**. A finger orbits, pans and pinches;
-the Pencil runs the active tool, and **pressure scales the transform** so light
-contact is precise and firm contact is fast. Hovering highlights the object
-under the tip before committing, and a barrel double-tap cycles the toolbar
-(respecting the system Pencil setting). Both hands work at once — orbit with a
-finger while the Pencil stays on the model.
-
-**Undo and persistence** — Edit > Undo/Redo, one step per operator exactly as
-Blender records them, 64 deep. The scene autosaves when the app leaves the
-foreground and restores on launch, and File > Save / Open Recent keep named
-scenes as `.bkit` JSON documents.
-
-**Scripting (bpy)** — the same live scene in a compact viewport, the Info log,
-a Python console, and a text editor with a line-number gutter and Run Script.
-The console is **real CPython 3.14**, embedded in the app: loops, the stdlib,
-f-strings, tracebacks. Scripts drive the Metal viewport through a `bpy`-shaped
-module.
-
-Both tabs act on one scene, so switching never loses work. Every action taken
-with the tools is logged as the Python that performs it, exactly as Blender's
-Info editor does — which is how the two tabs stay tied together.
-
-Navigation maps Blender's verbs onto touch: one finger orbits, two fingers pan,
-pinch dollies, tap selects. The camera is a Z-up turntable with Blender's
-default 50 mm lens (39.6° vertical FOV).
-
-### The theme is extracted, not eyeballed
-
-Every colour comes from Blender's own
-`release/datafiles/userdef/userdef_default_theme.c` — viewport `#3D3D3D`,
-topbar `#181818`, outliner `#282828`, widgets `#545454`, selection orange
-`#ED5700`, active `#FFA028`. Re-extract rather than hand-tune.
-
-### Everything runs offline
-
-The interpreter is staged into the app bundle at build time — stdlib, all 67
-extension modules, and the `bpy` shim. `PYTHONHOME` never leaves the bundle,
-and there is no networking code anywhere in `Sources/`. About 28 MB of a 35 MB
-app. See [docs/bpy-embedding.md](docs/bpy-embedding.md).
-
-### What is not real yet
-
-- **The `bpy` module is BlenderKit's own, not Blender's.** It covers what
-  scripts actually reach for — `bpy.ops.mesh.primitive_*_add`,
-  `bpy.ops.transform.*`, `bpy.data.objects[…]` (including `remove`, rename and
-  the `.001` suffix rule), `.location` / `.rotation_euler` / `.scale` /
-  `.dimensions` / `.matrix_world` / `.hide_viewport`, `select_get` /
-  `select_set`, `bpy.context.object` and `selected_objects`, `bpy.app.version`
-  — plus a real **`mathutils`** (Vector, Euler, Quaternion, Matrix). Modifiers,
-  node trees, add-ons and animation are not there, and those corners raise
-  rather than quietly returning something wrong. Swapping in the real 432 MB
-  `bpy` is documented.
-- **No edit mode, modifiers, materials or animation.** Wireframe, Material Preview and Rendered are shown
-  disabled rather than wired to nothing.
-- **Object mode only**, and no timeline (a timeline with no animation system
-  behind it would be a dead control). Rendered shading stays disabled in the
-  header for the same reason — it needs a render engine.
-- **Three modifiers, not Blender's fifty.** Subdivision approximates
-  Catmull-Clark with a 1-to-4 split plus Laplacian smoothing, since the meshes
-  are triangulated; it rounds a cube the way Blender's does, but it is not the
-  same algorithm.
-
-### The eleven workspaces
-
-Blender's workspaces are not layouts — each is a different engine. Their editor
-arrangements came from Blender itself (`bpy.data.workspaces`), and so did the
-honest assessment of what each needs:
-
-| Workspace | Needs | Here |
-|---|---|---|
-| Layout | object mode | ✅ |
-| Scripting | a Python interpreter | ✅ |
-| **Modeling** | edit mode, mesh operators | ✅ vertex/edge/face select, extrude, inset, subdivide, delete |
-| **UV Editing** | unwrapping + a UV editor | ✅ cube/sphere/cylinder projection, UV editor with stretch readout |
-| **Animation** | keyframes, F-curves, dope sheet | ✅ transform keys, constant/linear/bezier, dope sheet |
-| **Shading** | shader node graph + PBR | ✅ Principled BSDF → Material Output, Cook-Torrance GGX viewport |
-| **Sculpting** | brush engine, dynamic topology | ✅ six brushes; no topology added — subdivide first |
-| **Texture Paint** | image buffers + UVs | ✅ paint into a 1024² texture, sampled in the viewport |
-| **Rendering** | a render engine | ✅ offscreen PBR render to an image editor — rasterised, no ray tracing |
-| **Compositing** | image node evaluation | ✅ chain of Bright/Contrast, Hue/Sat, Blur, Glare, Invert, Mix over the render |
-| **Geometry Nodes** | geometry node evaluation | ✅ chain of Subdivide, Transform, Set Position, Extrude, Scale + spreadsheet |
-
-All eleven now do something real. What they are *not* is Blender's depth: the
-compositor runs a linear chain over one RGBA8 buffer rather than a tiled float
-evaluator over render passes; geometry nodes evaluate a chain of mesh
-operations rather than a field graph with attributes and instancing; the
-renderer rasterises rather than ray-traces. Each entry above says where its
-limit is.
-
-### About "all of Blender"
-
-Blender is ~2.5M lines of C/C++ built over 30 years. Reimplementing sculpting,
-geometry nodes, Cycles, grease pencil, physics and compositing in Swift is not
-a scope question — it is not achievable, and this README will not pretend
-otherwise.
-
-The real route to all of it is **Route A applied to the engine only**: link the
-`bpy` already cross-compiled in python-ios-lib, which has the Metal backend,
-Eevee and Cycles-Metal device-verified. That is genuinely every Blender feature,
-with no reimplementation. What it costs — 432 MB, the scene-mirroring work, and
-the GPL question — is set out in
-[docs/bpy-embedding.md](docs/bpy-embedding.md).
-
-### Conformance
-
-`tests/bpy_conformance.py` exercises the shim the way Blender scripts use
-`bpy`. Run it against a booted simulator with:
-
-```
-./scripts/run-conformance.sh
-```
-
-It currently reports **19 pass, 1 fail** — the failure being `keyframe_insert`,
-which raises on purpose.
+Every feature has host test suites (`scripts/run-*-tests.sh`) and checks that
+run in desktop Blender 5.2.1 with the app's context
+(`scripts/run-*-blender-check.sh`): its undo stack, `gpu.init()`, and the main
+thread's window. Changes are also run in the real app on a Mac, as Designed for
+iPad, through DEBUG launch hooks. Release builds are scanned so that no hook
+ships (`scripts/scan-app.py`).
 
 ## Build
 
@@ -220,9 +116,11 @@ xcodegen generate
 open BlenderLocal.xcodeproj
 ```
 
-Requires iOS 17. The Python xcframework is ~124 MB, so it is staged into
-`Vendor/` rather than committed; the project file is generated from
-`project.yml` and is likewise not checked in.
+- **Requirements:** iOS 17.
+- **Not committed:** the Python xcframework is about 124 MB, so it is staged
+  into `Vendor/`. The project file is generated from `project.yml`.
+- **Bundled `bpy`:** device builds stage Blender's `bpy` from python-ios-lib
+  (`scripts/stage-blender.sh`).
 
 Your own account details stay out of the repository. Each lives in a file git
 ignores, with a committed `.example` beside it:
@@ -233,31 +131,20 @@ ignores, with a committed `.example` beside it:
   `push-appstore.sh`, and a device, signing identity and profile, for
   `deploy-device.sh`.
 
-The device build bundles Blender's real `bpy` from
-[python-ios-lib](https://github.com/yu314-coder/python-ios-lib)
-(`scripts/stage-blender.sh`). Blender is GPL-2.0-or-later. This repository's own
-code is MIT (`LICENSE`); `NOTICE.md` says what that covers.
-
----
-
 ## Layout
 
 ```
-Sources/BlenderKitBridge/   Swift <-> bpy: scene graph, ops, render calls
-Sources/BlenderKitUI/       Metal viewport + Blender-style chrome
-Resources/                  icons, theme (Blender dark theme values)
-docs/                       design notes, UI reference captures
-research/                   probes, symbol dumps, feasibility experiments
+Sources/BlenderLocalApp/     app entry, keyboard and menu-bar commands
+Sources/BlenderLocalBridge/  the bridge to bpy: scene mirror, operators, undo
+Sources/BlenderLocalUI/      Metal viewport, 3D View and Scripting, editors
+Resources/python/site/       the app's Python side (_blenderkit_*.py) and the simulator's stand-in
+tests/                       host suites and desktop-Blender checks
+scripts/                     build, staging, test runners, release
+docs/                        the app's reference (blender-local.md)
 ```
 
-## Open questions (still unanswered)
+## License
 
-1. **Licensing.** Blender is GPL. Route A almost certainly cannot ship on the
-   App Store. Route B needs a clear line: `bpy` as a user-invoked interpreter
-   module vs. linked application code. This is the single biggest risk.
-2. **Relationship to CodeBench.** A second app sharing the same ~432 MB Blender
-   payload invites Guideline 4.3(a) ("multiple similar apps") — an issue this
-   account has already been cited for. Sequence this *after* CodeBench's review
-   status resolves.
-3. **Scope of v1.** Built: viewport navigation + object transform. Next:
-   material preview + Eevee render. Not: node editors, sculpting, simulation.
+This repository's code is MIT (`LICENSE`); `NOTICE.md` says what that covers.
+Blender, whose `bpy` device builds bundle, is GPL-2.0-or-later and is not part
+of this repository.
