@@ -1205,7 +1205,7 @@ struct MonacoScriptEditor: UIViewRepresentable {
             editor.setValue(Array.from({length:20000},(_,i)=>'# line '+i).join('\n'));
             const start=performance.now();
             for(let i=0;i<200;i++)editor.executeEdits('smoke',[{range:new monaco.Range(1,1,1,1),text:'x'}]);
-            return JSON.stringify({engine:'Monaco',lines:editor.getModel().getLineCount(),edits:200,milliseconds:performance.now()-start,cubeCompletion:names.includes('primitive_cube_add'),operators:Object.keys(api.operators||{}).length});
+            return JSON.stringify({engine:'Monaco',lines:editor.getModel().getLineCount(),edits:200,milliseconds:performance.now()-start,cubeCompletion:names.includes('primitive_cube_add'),operators:Object.keys(api.operators||{}).length,shownFirstLine:original.split('\n')[0]});
           } finally {editor.setValue(original);suppress=false;}
         })()
         """#

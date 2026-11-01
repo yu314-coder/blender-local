@@ -603,7 +603,7 @@ do {
     var painted = true
     for i in 0..<64 {
         if paint(i) == 0 { painted = false }
-        undo.push("Texture Paint", scene)
+        undo.push(TexturePaintBpy.undoName, scene)
         snapshots.append(scene.snapshot())
         prints.append(fingerprint(current().pixels))
         if i + 1 == 32 { middle = current().pixels }

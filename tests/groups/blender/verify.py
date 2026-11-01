@@ -331,9 +331,9 @@ for label, change in (("Assign", "ASSIGN_LEFT"), ("Active group", "ACTIVE_LEFT")
               result == (True, True, True) or (label == "Active group" and result[1:] == (True, True)), result)
 O().vertex_groups["Left"].lock_weight = False
 result = undo_round("Weight", "WEIGHT")
-check("the Weight field: Undo does not take it back, so no step is sent",
-      result is not None and result[1] is False and blocks["ASSIGN_LEFT.undo"] == "Assign to Vertex Group",
-      result)
+check("the Weight field: Undo does not take it back, so the field sends no step",
+      result is not None and result[1] is False and blocks["WEIGHT.undo"].strip() == "-",
+      (result, blocks.get("WEIGHT.undo")))
 
 print("\n== shape keys ==")
 refused("ADD_KEY", "works in Object Mode")
@@ -437,6 +437,29 @@ ran("ACTIVE_KEY_BASIS")
 check("the active key changed in Edit Mode reloads the edit mesh with Basis",
       max(v.co.z for v in bmesh.from_edit_mesh(O().data).verts) == 0.0)
 check("and keeps the selection a tap made (ten)", selected() == 10, selected())
+# The same, through the position fallback a mesh drawn under a rebuilding
+# modifier is selected with (`Bpy.selectVertices`). Round 3's review: it
+# deselected the vertices alone, the faces stayed selected, and the key
+# switch's reload re-selected their corners. The old string is the negative
+# control.
+old_fallback = "\n".join(line for line in blocks["SELECT_VERTICES"].split("\n")
+                         if line not in ("for _f in _bm.faces:", "    _f.select = False",
+                                         "for _e in _bm.edges:", "    _e.select = False"))
+for label, source in (("negative control, the old fallback", old_fallback),
+                      ("the position fallback", blocks["SELECT_VERTICES"])):
+    bpy.ops.mesh.select_all(action='SELECT')
+    exec(compile(source, "<fallback>", "exec"), namespace)
+    picked = selected()
+    ran("ACTIVE_KEY_1")
+    after_one = selected()
+    ran("ACTIVE_KEY_BASIS")
+    after = selected()
+    if label.startswith("negative"):
+        check("%s: %d picked, then %d and %d after two key switches" % (label, picked, after_one, after),
+              picked == 10 and after == 25, (picked, after_one, after))
+    else:
+        check("%s keeps its ten through two key switches (%d, %d, %d)" % (label, picked, after_one, after),
+              picked == 10 and after_one == 10 and after == 10, (picked, after_one, after))
 ran("KEY_VALUE_EDIT")
 check("a value set in Edit Mode lands", abs(O().data.shape_keys.key_blocks["Key 1"].value - 0.75) < 1e-6)
 check("and is sent with no undo step", blocks["KEY_VALUE_EDIT.undo"] == "-")
@@ -515,7 +538,13 @@ settings = {"SMOOTH": {"factor": 1.0, "iterations": 5}, "CAST": {"factor": 1.0},
             "SIMPLE_DEFORM": {"angle": 1.0}, "DISPLACE": {"strength": 0.5}, "WAVE": {"height": 0.5},
             "LAPLACIANSMOOTH": {"lambda_factor": 2.0, "iterations": 5}, "DECIMATE": {"ratio": 0.3},
             "WELD": {"merge_threshold": 0.6}}
-no_effect_here = {"CORRECTIVE_SMOOTH", "WEIGHTED_NORMAL"}   # nothing deformed / normals only
+no_effect_here = {"CORRECTIVE_SMOOTH", "WEIGHTED_NORMAL",   # nothing deformed / normals only
+                  "NORMAL_EDIT",
+                  # Round 4, group 8's kinds that act only with their other
+                  # object (a curve, a hooked empty, an armature, a bound
+                  # target or cage, a source): tests/modkinds/blender/verify.py
+                  # sets each up and measures the group and Invert there.
+                  "CURVE", "HOOK", "ARMATURE", "SURFACE_DEFORM", "MESH_DEFORM", "DATA_TRANSFER"}
 for kind in kinds:
     O().modifiers.clear()
     namespace["bpy"] = bpy
@@ -587,6 +616,25 @@ bpy.ops.object.mode_set(mode='SCULPT')
 check("in Sculpt Mode", O().mode == 'SCULPT')
 for name in ("ACTIVE_LEFT", "ADD_GROUP", "ADD_KEY", "KEY_VALUE_HALF", "SHOW_ONLY_ON"):
     refused(name, "in Sculpt Mode")
+bpy.ops.object.mode_set(mode='OBJECT')
+
+print("\n== the group list in Weight Paint, which paints the active group ==")
+bpy.ops.object.mode_set(mode='WEIGHT_PAINT')
+ed("undo_push", message="Weight Paint Mode")
+before = [g.name for g in O().vertex_groups]
+ran("ADD_GROUP", "Add Vertex Group in Weight Paint")
+added = [g.name for g in O().vertex_groups]
+check("a group is added and made active, still in Weight Paint (%s)" % added,
+      len(added) == len(before) + 1 and O().vertex_groups.active_index == len(added) - 1
+      and O().mode == 'WEIGHT_PAINT', added)
+ran("ACTIVE_LEFT", "the active group in Weight Paint")
+check("Left is the group the brush paints", O().vertex_groups.active.name == "Left")
+ed("undo_push", message="Add Vertex Group")
+ed("undo")
+check("Undo in Weight Paint takes the group back, still in Weight Paint",
+      [g.name for g in O().vertex_groups] == before and O().mode == 'WEIGHT_PAINT')
+for name in ("ADD_KEY", "KEY_VALUE_HALF", "SHOW_ONLY_ON", "ASSIGN_LEFT"):
+    refused(name, "Weight Paint")
 bpy.ops.object.mode_set(mode='OBJECT')
 
 json.dump(replays, open(OUT, "w"))

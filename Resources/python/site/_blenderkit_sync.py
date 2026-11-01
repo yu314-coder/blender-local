@@ -13,7 +13,9 @@ to be exercised somewhere.
 """
 
 from array import array
+import contextlib
 import math
+import sys
 
 import bpy
 import _blenderkit
@@ -23,8 +25,44 @@ _MAX_VERTS = 10_000_000
 
 
 def _matrix_bytes(matrix):
-    """Blender's matrix_world, flattened row-major as 16 doubles."""
-    return array("d", [c for row in matrix for c in row]).tobytes()
+    """Blender's matrix_world, flattened row-major as 16 doubles — the
+    identity in place of one that is not finite (see `_finite_or_zero`)."""
+    values = [c for row in matrix for c in row]
+    if not all(math.isfinite(c) for c in values):
+        values = [1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0]
+    return array("d", values).tobytes()
+
+
+_NOT_FINITE_SAID = set()
+
+
+def _finite_or_zero(values, name, what):
+    """`values` (an array of floats) with every infinite or undefined number
+    made 0, once said in the log for `name`. Blender keeps such positions
+    without crashing (an Array's Constant Offset of 1e38, a Displace's Strength
+    of 3.4e38, a text's Offset at ±3.4e38 — round 4's reviews), and the
+    vertex budget refuses the changes it can see making them; this is what is
+    left for any other way in (a script's own assignment, a file), so the
+    viewport, picking and every Swift conversion of a coordinate only ever see
+    finite numbers."""
+    try:
+        import numpy as np
+    except ImportError:
+        bad = [i for i, v in enumerate(values) if not math.isfinite(v)]
+        for i in bad:
+            values[i] = 0.0
+        count = len(bad)
+    else:
+        view = np.frombuffer(values, dtype=np.float32)
+        mask = ~np.isfinite(view)
+        count = int(mask.sum())
+        if count:
+            view[mask] = 0.0
+    if count and (name, what) not in _NOT_FINITE_SAID:
+        _NOT_FINITE_SAID.add((name, what))
+        print(f"[Blender Local] {name} has {count} {what} that are not finite numbers in Blender; "
+              f"they are drawn at 0.")
+    return values
 
 
 def visibility(obj):
@@ -52,6 +90,81 @@ def visibility(obj):
     return drawn and not disabled, hidden, disabled
 
 
+# The objects in the borrowed 3D View's Local View during a pass, or None
+# outside it (`_blenderkit_localview.state`, read when the pass begins).
+_local = None
+
+
+def _drawn(obj):
+    """Whether the viewport draws `obj`: Blender's own visibility, and inside
+    Local View only what Local View holds. Not `visibility`, which the sculpt
+    and paint guards read: an object outside Local View is still evaluated."""
+    return visibility(obj)[0] and (_local is None or obj.name in _local)
+
+
+def _local_view_state():
+    if not _is_real_blender():
+        return None
+    try:
+        import _blenderkit_localview
+    except ImportError:
+        # A check that loads this file by itself may not have the module
+        # beside it, as for the groups.
+        return None
+    try:
+        return _blenderkit_localview.state()
+    except Exception as error:                      # noqa: BLE001 - the pass goes on
+        # Without it every object is drawn, as outside Local View.
+        print(f"[Blender Local] Local View could not be read: {error}")
+        return None
+
+
+def _push_constraints(obj):
+    """The object's constraints for the Object Constraints tab
+    (`_blenderkit_constraints`). A failure costs the tab this object's
+    stack, not the pass."""
+    if not _is_real_blender() or not hasattr(_blenderkit, 'sync_record'):
+        return
+    try:
+        import _blenderkit_constraints
+    except ImportError:
+        return
+    try:
+        _blenderkit_constraints.push(obj)
+    except Exception as error:                      # noqa: BLE001 - the pass goes on
+        print(f"[Blender Local] {obj.name}: its constraints could not be read: {error}")
+
+
+def _push_cursor():
+    """The 3D cursor's rotation, the Cursor tool's settings and the scene's
+    units (`_blenderkit_cursor`), once a pass."""
+    if not _is_real_blender() or not hasattr(_blenderkit, 'sync_record'):
+        return
+    try:
+        import _blenderkit_cursor
+    except ImportError:
+        return
+    try:
+        _blenderkit_cursor.push()
+    except Exception as error:                      # noqa: BLE001 - the pass goes on
+        print(f"[Blender Local] the 3D cursor could not be read: {error}")
+
+
+def _push_collections():
+    """The view layer's collection tree for the Outliner
+    (`_blenderkit_collections`), once a pass, after every object."""
+    if not _is_real_blender() or not hasattr(_blenderkit, 'sync_record'):
+        return
+    try:
+        import _blenderkit_collections
+    except ImportError:
+        return
+    try:
+        _blenderkit_collections.push()
+    except Exception as error:                      # noqa: BLE001 - the pass goes on
+        print(f"[Blender Local] the collections could not be read: {error}")
+
+
 def _kind(obj):
     """The object's type, with the flags the viewport and the Outliner read.
 
@@ -63,6 +176,11 @@ def _kind(obj):
     """
     drawn, hidden, disabled = visibility(obj)
     flags = '' if drawn else '|hidden'
+    # Outside the borrowed 3D View's Local View: not drawn, as Blender does
+    # not draw it, and `|notlocal` says why, so the Outliner does not grey it
+    # (Blender's Outliner lists it as before). `_local` is set by `sync`.
+    if _local is not None and obj.name not in _local:
+        flags += ('' if not drawn else '|hidden') + '|notlocal'
     if hidden:
         flags += '|layerhidden'
     if disabled:
@@ -73,6 +191,30 @@ def _kind(obj):
     # `ob_eval->dt == OB_BOUNDBOX` snaps to nothing).
     if getattr(obj, 'display_type', '') == 'BOUNDS':
         flags += '|boundbox'
+    # Display As Wire, which a ray cast at the 3D View as it is seen passes
+    # through (`raycast_obj_fn`), as the Cursor tool's surface does.
+    elif getattr(obj, 'display_type', '') == 'WIRE':
+        flags += '|wire'
+    # In Edit Mode under a last Subdivision Surface, Blender's snapping to the
+    # final geometry meets the mesh before it, which is not what is drawn
+    # (`_blenderkit_cursor.subdivides_last`).
+    if getattr(obj, 'mode', '') == 'EDIT' and getattr(obj, 'type', '') == 'MESH':
+        try:
+            import _blenderkit_cursor
+        except ImportError:
+            # A desktop check that loaded this module by path alone; in the
+            # app the module is always beside it.
+            _blenderkit_cursor = None
+        if _blenderkit_cursor is not None:
+            try:
+                last = _blenderkit_cursor.subdivides_last(obj)
+            except Exception as error:              # noqa: BLE001 - the pass goes on
+                # Unread is taken as subdivided last: the interface then
+                # refuses to snap rather than snap where Blender would not.
+                print(f"[Blender Local] the modifiers of {obj.name} could not be read: {error}")
+                last = '?'
+            if last is not None:
+                flags += '|subdivlast'
     symmetry = _symmetry(obj)
     if symmetry:
         flags += '|mirror=' + symmetry
@@ -107,6 +249,7 @@ def _push_placeholder(obj, active_name):
     _push_display(obj)
     _push_modifiers(obj)
     _push_relations(obj)
+    _push_constraints(obj)
     push_local(obj)
     _push_points(obj)
     _push_groups(obj)
@@ -133,8 +276,19 @@ def _push_groups(obj, with_counts=False, during_pass=True):
 
 def _push_points(obj):
     """A curve's or a lattice's settings for the Data tab, and while it is
-    edited its control points (`_blenderkit_points`). A failure costs the
-    Data tab and Edit Mode's points this object, not the pass."""
+    edited its control points (`_blenderkit_points`); a text object's settings
+    and body (`_blenderkit_text`, round 4 group 8). A failure costs the Data
+    tab and Edit Mode's points this object, not the pass."""
+    if obj.type == 'FONT' and _is_real_blender():
+        try:
+            import _blenderkit_text
+        except ImportError:
+            return
+        try:
+            _blenderkit_text.push(obj)
+        except (AttributeError, TypeError, ValueError, RuntimeError) as error:
+            print(f"[Blender Local] {obj.name}: its text settings could not be read: {error}")
+        return
     if obj.type not in ('CURVE', 'LATTICE') or not _is_real_blender():
         return
     try:
@@ -174,6 +328,13 @@ def _push_lattice(obj, active_name, depsgraph):
     _push_edges(obj, lines)
     _push_modifiers(obj)
     _push_relations(obj)
+    # Every path that pushes an object sends its constraints. This one did
+    # not, and round 4's review of group 7 measured a lattice with Copy
+    # Location sending no record (an empty with the same constraint did):
+    # the Constraints tab said "No constraints", Add Object Constraint
+    # seemed to do nothing, and a drag of it was previewed from its channels
+    # while Blender put it somewhere else.
+    _push_constraints(obj)
     push_local(obj)
     _push_points(obj)
 
@@ -318,8 +479,14 @@ def _push_uv_layout(obj, evaluated, evaluated_map, evaluated_uvs, editing):
     scratch = None
     try:
         base = obj.data
-        if editing:
-            # `sync` has already called update_from_editmode.
+        if editing or getattr(base, 'is_editmode', False):
+            # `sync` has already called update_from_editmode. A linked
+            # duplicate of the object in Edit Mode shares its edit mesh, and
+            # the data's own map reads empty for it too, its loops not: a cube
+            # subdivided in Edit Mode read 96 loops and 0 UVs, and this read
+            # failed the whole mirror pass ("foreach_get(..) sequence length
+            # mismatch", desktop 5.2.1, found by the budget check's 9.5f in
+            # round 4's fix round 2). Its `to_mesh()` reads 96 and 96.
             scratch = obj.to_mesh()
             base = scratch
         layer = base.uv_layers.active
@@ -345,12 +512,71 @@ def _push_uv_layout(obj, evaluated, evaluated_map, evaluated_uvs, editing):
             loops = array('I')
         push(obj.name, name, co.tobytes(), triangles.tobytes(), loops.tobytes(), uvs.tobytes(),
              _seams(base, editing).tobytes())
-    except (ValueError, AttributeError, RuntimeError) as error:
-        # Without it the UV Editor draws the pushed mesh's map, as before.
+    except (ValueError, AttributeError, RuntimeError, TypeError) as error:
+        # Without it the UV Editor draws the pushed mesh's map, as before; a
+        # read that does not fit (`foreach_get` raises TypeError) costs the UV
+        # Editor this object, not the whole pass.
         print(f"[Blender Local] {obj.name}: the UV Editor's map was not mirrored: {error}")
     finally:
         if scratch is not None:
             obj.to_mesh_clear()
+
+
+_SHADING_DOMAINS = {'POINT': 0, 'FACE': 1, 'CORNER': 2}
+
+
+def _push_shading(obj, mesh, editing):
+    """Hand over the normals Blender's Solid view shades the mesh just pushed
+    with, when they are not its vertex normals (`SceneMirror.installShading`).
+
+    `sync_push` carries vertex normals, and the 3D View drew every mesh with
+    them, so whatever only changes how Blender shades a mesh changed nothing
+    on screen: Shade Flat and Smooth, Smooth by Angle, and the Normals menu's
+    custom normals (Set from Faces, Point to Target…, Average, Smooth Vectors
+    — round 4's review of the Mesh menu). Blender draws a mesh by its
+    `normals_domain`: POINT by the vertex normals, FACE by its faces' and
+    CORNER by `corner_normals`. Measured in desktop 5.2.1: 70 of the 80
+    meshes of the app's Scene.blend and all 48 of Dinosaur Car Bike.blend are
+    FACE, and Set from Faces or Point to Target… on a sphere leaves CORNER.
+    FACE and CORNER go as `corner_normals` with the loop behind each triangle
+    corner (the UV map's way: two `foreach_get` calls and no loop in Python);
+    the Swift side keeps a FACE mesh's one normal per triangle. Measured on
+    copies of those two scenes, the reads cost 0.33 ms and 0.20 ms a pass.
+
+    `corner_normals` and not `polygon_normals`: with custom normals set,
+    5.2.1's `polygon_normals` and `vertex_normals` are no longer the
+    geometry's (on a smooth sphere after Point to Target… they were up to 2.0
+    from the normals its faces' positions give, the vertex normals equal to
+    the corner normals), and `corner_normals` is what the Solid view draws.
+
+    `mesh` None says the mesh drawn is not this one (a Multires level in
+    Sculpt Mode), which Blender draws by its own normals: vertex normals here.
+    """
+    push = getattr(_blenderkit, 'sync_shading', None)
+    if push is None:
+        return
+    domain = 0
+    if mesh is not None:
+        try:
+            domain = _SHADING_DOMAINS.get(mesh.normals_domain, 0)
+        except AttributeError:
+            # The simulator's stand-in: its normals are the vertex normals.
+            return
+    try:
+        if domain == 0:
+            push(obj.name, 0, b'', b'')
+            return
+        loops = array('I', [0]) * (3 * len(mesh.loop_triangles))
+        mesh.loop_triangles.foreach_get('loops', loops)
+        if editing:
+            # The same triangles `sync_push` sent: hidden faces are left out.
+            loops = _unhidden_triangles(mesh, loops)
+        normals = array('f', [0.0]) * (3 * len(mesh.loops))
+        mesh.corner_normals.foreach_get('vector', normals)
+        push(obj.name, domain, loops.tobytes(), normals.tobytes())
+    except (ValueError, AttributeError, RuntimeError) as error:
+        # Without them the mesh is drawn by its vertex normals, as before.
+        print(f"[Blender Local] {obj.name}: shading normals not mirrored: {error}")
 
 
 def _seams(mesh, editing):
@@ -378,7 +604,8 @@ def _push_bounds(obj, evaluated, active_name, vertex_count):
     twelve lines, rather than leave it out: an object that vanishes from the
     viewport and the Outliner reads as deleted, not as too big. `|bounds=N`
     tells the interface how many vertices it is not showing."""
-    corners = array('f', [c for corner in evaluated.bound_box for c in corner])
+    corners = _finite_or_zero(array('f', [c for corner in evaluated.bound_box for c in corner]),
+                              obj.name, "bound corners")
     _blenderkit.sync_push(obj.name, _kind(obj) + '|bounds=%d' % vertex_count,
         _matrix_bytes(obj.matrix_world), corners.tobytes(),
         (array('f', [0.0, 0.0, 1.0]) * 8).tobytes(), b'',
@@ -387,6 +614,7 @@ def _push_bounds(obj, evaluated, active_name, vertex_count):
     _push_edges(obj, array('I', _BOX_EDGES))
     _push_modifiers(obj)
     _push_relations(obj)
+    _push_constraints(obj)
     push_local(obj)
 
 
@@ -398,6 +626,20 @@ def sync(report=False):
     that is what a broken backend check looked like for nine builds — and a
     count is the difference between seeing that at once and not at all.
     """
+    global _local
+    # Before anything here reads the context: a temp_override the run entered
+    # and never left (`__enter__()` with no `with`) is left. Measured in
+    # desktop 5.2.1: one left in force whose scene the script then removed
+    # took this pass down (exit 139 in `_blenderkit_collections._walk`).
+    _leave_overrides()
+    # First of all, before anything here asks Blender for the evaluated
+    # scene: every write since Blender last evaluated it priced by the one
+    # gate (_blenderkit_gate.py), put back when it is past the vertex budget,
+    # and said once the mirror has read what Blender then holds.
+    refusals = _gate_first()
+    # Before the walk, and before `sync_begin`: leaving an emptied Local View
+    # runs Blender's operator (`_blenderkit_localview.state`).
+    _local = _local_view_state()
     _blenderkit.sync_begin()
     _shown.clear()
     pushed = 0
@@ -409,6 +651,12 @@ def sync(report=False):
         # stroke, the mesh from before it): refreshed before it is read.
         _sculpt_refresh(active)
         depsgraph = bpy.context.evaluated_depsgraph_get()
+        # What Blender holds past what the gate let through, built where no
+        # price could stand first (a script's call through Python's own base
+        # type with the gate's handlers taken out), held before it is read
+        # (`_blenderkit_gate.hold_unseen`), and Blender asked again.
+        if _hold_unseen():
+            depsgraph = bpy.context.evaluated_depsgraph_get()
         active_name = active.name if active else None
         skipped = []
         # Sculpt Mode on a Multires level: Blender draws the level from grids
@@ -420,10 +668,10 @@ def sync(report=False):
             depsgraph = bpy.context.evaluated_depsgraph_get()
 
         for obj in bpy.context.scene.objects:
-            if obj.type == 'LATTICE' and visibility(obj)[0] and _is_real_blender():
+            if obj.type == 'LATTICE' and _drawn(obj) and _is_real_blender():
                 _push_lattice(obj, active_name, depsgraph)
                 continue
-            if not visibility(obj)[0] or obj.type not in {"MESH", "CURVE", "SURFACE", "FONT", "META"}:
+            if not _drawn(obj) or obj.type not in {"MESH", "CURVE", "SURFACE", "FONT", "META"}:
                 _push_placeholder(obj, active_name)
                 continue
             editing = obj.type == 'MESH' and getattr(obj, 'mode', '') == 'EDIT'
@@ -460,8 +708,10 @@ def sync(report=False):
 
                 co = array("f", [0.0]) * (nverts * 3)
                 mesh.vertices.foreach_get("co", co)
+                _finite_or_zero(co, obj.name, "vertex coordinates")
                 normals = array("f", [0.0]) * (nverts * 3)
                 mesh.vertices.foreach_get("normal", normals)
+                _finite_or_zero(normals, obj.name, "normal components")
                 tris = array("I", [0]) * (ntris * 3)
                 mesh.loop_triangles.foreach_get("vertices", tris)
                 if editing:
@@ -527,11 +777,15 @@ def sync(report=False):
                     # The level's UVs are not the base mesh's, and Sculpt Mode
                     # shows none.
                     _push_uvs(obj, mesh, editing)
+                    _push_shading(obj, mesh, editing)
+                else:
+                    _push_shading(obj, None, editing)
                 # The mesh pushed above is already evaluated, so the stack
                 # that produced it has to travel separately for the panel to
                 # be able to change it.
                 _push_modifiers(obj)
                 _push_relations(obj)
+                _push_constraints(obj)
                 push_local(obj)
                 _push_points(obj)
                 # After `update_from_editmode` above, so an edited mesh's
@@ -553,16 +807,21 @@ def sync(report=False):
         if report:
             print(f"[Blender Local] viewport mirrored {pushed} of {meshes} "
                   f"mesh objects from bpy.data.")
-        elif pushed == 0 and meshes:
+        elif pushed == 0 and meshes and _local is None:
+            # (In Local View the meshes outside it are not drawn on purpose.)
             # bpy holds geometry and none of it reached the screen. Saying so
             # is the whole difference between a diagnosable problem and
             # "the showcase doesn't change".
             print(f"[Blender Local] {meshes} mesh objects in bpy.data but none "
                   f"reached the viewport.")
+        _push_collections()
+        _push_local_view()
+        _push_cursor()
     finally:
         _blenderkit.sync_end()
     _report_mode(active)
     _report_sculpt_mask(active)
+    _report_paint_values(active)
     _report_edit_selection(active)
     _report_paint()
     for name, values in material_values:
@@ -574,7 +833,68 @@ def sync(report=False):
                                 getattr(scene, 'frame_end', 250), scene.frame_current)
     _report_animation()
     _report_tools()
+    # And what the gate refused while this pass evaluated: a script's own
+    # handler writing in the evaluation's post handlers, priced by the gate's
+    # checkpoint after it (_blenderkit_gate, `_checkpoint`), is said in this
+    # pass, not the next.
+    gate = sys.modules.get('_blenderkit_gate')
+    if gate is not None and hasattr(gate, 'take_refusals'):
+        refusals = refusals + gate.take_refusals()
+    if refusals:
+        # The run's outcome is this failure: the banner says it, and no undo
+        # step is recorded for a change that was put back.
+        raise RuntimeError(refusals[-1])
     return pushed
+
+
+def _leave_overrides():
+    """`_blenderkit_context.leave_overrides`, said in the console when it left
+    one; nothing where the module is not loaded (the simulator's stand-in)."""
+    context = sys.modules.get('_blenderkit_context')
+    leave = getattr(context, 'leave_overrides', None)
+    if leave is not None:
+        said = leave()
+        if said:
+            print(said)
+
+
+def _gate_first():
+    """The gate's refusals for this mirroring pass: the ones its handlers
+    kept while the run evaluated (a script's own `evaluated_depsgraph_get`,
+    `view_layer.update`, `frame_set`), and its own price of what the run
+    left unevaluated. Nothing where there is no gate (the simulator)."""
+    gate = sys.modules.get('_blenderkit_gate')
+    if gate is None:
+        try:
+            import _blenderkit_gate as gate
+        except ImportError:
+            return []
+    said = gate.take_refusals()
+    try:
+        gate.gate('mirror')
+    except RuntimeError as refusal:
+        said.append(str(refusal))
+    return said
+
+
+def _hold_unseen():
+    gate = sys.modules.get('_blenderkit_gate')
+    hold = getattr(gate, 'hold_unseen', None) if gate is not None else None
+    return bool(hold()) if hold is not None else False
+
+
+def _push_local_view():
+    """Whether the borrowed 3D View is in Local View, and what it holds:
+    `active=1;objects=A,B` (`LocalViewState` in Swift)."""
+    if not hasattr(_blenderkit, 'sync_record'):
+        return
+    if _local is None:
+        _blenderkit.sync_record('localview', '', 'active=0')
+        return
+    names = ','.join(n.replace('%', '%25').replace(',', '%2C') for n in sorted(_local))
+    for raw, escaped in _RECORD_ESCAPES:
+        names = names.replace(raw, escaped)
+    _blenderkit.sync_record('localview', '', 'active=1;objects=' + names)
 
 
 # What the last full pass pushed for each mesh object: (vertices, triangles).
@@ -628,28 +948,39 @@ def _unhidden_edges(mesh, edges):
     return kept
 
 # Modes the interface keeps for itself on top of Blender's object mode.
-# Painting here is Swift working on the display cache, so Blender stays in
-# object mode underneath it — and reporting that back must not end it.
-# Sculpt Mode is Blender's own with the real Blender (`_blenderkit_sculpt`):
-# its brushes work on the mesh in Blender's Sculpt Mode, so an Undo that takes
-# Blender back to object mode takes the interface with it. On the simulator's
-# stand-in the Swift brushes still sculpt the display cache.
+# Texture Paint here is Swift working on the display cache, so Blender stays
+# in object mode underneath it — and reporting that back must not end it.
+# Sculpt Mode, Weight Paint and Vertex Paint are Blender's own with the real
+# Blender (`_blenderkit_sculpt`, `_blenderkit_vwpaint`): their brushes work on
+# the mesh in Blender's mode, so an Undo that takes Blender back to object mode
+# takes the interface with it. On the simulator's stand-in the Swift brushes
+# still paint and sculpt the display cache.
 _APP_MODES = {'SCULPT', 'TEXTURE_PAINT', 'VERTEX_PAINT', 'WEIGHT_PAINT'}
-_REAL_APP_MODES = _APP_MODES - {'SCULPT'}
+_REAL_APP_MODES = _APP_MODES - {'SCULPT', 'VERTEX_PAINT', 'WEIGHT_PAINT'}
+
+
+_REAL_BLENDER = False
 
 
 def _is_real_blender():
-    """Blender's operators carry their RNA; the shim's are plain methods."""
-    return hasattr(bpy.ops.mesh.primitive_cube_add, 'get_rna_type')
+    """Blender's operators carry their RNA; the shim's are plain methods.
+    Once true, true for the process: a frame change asks it for each object
+    it moves (`field_channels`), and the lookup through `bpy.ops` and the
+    app's operator wrappers cost 232 ms of `push_local`'s 636 over 8 frames
+    at 3,000 keyed empties under cProfile (desktop 5.2.1)."""
+    global _REAL_BLENDER
+    if not _REAL_BLENDER:
+        _REAL_BLENDER = hasattr(bpy.ops.mesh.primitive_cube_add, 'get_rna_type')
+    return _REAL_BLENDER
 
 
 def _report_mode(active):
     """Tell the interface which mode Blender is really in.
 
     The interface's mode decides whether the 3D View shows mesh editing at
-    all, and nothing used to report Blender's: Edit Mesh put Blender into edit
-    mode while the interface went on showing object mode, with no Done button
-    and no way back out.
+    all, and nothing used to report Blender's: the Edit Mode button put Blender
+    into edit mode while the interface went on showing object mode, with no
+    Object Mode button and no way back out.
     """
     set_mode = getattr(_blenderkit, 'set_mode', None)
     shown_mode = getattr(_blenderkit, 'mode', None)
@@ -764,10 +1095,29 @@ def _report_edit_selection(active):
         args = (active.name, bits, vsel.tobytes(), tri_poly.tobytes(), psel.tobytes(),
                 ends.tobytes(), esel.tobytes(), vhide.tobytes() if vhide is not None else b'')
         coords = _edit_coordinates(active, me, nv)
-        report(*(args + (coords,) if coords else args))
+        report(*(args + (coords, _edit_history(active))))
     except (ValueError, KeyError):
         # The object is not on screen under that name; the next pass will be.
         pass
+
+
+def _edit_history(active):
+    """Blender's selection order on the mesh being edited, for the viewport to
+    show the active element white and for the taps that change it
+    (`_blenderkit_select.history_bytes`); b'' when it cannot be read, which
+    the interface takes as no order at all."""
+    try:
+        import bmesh
+        import _blenderkit_select
+    except ImportError:
+        # A desktop check that loaded this module by path without its
+        # neighbours; in the app both are on the path.
+        return b''
+    try:
+        return _blenderkit_select.history_bytes(bmesh.from_edit_mesh(active.data))
+    except (AttributeError, TypeError, ValueError, RuntimeError) as error:
+        print(f"[Blender Local] the selection order of {active.name} could not be read: {error}")
+        return b''
 
 
 def _edit_coordinates(active, me, nv):
@@ -808,6 +1158,21 @@ def _edit_coordinates(active, me, nv):
     else:
         me.vertices.foreach_get('co', co)
     return co.tobytes()
+
+
+def _report_paint_values(active):
+    """Weight Paint's weights or Vertex Paint's colours, for the 3D View to
+    draw: Blender's, read from the evaluated mesh the pass drew
+    (`_blenderkit_vwpaint.push`), after an Undo, a script or entering the
+    mode as after a stroke."""
+    if active is None or getattr(active, 'mode', '') not in ('WEIGHT_PAINT', 'VERTEX_PAINT') \
+            or not _is_real_blender() or not visibility(active)[0]:
+        return
+    try:
+        import _blenderkit_vwpaint
+        _blenderkit_vwpaint.push(active)
+    except Exception as error:                      # noqa: BLE001 - the pass goes on
+        print(f"[Blender Local] the painted values of {active.name} could not be read: {error}")
 
 
 def _report_paint():
@@ -898,7 +1263,15 @@ def _image_aspect(image):
     along the image's longer side."""
     if image is None:
         return (1.0, 1.0)
-    width, height = (max(1, int(c)) for c in image.size)
+    try:
+        # From the file's header where it can be: `image.size` decodes the
+        # whole picture (round 4's review: 212 MB for a 6,000 × 6,000 PNG).
+        import _blenderkit_images
+        size = _blenderkit_images.picture_dimensions(image)
+    except (ImportError, AttributeError):
+        # The simulator's stand-in has no image files.
+        size = image.size
+    width, height = (max(1, int(c)) for c in size)
     aspect_x, aspect_y = image.display_aspect
     scale_x = scale_y = 1.0
     if aspect_x > aspect_y:
@@ -907,6 +1280,16 @@ def _image_aspect(image):
         scale_x = aspect_x / aspect_y
     x, y = width * scale_x, height * scale_y
     return (1.0, y / x) if x > y else (x / y, 1.0)
+
+
+# An image's name or file can hold the display record's separators.
+_DISPLAY_ESCAPES = (('%', '%25'), (';', '%3B'), ('=', '%3D'), ('\n', '%0A'))
+
+
+def _escape_display(text):
+    for raw, escaped in _DISPLAY_ESCAPES:
+        text = text.replace(raw, escaped)
+    return text
 
 
 def _display_record(obj):
@@ -932,6 +1315,16 @@ def _display_record(obj):
         if evaluated.empty_display_type == 'IMAGE':
             values += [('empty_image_offset', tuple(evaluated.empty_image_offset)),
                        ('image_aspect', _image_aspect(evaluated.data))]
+            # The picture and Blender's rules for drawing it (round 4, group
+            # 8): it used to be the frame alone.
+            try:
+                import _blenderkit_images
+                values += [(k, _escape_display(v) if isinstance(v, str) else v)
+                           for k, v in _blenderkit_images.record_values(evaluated)]
+            except ImportError:
+                pass
+            except (AttributeError, TypeError, ValueError, RuntimeError, OSError) as error:
+                print(f"[Blender Local] {obj.name}: its image could not be read: {error}")
         return '', ';'.join(k + '=' + _record_value(v) for k, v in values)
     data = evaluated.data
     if data is None:
@@ -1013,6 +1406,49 @@ _MODIFIER_FIELDS = {
                           'use_pin_boundary', 'rest_source', 'is_bind'),
     # Its `object` is a pointer, special-cased below beside Boolean's.
     'LATTICE':      ('strength',),
+    # Round 4, group 8: the eleven kinds Add Modifier gained rows for, each by
+    # the properties Blender's own panel draws (MOD_*.cc `panel_draw`). Their
+    # other object is a pointer (`_MODIFIER_POINTERS`). Read-only ones are shown
+    # and never written: a Bind's `is_bound`, and a Hook's vertex count, which
+    # is `vertex_indices`' length (`_DERIVED_FIELDS`).
+    'CURVE':        ('deform_axis',),
+    'WIREFRAME':    ('thickness', 'offset', 'use_boundary', 'use_replace', 'use_even_offset',
+                     'use_relative_offset', 'use_crease', 'crease_weight', 'material_offset',
+                     'thickness_vertex_group'),
+    'SKIN':         ('branch_smoothing', 'use_x_symmetry', 'use_y_symmetry', 'use_z_symmetry',
+                     'use_smooth_shade'),
+    'HOOK':         ('strength', 'falloff_type', 'falloff_radius', 'use_falloff_uniform'),
+    'ARMATURE':     ('use_deform_preserve_volume', 'use_multi_modifier', 'use_vertex_groups',
+                     'use_bone_envelopes'),
+    'SURFACE_DEFORM': ('falloff', 'strength', 'use_sparse_bind', 'is_bound'),
+    'MESH_DEFORM':  ('precision', 'use_dynamic_bind', 'is_bound'),
+    # The data types are enum sets, sent as their identifiers joined by commas.
+    'DATA_TRANSFER': ('use_object_transform', 'mix_mode', 'mix_factor',
+                      'use_vert_data', 'data_types_verts', 'vert_mapping',
+                      'use_edge_data', 'data_types_edges', 'edge_mapping',
+                      'use_loop_data', 'data_types_loops', 'loop_mapping',
+                      'use_poly_data', 'data_types_polys', 'poly_mapping'),
+    'NORMAL_EDIT':  ('mode', 'use_direction_parallel', 'mix_mode', 'mix_factor', 'mix_limit',
+                     'no_polynors_fix', 'offset'),
+    'MASK':         ('mode', 'use_smooth', 'threshold'),
+    'BUILD':        ('frame_start', 'frame_duration', 'use_reverse', 'use_random_order', 'seed'),
+}
+
+# The other object each of those points at, by Blender's name for the pointer
+# — Boolean's and Lattice's `object`, Shrinkwrap's `target`, beside the new
+# kinds'. Sent as the object's name, '' for none.
+_MODIFIER_POINTERS = {
+    'BOOLEAN': ('object',), 'LATTICE': ('object',), 'SHRINKWRAP': ('target',),
+    'CURVE': ('object',), 'HOOK': ('object',), 'ARMATURE': ('object',),
+    'SURFACE_DEFORM': ('target',), 'MESH_DEFORM': ('object',), 'DATA_TRANSFER': ('object',),
+    'NORMAL_EDIT': ('target',), 'MASK': ('armature',),
+}
+
+# Read-only facts a row shows: how many vertices a Hook moves (with none it
+# moves nothing, measured: Add Modifier ▸ Hook with an object picked left the
+# cube as it was until Assign in Edit Mode).
+_DERIVED_FIELDS = {
+    'HOOK': (('vertex_count', lambda m: len(m.vertex_indices)),),
 }
 
 # What every modifier's record carries, whatever its kind: the two switches
@@ -1025,7 +1461,11 @@ _COMMON_FIELDS = ('show_viewport', 'show_render')
 # only under a Vertex Group limit, which the panel does not offer.
 _VERTEX_GROUP_KINDS = {'SOLIDIFY', 'SMOOTH', 'CAST', 'SIMPLE_DEFORM', 'DISPLACE', 'WAVE',
                        'SHRINKWRAP', 'WEIGHTED_NORMAL', 'LAPLACIANSMOOTH', 'CORRECTIVE_SMOOTH',
-                       'LATTICE', 'WELD', 'DECIMATE'}
+                       'LATTICE', 'WELD', 'DECIMATE',
+                       # Round 4, group 8 (tests/modkinds/blender/verify.py
+                       # measures each with a group and inverted).
+                       'CURVE', 'WIREFRAME', 'HOOK', 'ARMATURE', 'SURFACE_DEFORM', 'MESH_DEFORM',
+                       'DATA_TRANSFER', 'NORMAL_EDIT', 'MASK'}
 _VERTEX_GROUP_FIELDS = ('vertex_group', 'invert_vertex_group')
 
 # Blender's name for each modifier type — "Surface Deform" for
@@ -1110,6 +1550,9 @@ _RECORD_ESCAPES = (('%', '%25'), (';', '%3B'), ('|', '%7C'), ('=', '%3D'), ('\n'
 
 
 def _modifier_value(value):
+    if isinstance(value, (set, frozenset)):
+        # An enum set (Data Transfer's data types): its identifiers, sorted.
+        value = ','.join(sorted(value))
     text = _record_value(value)
     if isinstance(value, str):
         for raw, escaped in _RECORD_ESCAPES:
@@ -1141,16 +1584,14 @@ def _modifier_entry(obj, m, first):
         size = _own_mesh_size(obj)
         if size is not None:
             values.append(('input_size', size))
-    if m.type in ('BOOLEAN', 'LATTICE'):
-        other = getattr(m, 'object', None)
-        values.append(('object', other.name if other is not None else ''))
-    if m.type == 'SHRINKWRAP':
-        # Shrinkwrap spells its pointer `target`; `object` does not exist
-        # on it at all. With no target set the evaluated mesh is unchanged
-        # and nothing is raised, so the panel has to be able to see that
-        # the field is empty.
-        other = getattr(m, 'target', None)
-        values.append(('target', other.name if other is not None else ''))
+    # Shrinkwrap spells its pointer `target`; `object` does not exist on it at
+    # all. With no target set the evaluated mesh is unchanged and nothing is
+    # raised, so the panel has to be able to see that the field is empty.
+    for key in _MODIFIER_POINTERS.get(m.type, ()):
+        other = getattr(m, key, None)
+        values.append((key, other.name if other is not None else ''))
+    for key, read in _DERIVED_FIELDS.get(m.type, ()):
+        values.append((key, read(m)))
     if m.type == 'NODES':
         # The row names the group whatever it is — a modifier the panel
         # dropped read as no modifier at all — and gives Smooth by Angle
@@ -1645,7 +2086,7 @@ def operator_info(path):
         available = True if target is not None else bool(op.poll())
     except Exception:
         available = False
-    refused = _UNSAFE_OPERATORS.get(path)
+    refused = _refusal(path)
     if refused is not None:
         available, target = False, None
     props = []
@@ -1701,22 +2142,60 @@ _EDIT_MODE_OBJECT_OPS = frozenset((
     'object.vertex_weight_delete', 'object.vertex_weight_normalize_active_vertex',
     'object.vertex_weight_paste', 'object.vertex_weight_set_active'))
 # Operators that pass their poll in the app's context and then take Blender
-# down, so the search refuses them by name. Found by run-opsearch-blender-
-# check.sh, which runs every operator the search lists with its defaults
-# through run_operator in desktop 5.2.1 with the app's context (undo stack,
-# gpu.init, no editor override): object.*, mesh.* and uv.* on three fixtures
-# from Object, Edit, Sculpt and Texture Paint, every other module on a cube
-# from the same four — 13,852 runs. These two were the only ones to crash or
-# hang, from every mode and fixture (in Edit Mode, where the rule runs them).
-_UNSAFE_OPERATORS = {
-    'uv.stitch': ("uv.stitch works inside Blender's UV Editor, which this app does not "
-                  "have; without one Blender crashes as the operator finishes "
-                  "(a segfault in stitch_exit, measured in Blender 5.2.1)."),
-    'uv.select_edge_ring': ("uv.select_edge_ring picks the ring under the mouse in Blender's "
-                            "UV Editor, which this app does not have; without one Blender "
-                            "never returns from it (measured in Blender 5.2.1). Use Select "
-                            "▸ Select Edge Rings in the 3D View."),
-}
+# down are named in `_blenderkit_context.UNSAFE_OPERATORS`, the one table a
+# script line, the console, Run and this search all read: each entry refuses
+# every call in words, or gives the call what it needs first. The search's own
+# list (round 4's review: `uv.stitch` and `uv.select_edge_ring`, the only
+# operators to crash or hang in run-opsearch-blender-check.sh's sweep, which
+# runs every operator the search lists with its defaults through run_operator
+# in desktop 5.2.1 with the app's context — 13,852 runs) refused them here
+# while the same call as a script line segfaulted or hung Blender (round 4's
+# final review). `_refusal` and `run_operator` ask that table now.
+# Operators Blender runs at the mouse pointer in its 3D View, which the search
+# cannot give them: its context has a window and a screen and no 3D View, and
+# each one's poll asks for one (EDBM_view3d_poll). Measured in desktop 5.2.1
+# from Edit Mode (round 4, group 6): all fourteen poll False with no context
+# and with the window and screen, True under a 3D View — and under one they
+# still change nothing, or PASS_THROUGH, with no pointer (round 3's review;
+# tests/meshmenu/blender). The search refused them with Blender's "needs a
+# different selection or Blender editor context", which sends a reader looking
+# for a selection; it now says why, and names the Mesh menu row that does the
+# same toward the 3D cursor where there is one. tests/opsearch/blender/verify.py
+# holds each poll to False here, so a Blender that lets one run fails it.
+_TOWARD_CURSOR = (" Mesh ▸ Vertex ▸ {row} does it toward the 3D cursor instead.")
+_POINTER = ("{name} works at the mouse pointer in Blender's 3D View, which Blender reads from a "
+            "window this Blender does not have, so it cannot run from the search.")
+# Extend Vertices is not a pointer operator in that sense: its exec takes the
+# pointer's ray as two hidden properties, `location` and `direction`
+# (editmesh_rip_edge.cc), and under the borrowed 3D View
+# `rip_edge('INVOKE_DEFAULT')` falls back to that exec (measured in 5.2.1:
+# FINISHED, 8 → 9 vertices, round 4's review). What the search cannot give it
+# is the 3D View its poll asks for, and a ray. Its row gives both: the ray
+# through the 3D cursor, which picks the edge each new vertex is split off on
+# — the new vertex starts on the old one, and nothing moves toward the cursor
+# until the panel's Move is typed (measured on a cube's corner, the cursor at
+# (2, -1, 2.5): 8 → 9 vertices, the new one on the old).
+_EXTEND = ("Extend Vertices needs Blender's 3D View, which its poll asks for and the search does not "
+           "have, and the line its pointer would give it, so it cannot run from the search. "
+           "Mesh ▸ Vertex ▸ Rip Vertices and Extend runs it with the 3D cursor as the pointer: each "
+           "selected vertex gets a new vertex split off on its edge pointing most toward the cursor, "
+           "which the panel's Move then moves.")
+_POINTER_OPERATORS = dict(
+    [('mesh.dupli_extrude_cursor',
+      _POINTER.format(name='Extrude to Cursor or Add')
+      + _TOWARD_CURSOR.format(row='Extrude to Cursor or Add'))]
+    + [(path, _EXTEND) for path in ('mesh.rip_edge', 'mesh.rip_edge_move')]
+    + [(path, _POINTER.format(name='Rip') + " Which side tears away is where the pointer is, and Blender's "
+        "Rip has no other way to be told (no exec), so Mesh ▸ Vertex ▸ Rip Vertices cannot run either; "
+        "Mesh ▸ Vertex ▸ Rip Vertices and Extend runs, with the 3D cursor as the pointer.")
+       for path in ('mesh.rip', 'mesh.rip_move')]
+    + [('mesh.' + name, _POINTER.format(name='Poly Build') + " It acts on the element under the pointer, "
+        "and with no pointer its operators change nothing (measured in Blender 5.2.1).")
+       for name in ('polybuild_delete_at_cursor', 'polybuild_dissolve_at_cursor',
+                    'polybuild_extrude_at_cursor_move', 'polybuild_face_at_cursor',
+                    'polybuild_face_at_cursor_move', 'polybuild_split_at_cursor',
+                    'polybuild_split_at_cursor_move', 'polybuild_transform_at_cursor',
+                    'polybuild_transform_at_cursor_move')])
 _MODE_NAMES = {'OBJECT': 'Object Mode', 'EDIT': 'Edit Mode', 'SCULPT': 'Sculpt Mode',
                'TEXTURE_PAINT': 'Texture Paint', 'VERTEX_PAINT': 'Vertex Paint',
                'WEIGHT_PAINT': 'Weight Paint', 'POSE': 'Pose Mode'}
@@ -1763,9 +2242,66 @@ def _set_mode(mode):
     return None
 
 
+def _refusal(path):
+    """Why the search will not run `path` at all, or None: measured to crash
+    or hang Blender here, the interface's own operators in a Blender with no
+    interface among them (`_blenderkit_context.UNSAFE_OPERATORS`, whose entries
+    that refuse every call grey the form out), or one that works at the mouse
+    pointer (`_POINTER_OPERATORS`). The pointer ones before the mode switch:
+    their poll fails here whatever the mode."""
+    context = _context_module()
+    refused = context.refusal(path) if context is not None else None
+    return refused or _POINTER_OPERATORS.get(path)
+
+
+def _context_module():
+    """`_blenderkit_context`, imported or — where the site folder is not on
+    the path, as in the desktop checks — loaded from beside this module; None
+    where it cannot be had."""
+    module = sys.modules.get('_blenderkit_context')
+    if module is None:
+        try:
+            import _blenderkit_context as module
+        except ImportError:
+            import importlib.util
+            import os
+            path = os.path.join(os.path.dirname(os.path.abspath(__file__)), '_blenderkit_context.py')
+            if not os.path.isfile(path):
+                return None
+            spec = importlib.util.spec_from_file_location('_blenderkit_context', path)
+            module = importlib.util.module_from_spec(spec)
+            sys.modules['_blenderkit_context'] = module
+            spec.loader.exec_module(module)
+    return module
+
+
+# The modules whose operators act on Blender's own interface — its windows,
+# screens, areas and regions — rather than on the scene. In Local View every
+# command runs under the borrowed 3D View (`_blenderkit_localview.run`), the
+# search's rows too, so that what a row selects or moves is only what Local
+# View holds. Under it these act on the borrowed area itself, which sculpting,
+# Knife Project and hiding borrow after: measured in desktop 5.2.1 from Local
+# View (tests/opsearch/blender, LOCAL_VIEW), `screen.space_type_set_or_cycle`,
+# `screen.area_split`, `screen.screen_full_area`, `screen.region_toggle` and
+# `screen.delete` each answered FINISHED there, where with no area each fails
+# its poll, and five more crashed it (`_blenderkit_context.INTERFACE_ONLY`).
+# So they run as the search runs them everywhere else: the window and the
+# screen, no area.
+_INTERFACE_MODULES = ('screen', 'view2d', 'wm', 'ui', 'workspace')
+
+
+def _interface_context(path):
+    local_view = sys.modules.get('_blenderkit_localview')
+    if path.split('.', 1)[0] not in _INTERFACE_MODULES or local_view is None \
+            or not local_view.in_scope():
+        return contextlib.nullcontext()
+    return bpy.context.temp_override(area=None, region=None)
+
+
 def run_operator(path, values):
-    if path in _UNSAFE_OPERATORS:
-        raise RuntimeError(_UNSAFE_OPERATORS[path])
+    refused = _refusal(path)
+    if refused is not None:
+        raise RuntimeError(refused)
     op = resolve('bpy.ops.' + path)
     target, previous = _operator_target(path)
     where = _MODE_NAMES.get(target or previous, target or previous)
@@ -1778,7 +2314,9 @@ def run_operator(path, values):
                 _set_mode(previous)
             raise RuntimeError(path + ' was not run: it runs in ' + where
                                + ', and Blender could not switch to it (' + why + ').')
+    outside = contextlib.ExitStack()
     try:
+        outside.enter_context(_interface_context(path))
         if not op.poll():
             raise RuntimeError(path + ' needs a different selection or Blender editor context'
                                + (' in ' + where if target is not None else '')
@@ -1787,10 +2325,22 @@ def run_operator(path, values):
         for key, value in values.items():
             if properties[key].type == 'ENUM' and properties[key].is_enum_flag:
                 values[key] = set(value)
+        if not getattr(op, '_blenderkit_priced', False):
+            # Where the wrapped operator does not price itself (no `install`).
+            _price_modifier_operator(path, values)
+        # The table's precondition, asked here as well as by the wrapped
+        # operator (`_blenderkit_context._Unsafe`), so the search holds where
+        # `install` has not run: `brush.asset_activate` gets the 3D View's tool
+        # for the mode, or is refused in words.
+        context = _context_module()
+        if context is not None:
+            context.ask(path, ('EXEC_DEFAULT',), values)
         if path == 'object.multires_subdivide':
             # The Modifiers panel's budget, whichever way Subdivide is reached:
-            # each one is four times the mesh (_blenderkit_multires).
-            _multires_budget(values.get('modifier', ''))
+            # each one is four times the mesh (_blenderkit_multires); the
+            # wrapped operator prices the count as well, and this the base a
+            # Sculpt Mode it goes back to may hold.
+            _multires_budget(values.get('modifier', ''), previous)
         elif path == 'object.subdivision_set':
             # Blender's Subdivision Set calls Multires Subdivide once per
             # missing level, inside one operator, so the check above never
@@ -1798,9 +2348,18 @@ def run_operator(path, values):
             # (round 3's review). Priced the way the operator decides.
             import _blenderkit_multires
             _blenderkit_multires.refuse_subdivision_set(**values)
-        elif path == 'object.voxel_remesh':
+            # And from Sculpt Mode, the heavy-base budget Multires Subdivide
+            # keeps: round 4's review measured Subdivision Set (level 1) here
+            # on an 8,066-vertex base with a new Multires going back into
+            # Sculpt Mode at levels 1/1/1, a state `multires_base_refusal`
+            # refuses (desktop 5.2.1, the app's context).
+            raised = _subdivision_set_sculpt_level(**values)
+            if raised is not None:
+                _heavy_sculpt_level(previous, 'Subdivision Set', raised)
+        elif path == 'object.voxel_remesh' and not getattr(op, '_blenderkit_priced', False):
             # The Sculpt header's Remesh had the budget and this had none:
-            # OpenVDB is asked for the whole surface at once.
+            # OpenVDB is asked for the whole surface at once. (The wrapped
+            # operator asks the same, through its modifiers too.)
             import _blenderkit_sculpt
             _blenderkit_sculpt.refuse_voxel_remesh(bpy.context.view_layer.objects.active)
         if path == 'object.shade_auto_smooth':
@@ -1825,6 +2384,7 @@ def run_operator(path, values):
             raise RuntimeError(path + ' returned ' + repr(result) + '; no completed operation')
         return sorted(result)
     finally:
+        outside.close()
         # Back to the mode it found, as BpyModeGuard does — on the object that
         # is active now (Duplicate makes its copy active). An operator that
         # deleted the object leaves no mode to go back to.
@@ -1837,9 +2397,43 @@ def run_operator(path, values):
                           + ': ' + why)
 
 
-def _multires_budget(name):
+def _modifier_targets(values):
+    active = bpy.context.view_layer.objects.active
+    if values.get('use_selected_objects'):
+        chosen = [o for o in getattr(bpy.context, 'selected_objects', None) or [] if o != active]
+        return ([active] if active is not None else []) + chosen
+    return [active] if active is not None else []
+
+
+def _price_modifier_operator(path, values):
+    """The search's modifier operators, priced by the vertex budget before
+    they run, as the Modifiers panel's rows are (round 4's fix round): Add
+    Modifier (`price_add`, on every selected object with Use Selected
+    Objects), Copy (the copy right after it), Copy to Selected, Move Up, Move
+    Down and Move to Index (each a new order). The panel priced these; the
+    search ran them bare."""
+    budget = _budget_module()
+    if path == 'object.modifier_add':
+        kind = values.get('type') or bpy.ops.object.modifier_add.get_rna_type().properties['type'].default
+        budget.price_add(kind, objects=_modifier_targets(values))
+    elif path == 'object.modifier_copy':
+        budget.price_copy(values.get('modifier', ''), _modifier_targets(values))
+    elif path == 'object.modifier_copy_to_selected':
+        active = bpy.context.view_layer.objects.active
+        budget.price_copy_to_selected(active, values.get('modifier', ''),
+                                      list(getattr(bpy.context, 'selected_objects', None) or []))
+    elif path in ('object.modifier_move_up', 'object.modifier_move_down'):
+        for obj in _modifier_targets(values):
+            budget.check_move(values.get('modifier', ''), path.endswith('_up'), obj)
+    elif path == 'object.modifier_move_to_index':
+        for obj in _modifier_targets(values):
+            budget.check_move_to(values.get('modifier', ''), values.get('index', 0), obj)
+
+
+def _multires_budget(name, previous=None):
     """Refuses, in words, a Multires Subdivide whose new level would pass
-    `_blenderkit_multires.BUDGET` or the memory left."""
+    `_blenderkit_multires.BUDGET` or the memory left — or, run from Sculpt
+    Mode (`previous`), leave a base mesh too heavy to sculpt on a level."""
     obj = bpy.context.view_layer.objects.active
     if obj is None or obj.type != 'MESH':
         return
@@ -1850,6 +2444,44 @@ def _multires_budget(name):
         return
     import _blenderkit_multires
     _blenderkit_multires.refuse_over_budget(obj, modifier.total_levels, 'Multires Subdivide')
+    _heavy_sculpt_level(previous, 'Multires Subdivide', modifier.total_levels + 1)
+
+
+def _subdivision_set_sculpt_level(level=1, relative=False, **_):
+    """The Sculpt level `object.subdivision_set`, run in Object Mode as the
+    search runs it, raises the active object's Multires to, or None when it
+    raises none. Blender's operator (bl_operators/object.py) works on the
+    first Multires or Subdivision Surface in the stack; on a Multires,
+    absolute, it calls Multires Subdivide once per missing level, and each one
+    raises the Sculpt level to the new top level (`multires_set_tot_level`:
+    measured, 0/0/0 became 1/1/1), while a level it already has, or a relative
+    one, sets only the viewport level in Object Mode. With a Subdivision
+    Surface first, or none (it adds one in Object Mode), there is no Multires
+    level to sculpt."""
+    obj = bpy.context.view_layer.objects.active
+    if obj is None or obj.type != 'MESH':
+        return None
+    target = next((m for m in obj.modifiers if m.type in ('MULTIRES', 'SUBSURF')), None)
+    if target is None or target.type != 'MULTIRES' or relative or level <= target.total_levels:
+        return None
+    return level if level > target.sculpt_levels else None
+
+
+def _heavy_sculpt_level(previous, what, level):
+    """The search runs these in Object Mode and goes back to `previous`:
+    back in Sculpt Mode the new level is sculpted, and Sculpt Mode's way in
+    refuses a base mesh too heavy for that (`refuse_heavy_multires`). Round
+    3's review found the search's Multires Subdivide going round it."""
+    if previous != 'SCULPT':
+        return
+    obj = bpy.context.view_layer.objects.active
+    if obj is None or obj.type != 'MESH' or obj.use_dynamic_topology_sculpting:
+        return
+    import _blenderkit_sculpt
+    said = _blenderkit_sculpt.multires_base_refusal(obj, what, level)
+    if said is not None:
+        raise RuntimeError(said + " To sculpt " + obj.name + "'s base mesh, keep the Multires's "
+                           "Sculpt level at 0.")
 
 
 def inspect_data(path):
@@ -1881,6 +2513,25 @@ def inspect_data(path):
                 available=True, properties=props, children=children)
 
 
+def _budget_module():
+    """The vertex budget (_blenderkit_budget.py), imported or — where the site
+    folder is not on the path, as in the desktop checks — loaded from beside
+    this module."""
+    module = sys.modules.get('_blenderkit_budget')
+    if module is None:
+        try:
+            import _blenderkit_budget as module
+        except ImportError:
+            import importlib.util
+            import os
+            spec = importlib.util.spec_from_file_location(
+                '_blenderkit_budget', os.path.join(os.path.dirname(__file__), '_blenderkit_budget.py'))
+            module = importlib.util.module_from_spec(spec)
+            sys.modules['_blenderkit_budget'] = module
+            spec.loader.exec_module(module)
+    return module
+
+
 def set_property(path, key, value):
     obj = resolve(path)
     prop = obj.bl_rna.properties[key]
@@ -1890,12 +2541,23 @@ def set_property(path, key, value):
         value = set(value)
     if prop.type == 'POINTER' and value is not None:
         value = resolve(value)
-    if isinstance(obj, bpy.types.Modifier) and isinstance(obj.id_data, bpy.types.Object):
-        # A Subdivision or Multires level, or an Array count, typed here would
-        # skip the budget the modifier rows keep (_blenderkit_multires).
-        import _blenderkit_multires
-        _blenderkit_multires.check_setting(obj.name, key, value, obj.id_data)
+    # Whatever the struct and the property, priced first by the vertex
+    # budget's one entry point (_blenderkit_budget): this row reaches every
+    # property of everything, and the special cases it had (a modifier, a
+    # text's data) left a curve's and a surface's data, a spline, a modifier's
+    # nested settings and the rest unpriced (round 4's review: a NURBS
+    # sphere's Resolution U and V of 64 under an Array, 10,485,760 vertices).
+    budget = _budget_module()
+    budget.price(obj, key, value)
     setattr(obj, key, value)
+    # Evaluated through the gate (`settle`), which raises its refusal here:
+    # a write the price did not approve — one read by a driver only Blender
+    # can work out (`_blenderkit_budget._readers_of`) — is priced as the
+    # state it leaves, and refused at the row rather than at the mirror's
+    # pass after it.
+    settle = getattr(budget, 'settle', None)
+    if settle is not None:
+        settle()
     bpy.context.view_layer.update()
 
 
@@ -1948,7 +2610,10 @@ def checkpoint(root, label, replace=False):
         if obj.type == 'MESH':
             obj.update_from_editmode()
     target = os.path.join(root, str(uuid.uuid4()) + '.blend')
-    result = bpy.ops.wm.save_as_mainfile(filepath=target, copy=True, compress=False, check_existing=False)
+    gate = sys.modules.get('_blenderkit_gate')
+    saving = getattr(gate, 'saving', None) if gate is not None else None
+    with saving() if saving is not None else contextlib.nullcontext():
+        result = bpy.ops.wm.save_as_mainfile(filepath=target, copy=True, compress=False, check_existing=False)
     if 'FINISHED' not in result or not os.path.isfile(target):
         raise RuntimeError('Blender could not write the undo checkpoint')
     cut = _history_index if replace and _history_index >= 0 else _history_index + 1
@@ -1964,7 +2629,17 @@ def checkpoint(root, label, replace=False):
             os.remove(old)
     # Replace only after a complete write, so interrupted saves retain recovery.
     _publish_autosave(target, os.path.join(os.path.dirname(root), 'autosave.blend'))
+    # Vouched for after the link, which moves the file's status-change time
+    # (`_blenderkit_gate.vouch`): what `history_step` opens as the app's own.
+    _vouch(target)
     return history_state()
+
+
+def _vouch(path):
+    gate = sys.modules.get('_blenderkit_gate')
+    vouch = getattr(gate, 'vouch', None) if gate is not None else None
+    if vouch is not None:
+        vouch(path)
 
 
 def _publish_autosave(source, autosave):
@@ -1988,19 +2663,38 @@ def _publish_autosave(source, autosave):
     os.replace(partial, autosave)
 
 
+def _gate_opening(path):
+    import os
+    gate = sys.modules.get('_blenderkit_gate')
+    opening = getattr(gate, 'opening', None) if gate is not None else None
+    if opening is None:
+        return contextlib.nullcontext()
+    return opening(path, "The history's checkpoint %s, which changed after this app wrote it,"
+                   % os.path.basename(path))
+
+
 def history_step(direction):
     global _history_index
     target = _history_index + direction
     if not 0 <= target < len(_history):
         return history_state()
-    result = bpy.ops.wm.open_mainfile(filepath=_history[target][1], load_ui=False)
+    # The app's own checkpoint, Blender's to evaluate as saved while it is as
+    # the app wrote it, else priced as a script's load
+    # (`_blenderkit_gate.opening`).
+    path = _history[target][1]
+    gate = sys.modules.get('_blenderkit_gate')
+    clean = bool(getattr(gate, 'vouched', lambda p: False)(path))
+    with _gate_opening(path):
+        result = bpy.ops.wm.open_mainfile(filepath=path, load_ui=False)
     if 'FINISHED' not in result:
         raise RuntimeError('Blender could not restore the checkpoint')
     _history_index = target
     # Existing Python variables pointing at old datablocks must be reacquired.
     import os
-    _publish_autosave(_history[target][1],
-                      os.path.join(os.path.dirname(_history_root), 'autosave.blend'))
+    _publish_autosave(path, os.path.join(os.path.dirname(_history_root), 'autosave.blend'))
+    if clean:
+        # The link moved its status-change time; it is still the app's.
+        _vouch(path)
     return history_state()
 
 

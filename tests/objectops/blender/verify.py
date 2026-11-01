@@ -653,7 +653,7 @@ refused("Faces by Edges on that vertex has no edge to split along: refused", "ME
 
 
 def two_grids():
-    """Two grids in Edit Mode as Edit Mesh leaves two selected meshes: the
+    """Two grids in Edit Mode as the Edit Mode button leaves two selected meshes: the
     active one with nothing selected, the other with everything."""
     fresh()
     meshes = []

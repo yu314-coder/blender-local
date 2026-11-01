@@ -144,6 +144,12 @@ def photo():
             entry.update(mesh=me.name, verts=len(me.vertices), faces=len(me.polygons),
                          co=digest(co), vsel=hashlib.sha1(sel.tobytes()).hexdigest()[:12],
                          uvs=[layer.name for layer in me.uv_layers])
+            # Sculpt Mode's mask, which a mask fill writes.
+            mask = me.attributes.get(".sculpt_mask")
+            if mask is not None:
+                values = array("f", [0.0]) * len(mask.data)
+                mask.data.foreach_get("value", values)
+                entry["mask"] = digest(values)
         if obj.animation_data and obj.animation_data.action:
             action = obj.animation_data.action
             keys = []
@@ -227,8 +233,8 @@ act("Move", "TRANSLATE")
 act("Rotate", "ROTATE")
 act("Add Modifier", "MODIFIER")
 act("Delete", "DELETE", before=lambda: (run("TAP"), None))
-act("Set Energy", "LIGHT_ENERGY")
-act("Set Focal Length", "CAMERA_LENS")
+act("Power", "LIGHT_ENERGY")
+act("Focal Length", "CAMERA_LENS")
 act("Set Show Limits", "CAMERA_LIMITS")
 
 
@@ -242,8 +248,8 @@ act("Insert Keyframe", "ANIM_INSERT", before=select_cube)
 bpy.context.scene.frame_set(12)
 bpy.data.objects["Cube"].location.x = 4.0
 act("Insert Keyframe", "ANIM_INSERT")
-act("Deselect", "DESELECT_ALL")
-act("Select All", "SELECT_ALL")
+act("(De)select All", "DESELECT_ALL")
+act("(De)select All", "SELECT_ALL")
 select_cube()
 act("Add Paint Slot", "PAINT_ENTER")
 image = bpy.data.images["Material Base Color"]
@@ -251,17 +257,17 @@ stroke = array("f", [0.8, 0.8, 0.8, 1.0]) * (64 * 64)
 for i in range(0, 64 * 16, 4):
     stroke[i] = 0.1
 paint.stroke["Material Base Color"] = stroke.tobytes()
-act("Texture Paint", "PAINT_WRITE")
+act("Image Paint", "PAINT_WRITE")
 stroke[4 * 2000] = 0.95
 paint.stroke["Material Base Color"] = stroke.tobytes()
-act("Texture Paint", "PAINT_WRITE")
-act("Toggle Edit Mode", "TOGGLE_EDIT", before=select_cube)
+act("Image Paint", "PAINT_WRITE")
+act("Edit Mode", "TOGGLE_EDIT", before=select_cube)
 # A new cube's vertices are all selected, so Select All would change nothing.
-act("Deselect", "EDIT_DESELECT_ALL")
-act("Select All", "EDIT_SELECT_ALL")
+act("(De)select All", "EDIT_DESELECT_ALL")
+act("(De)select All", "EDIT_SELECT_ALL")
 act("Subdivide", "EDIT_SUBDIVIDE")
 act("Bevel", "BEVEL")
-act("Toggle Edit Mode", "TOGGLE_EDIT")
+act("Edit Mode", "TOGGLE_EDIT")
 
 # Each step against the one before it: Deselect then Select All rightly comes
 # back to a scene an earlier step had.
@@ -297,8 +303,8 @@ texpaint._signatures["Material Base Color"] = ("the viewport's copy",)
 undo()
 check("an undo that did not touch the image leaves the viewport's copy alone",
       texpaint._signatures.get("Material Base Color") == ("the viewport's copy",))
-# Toggle Edit Mode, Bevel, Subdivide, Select All, Deselect and Toggle Edit
-# Mode, then the second stroke itself.
+# Edit Mode, Bevel, Subdivide, (De)select All twice and Edit Mode, then the
+# second stroke itself.
 for _ in range(6):
     undo()
 check("an undo past a stroke forgets it, so the next mirror reads the pixels",
@@ -351,7 +357,7 @@ bpy.context.object.name = "Cube"
 push("Add Cube")
 select_cube()
 run("TOGGLE_EDIT")
-push("Toggle Edit Mode")
+push("Edit Mode")
 run("BEVEL_PICKED")
 push("Bevel")
 run("REWIND")
@@ -442,6 +448,130 @@ check("32 undos, and the last one lands on the move before them", undos == 32
       and abs(bpy.context.view_layer.objects.active.location.x - 7) < 1e-6,
       (undos, bpy.context.view_layer.objects.active.location.x))
 
+print("\na Run that enters Sculpt Mode and fills the mask is a step of its own")
+# Called from Python without the undo argument, a sculpt operator leaves its
+# undo step pending, and the next `ed.undo_push` finished it as that
+# operator's Sculpt step instead of the push's own (`_blenderkit_undo.
+# _push_own`). Measured in desktop 5.2.1: after this Run and a Move, Undo of
+# the Move left the cube moved and Redo of the Run lost the cube it added;
+# with the probe deferred (an autosave opened in Vertex Paint or Sculpt Mode)
+# the probe's own first push was taken, it failed ("undo ran but did not
+# restore the scene"), and the history fell back to .blend checkpoints, three
+# launches of three in the app (round 4).
+SCULPT_RUN = """
+import bpy
+bpy.context.view_layer.objects.active = bpy.data.objects["Cube"]
+bpy.ops.object.mode_set(mode='SCULPT')
+bpy.ops.paint.mask_flood_fill(mode='VALUE', value=1.0)
+"""
+OBJECT_AFTER = """
+bpy.ops.object.mode_set(mode='OBJECT')
+bpy.ops.mesh.primitive_cube_add(location=(3, 0, 0))
+"""
+
+
+def sculpt_run_steps(unfixed=False):
+    """Original, the Run (Sculpt Mode, Mask Fill, Object Mode, Add Cube) and
+    a Move, pushed as the Swift pushes them; then every Undo and Redo against
+    its photograph. `unfixed`: `_push_own` as it was, the push taken by the
+    pending step (the control)."""
+    global sync, texpaint, anim, history
+    bpy.ops.wm.read_factory_settings(use_empty=False)
+    sync, texpaint, anim, history = load_all()
+    if unfixed:
+        history._push_own = lambda label, alone=False: (history._operator('undo_push', message=label), 1)[1]
+    shots = [("Original", push("Original"), photo())]
+    exec(compile(SCULPT_RUN + OBJECT_AFTER, "<Run Script>", "exec"), dict(namespace))
+    shots.append(("Run Script", push("Run Script"), photo()))
+    rows = history.blender_steps()
+    bpy.data.objects["Cube"].location.x += 1
+    shots.append(("Move", push("Move"), photo()))
+    wrong = []
+    for index in range(len(shots) - 1, 0, -1):
+        undo()
+        if photo() != shots[index - 1][2]:
+            wrong.append(("undo to " + shots[index - 1][0], differences(photo(), shots[index - 1][2])))
+    for index in range(1, len(shots)):
+        redo()
+        if photo() != shots[index][2]:
+            wrong.append(("redo to " + shots[index][0], differences(photo(), shots[index][2])))
+    return shots, rows, wrong
+
+
+shots, rows, wrong = sculpt_run_steps()
+check("the Run's push is a step of its own on top of the Mask Fill Blender left pending",
+      [(r[1].lower(), r[2]) for r in rows[-2:]] == [("sculpt", "Mask Flood Fill"), ("global undo", "Run Script")]
+      and history._steps[1]["depth"] == 2, [(r[1], r[2]) for r in rows])
+check("every Undo and Redo after it gives back its photograph, with Blender's undo",
+      not wrong and history.state()["mode"] == "blender", wrong)
+shots, rows, wrong = sculpt_run_steps(unfixed=True)
+check("control: with the push taken by the pending step, Undo of the Move leaves the cube moved",
+      any(w[0] == "undo to Run Script" for w in wrong) and [r[2] for r in rows[-1:]] == ["Mask Flood Fill"],
+      (wrong, rows[-2:]))
+
+
+def deferred_probe(unfixed=False, unkept=False):
+    """The app's launch with its autosave in Vertex Paint, which defers the
+    probe; Run (Object Mode first, as `returnToObjectMode` does), which ends
+    in Sculpt Mode; then Object Mode, where the probe runs. `unkept`: the
+    steps only Blender's stack holds are not written to files before a
+    checkpoint load frees it (6d31b90's history, the control)."""
+    global sync, texpaint, anim, history
+    bpy.ops.wm.read_factory_settings(use_empty=False)
+    sync, texpaint, anim, history = load_all()
+    if unfixed:
+        history._push_own = lambda label, alone=False: (history._operator('undo_push', message=label), 1)[1]
+    if unkept:
+        history._keep_live_as_files = lambda: 0
+    bpy.context.view_layer.objects.active = bpy.data.objects["Cube"]
+    bpy.ops.object.mode_set(mode='VERTEX_PAINT')
+    shots = [("Original", push("Original"), photo())]
+    bpy.ops.object.mode_set(mode='OBJECT')
+    exec(compile(SCULPT_RUN, "<Run Script>", "exec"), dict(namespace))
+    shots.append(("Run Script", push("Run Script"), photo()))
+    bpy.ops.object.mode_set(mode='OBJECT')
+    shots.append(("Object Mode", push("Object Mode"), photo()))
+    bpy.data.objects["Cube"].location.x += 1
+    shots.append(("Move", push("Move"), photo()))
+    wrong = []
+    for index in range(len(shots) - 1, 0, -1):
+        undo()
+        if photo() != shots[index - 1][2]:
+            wrong.append(("undo to " + shots[index - 1][0], differences(photo(), shots[index - 1][2])))
+    redone = []
+    while history.state()["redo"]:
+        redo()
+        index = len(redone) + 1
+        redone.append(shots[index][0])
+        if photo() != shots[index][2]:
+            wrong.append(("redo to " + shots[index][0], differences(photo(), shots[index][2])))
+    return shots, wrong, redone
+
+
+shots, wrong, redone = deferred_probe()
+check("with the probe deferred by a Vertex Paint autosave, it settles on Blender's undo after the Run (%s)"
+      % shots[2][1]["why"][:40], [s[1]["mode"] for s in shots] == ["pending", "pending", "blender", "blender"],
+      [(s[0], s[1]["mode"], s[1]["why"][:80]) for s in shots])
+check("  every Undo gives back its photograph, and every Redo offered (%s)" % ", ".join(redone),
+      not wrong and redone[:2] == ["Run Script", "Object Mode"], wrong)
+# The Move was Blender's alone; the Undo past the probe loads the steps from
+# before it from their files, which frees Blender's stack (a load). Since fix
+# round 3 (October 29) the history first writes the steps only that stack
+# holds to files (`_keep_live_as_files`), so Redo comes back past the load
+# to the Move; on 6d31b90 Redo stopped at Object Mode here, and in the app
+# (an autosave opened in a paint mode, a Run and two moves, Undo to
+# Original) at the Run.
+check("  past the steps kept in files, Redo comes back to the Move too, through the file the history wrote "
+      "before the load", redone == ["Run Script", "Object Mode", "Move"] and not wrong, (redone, wrong))
+shots, wrong, redone = deferred_probe(unkept=True)
+check("control: with no step written before the load, as on 6d31b90, Redo stops at Object Mode (%s)"
+      % ", ".join(redone), redone == ["Run Script", "Object Mode"] and not history.state()["redo"],
+      (redone, history.state()))
+shots, wrong, redone = deferred_probe(unfixed=True)
+check("control: with the push taken by the pending step, the probe fails and the history falls back to checkpoints",
+      shots[2][1]["mode"] == "checkpoint" and "did not restore the scene" in shots[2][1]["why"],
+      [(s[0], s[1]["mode"], s[1]["why"][:80]) for s in shots])
+
 print("\nthe fallback, forced")
 bpy.ops.wm.read_factory_settings(use_empty=False)
 sync, texpaint, anim, history = load_all()
@@ -452,7 +582,7 @@ run("CYLINDER"); push("Add Cylinder"); photos.append(photo())
 run("TRANSLATE"); push("Move"); photos.append(photo())
 select_cube(); run("PAINT_ENTER"); push("Add Paint Slot"); photos.append(photo())
 paint.stroke["Material Base Color"] = stroke.tobytes()
-run("PAINT_WRITE"); push("Texture Paint"); photos.append(photo())
+run("PAINT_WRITE"); push("Image Paint"); photos.append(photo())
 check("every step is a file", all(s["file"] and os.path.isfile(s["file"]) for s in history._steps))
 for index in range(len(photos) - 1, 0, -1):
     undo()

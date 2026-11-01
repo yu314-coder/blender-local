@@ -73,7 +73,7 @@ public struct MeshGroups: Equatable, Sendable {
     public var useRelative = true
     /// The reference key's name (`shape_keys.reference_key`, the Basis).
     public var reference = ""
-    /// `show_only_shape_key` (Shape Key Lock) and `use_shape_key_edit_mode`.
+    /// `show_only_shape_key` (Solo Active Shape Key) and `use_shape_key_edit_mode`.
     public var showOnlyShapeKey = false
     public var shapeKeyEditMode = false
 
@@ -249,11 +249,18 @@ public enum GroupsBpy {
         "bpy.context.scene.tool_settings.vertex_group_weight = \(f(min(max(weight, 0), 1)))"
     }
 
+    /// The Weight field's undo label: none, as no step of Blender's holds the
+    /// setting. A constant the field sends with, so the check can read what
+    /// the field does rather than what Assign does (round 3's review found it
+    /// reading Assign's).
+    public static let weightUndo: String? = nil
+
     // MARK: shape keys
 
     public static func addKey(fromMix: Bool, object name: String) -> Command {
         command("bpy.ops.object.shape_key_add(from_mix=\(py(fromMix)))",
-                undo: fromMix ? "New Shape from Mix" : "Add Shape Key",
+                // Both rows are `shape_key_add`, which names the step.
+                undo: "Add Shape Key",
                 "add_key", [q(name), py(fromMix)])
     }
 
@@ -264,7 +271,8 @@ public enum GroupsBpy {
 
     public static func removeAllKeys(apply: Bool, object name: String) -> Command {
         command("bpy.ops.object.shape_key_remove(all=True, apply_mix=\(py(apply)))",
-                undo: apply ? "Apply All Shape Keys" : "Delete All Shape Keys",
+                // Both rows are `shape_key_remove`, which names the step.
+                undo: "Remove Shape Key",
                 "remove_all_keys", [q(name), py(apply)])
     }
 
@@ -279,16 +287,19 @@ public enum GroupsBpy {
         case value, sliderMin = "slider_min", sliderMax = "slider_max", mute, locked = "lock_shape",
              name, relativeKey = "relative_key", vertexGroup = "vertex_group"
 
-        /// The undo step, named as Blender names a property change.
+        /// The undo step, named as Blender names a property change: after
+        /// the field's own words in its Shape Keys panel
+        /// (`draw_shape_key_properties`, 5.2.1), or the property's name where
+        /// the panel draws an icon.
         public var label: String {
             switch self {
             case .value:       return "Value"
             case .sliderMin:   return "Range Min"
-            case .sliderMax:   return "Range Max"
+            case .sliderMax:   return "Max"
             case .mute:        return "Mute"
             case .locked:      return "Lock Shape"
             case .name:        return "Name"
-            case .relativeKey: return "Relative Key"
+            case .relativeKey: return "Relative To"
             case .vertexGroup: return "Vertex Group"
             }
         }
@@ -318,7 +329,7 @@ public enum GroupsBpy {
         setKey(key, .value, f(v), editing: editing, object: name)
     }
 
-    /// The panel's switches: Relative, Shape Key Lock and Edit Mode.
+    /// The panel's switches: Relative, Solo Active Shape Key and Shape Key Edit Mode.
     public enum Switch: String, CaseIterable, Sendable {
         case useRelative = "use_relative", showOnly = "show_only_shape_key",
              editMode = "use_shape_key_edit_mode"
@@ -326,7 +337,8 @@ public enum GroupsBpy {
         public var label: String {
             switch self {
             case .useRelative: return "Relative"
-            case .showOnly:    return "Shape Key Lock"
+            // The pin's name in 5.2.1 (`show_only_shape_key`).
+            case .showOnly:    return "Solo Active Shape Key"
             case .editMode:    return "Shape Key Edit Mode"
             }
         }
@@ -354,8 +366,38 @@ public extension ModifierKind {
         case .solidify, .smooth, .cast, .simpleDeform, .displace, .wave, .shrinkwrap,
              .weightedNormal, .laplacianSmooth, .correctiveSmooth, .lattice, .weld, .decimate:
             return true
+        // Round 4, group 8: each draws `modifier_vgroup_ui` in its panel, and
+        // tests/modkinds/blender/verify.py measures the group changing what it
+        // makes, and Invert changing it back, on each.
+        case .curve, .wireframe, .hook, .armature, .surfaceDeform, .meshDeform, .dataTransfer,
+             .normalEdit, .mask:
+            return true
         default:
             return false
         }
+    }
+}
+
+/// A name typed into one of the Data tab's name fields — a vertex group's or a
+/// shape key's — until the edit ends.
+///
+/// Blender applies a text field's edit when it ends, by Return or by a click
+/// anywhere else; only Escape throws it away. The field here sent its draft
+/// on Return alone, so a draft left by tapping elsewhere stayed on screen as
+/// the name, where Blender still held the old one (round 3's review). Now the
+/// edit ends the same way Blender's does, and `ending` is what it sends.
+public struct NameDraft: Equatable, Sendable {
+    /// What has been typed, or nil when nothing has.
+    public var text: String?
+
+    public init(text: String? = nil) { self.text = text }
+
+    /// The name to send to Blender as the edit ends over `current` — the name
+    /// Blender holds — or nil when there is nothing to send: nothing typed, or
+    /// the same name again. A blank name is sent too, and refused in words
+    /// (`_blenderkit_groups`), as Return would have.
+    public func ending(over current: String) -> String? {
+        guard let text, text != current else { return nil }
+        return text
     }
 }

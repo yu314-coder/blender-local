@@ -73,6 +73,9 @@ load("_blenderkit_context")
 for sibling in ("_blenderkit_texpaint", "_blenderkit_anim", "_blenderkit_tools"):
     load(sibling)
 sync = load("_blenderkit_sync")
+# The vertex budget the fields' commit prices with, as the app has it on its
+# path (round 4's fix-round review: the line went bare).
+load("_blenderkit_budget")
 
 # The app's context: an undo stack and an initialised GPU.
 window = bpy.context.window_manager.windows[0]

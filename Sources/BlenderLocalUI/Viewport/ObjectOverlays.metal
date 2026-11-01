@@ -69,3 +69,57 @@ fragment float4 overlay_line_fragment(OverlayLineOut in [[stage_in]])
 {
     return in.color;
 }
+
+// Image empties' pictures (ImageEmptyPass.swift; round 4, group 8), as
+// Blender's overlay_image_vert/frag.glsl draw them: the texture times the
+// object's colour; without Opacity, anything under 5% alpha discarded and the
+// rest drawn opaque; with it, blended premultiplied.
+
+struct ImageEmptyVertex {
+    float4 position;   // xyz world
+    float2 uv;         // Blender's uvs: (0,0) at the image's lower left
+    float2 pad;
+};
+
+struct ImageEmptyUniforms {
+    float4x4 viewProjection;
+    float4   tint;      // ob->color
+    float4   flags;     // x: alpha blend, y: premultiplied texture
+};
+
+struct ImageEmptyOut {
+    float4 position [[position]];
+    float2 uv;
+};
+
+vertex ImageEmptyOut image_empty_vertex(uint vid [[vertex_id]],
+                                        const device ImageEmptyVertex *verts [[buffer(0)]],
+                                        constant ImageEmptyUniforms &u [[buffer(1)]])
+{
+    ImageEmptyOut out;
+    out.position = u.viewProjection * float4(verts[vid].position.xyz, 1.0);
+    out.uv = verts[vid].uv;
+    return out;
+}
+
+fragment float4 image_empty_fragment(ImageEmptyOut in [[stage_in]],
+                                     texture2d<float> image [[texture(0)]],
+                                     constant ImageEmptyUniforms &u [[buffer(1)]])
+{
+    constexpr sampler s(filter::linear, address::clamp_to_edge);
+    // Metal's rows run top down; Blender's uvs bottom up.
+    float2 uv = clamp(in.uv, 0.0, 1.0);
+    float4 texel = image.sample(s, float2(uv.x, 1.0 - uv.y));
+    // The texture is uploaded premultiplied (CGContext's only RGBA8 form):
+    // back to straight colour, as `texture_read_as_linearrgb` hands the shader.
+    float3 straight = texel.a > 1e-4 ? texel.rgb / texel.a : float3(0.0);
+    float4 color = float4(straight, texel.a) * u.tint;
+    if (u.flags.x < 0.5) {
+        if (texel.a < 0.05) {
+            discard_fragment();
+        }
+        color.a = 1.0;
+    }
+    color.rgb *= color.a;
+    return color;
+}

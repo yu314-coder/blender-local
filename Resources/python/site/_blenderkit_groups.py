@@ -187,39 +187,47 @@ def _finished(result, refusal):
 # ---------------------------------------------------------------------------
 # Vertex groups
 
+# The group list's own controls work in Weight Paint too, where Blender's Data
+# tab lists the groups and the brush paints the active one. Measured in
+# desktop 5.2.1 with the app's context, in Weight Paint: Add, Remove, the
+# active group, Lock and a rename each ran, Blender stayed in Weight Paint, and
+# Undo and Redo took the removal back and forth there (round 4).
+LIST_MODES = ('OBJECT', 'EDIT', 'WEIGHT_PAINT')
+
+
 def add_group(name):
     """Blender's + : a new group called Group (Group.001, …), made active."""
-    obj = _object(name, active=True)
+    obj = _object(name, modes=LIST_MODES, active=True)
     _finished(bpy.ops.object.vertex_group_add(), "Blender did not add a vertex group.")
 
 
 def remove_group(name, group):
-    obj = _object(name, active=True)
+    obj = _object(name, modes=LIST_MODES, active=True)
     obj.vertex_groups.active_index = _group(obj, group).index
     _finished(bpy.ops.object.vertex_group_remove(all=False), "Blender did not remove " + group + ".")
 
 
 def remove_all_groups(name):
-    obj = _object(name, active=True)
+    obj = _object(name, modes=LIST_MODES, active=True)
     if not len(obj.vertex_groups):
         raise Refusal(obj.name + " has no vertex groups to delete.")
     _finished(bpy.ops.object.vertex_group_remove(all=True), "Blender did not delete the vertex groups.")
 
 
 def rename_group(name, group, wanted):
-    obj = _object(name)
+    obj = _object(name, modes=LIST_MODES)
     if not wanted.strip():
         raise Refusal("A vertex group needs a name.")
     _group(obj, group).name = wanted
 
 
 def set_active_group(name, group):
-    obj = _object(name)
+    obj = _object(name, modes=LIST_MODES)
     obj.vertex_groups.active_index = _group(obj, group).index
 
 
 def lock_group(name, group, locked):
-    obj = _object(name)
+    obj = _object(name, modes=LIST_MODES)
     _group(obj, group).lock_weight = bool(locked)
 
 

@@ -99,6 +99,30 @@ public final class BpyBridge {
     /// ran on goes back first, too (`Bpy.objectSelection`).
     @ObservationIgnored private var rememberedPush: String?
 
+    /// Where Blender's history stood (index, steps) when a tap reached
+    /// Blender's edit mesh without an undo step to hold it: carried by a
+    /// command that records none — a setting such as the Orientation menu,
+    /// or a command that failed — or handed over early by a read
+    /// (`captureWithSelection`). While the history has not moved since, the
+    /// step on top is from before the tap, so the next operator's redo has
+    /// to hand the selection over again (`unrecordedEditSelectionPush`).
+    /// Round 4's review measured the read's case; the setting's is the same
+    /// flow in another order — tap a face, choose Normal, Move, type Move Z.
+    @ObservationIgnored private var unrecordedPushMark: [Int]?
+
+    private var historyPlace: [Int] { [session.backendHistory.index, session.backendHistory.steps] }
+
+    /// The viewport's edit selection as a push, when the last one Blender got
+    /// is in no undo step (`unrecordedPushMark`). The mirror has read it back
+    /// since, so the viewport's selection is Blender's; not when the mirror
+    /// could not line it up with the drawn mesh (`editTopology` nil), where
+    /// the viewport shows none and a push would select nothing.
+    private func unrecordedEditSelectionPush() -> String? {
+        guard let mark = unrecordedPushMark, mark == historyPlace, let scene, scene.mode == .edit,
+              let object = scene.active, !object.editsPoints, object.editTopology != nil else { return nil }
+        return Bpy.pushEditSelection(scene.editSelection, mode: scene.selectMode, of: object)
+    }
+
     /// Bumped whenever a *different* operator becomes the adjustable one.
     ///
     /// Adjusting does not bump it. The redo panel needs to tell "the user added
@@ -233,7 +257,14 @@ public final class BpyBridge {
         // What was tapped since Blender last reported its selection. Blender's
         // operators act on Blender's selection, and nothing else tells it.
         let push = session.usesRealBlender ? pendingEditSelectionPush() : nil
-        let source = Self.script(push: push, discardBackup: discard, body: body)
+        var source = Self.script(push: push, discardBackup: discard, body: body)
+        // In Local View, as Blender runs its 3D View's commands there: under
+        // the borrowed view, where only what Local View holds is selected,
+        // selectable or visible (`_blenderkit_localview.run`, which does
+        // nothing in Edit Mode or once Blender has left Local View). Without
+        // it a Select by Type, a Delete or a gizmo Move took objects the 3D
+        // View does not draw (round 4's review of group 7, measured).
+        if session.usesRealBlender, scene.localView != nil { source = LocalViewBpy.scoped(source) }
 
         // The runtime mirrors bpy back into the display cache as part of
         // evaluating, so by the time this returns the viewport is current.
@@ -245,6 +276,13 @@ public final class BpyBridge {
         let outcome = Outcome(python: python, succeeded: error == nil, error: error,
                               objectsBefore: before, objectsAfter: scene.objects.count)
         lastOutcome = outcome
+        // A step recorded below holds Blender's selection as it now is; a
+        // tap carried without one is held by nothing.
+        if outcome.succeeded, label != nil {
+            unrecordedPushMark = nil
+        } else if push != nil {
+            unrecordedPushMark = historyPlace
+        }
 
         // Blender's Info editor lists the operator that ran. It is the same
         // string that ran, not a reconstruction of it.
@@ -368,13 +406,15 @@ public final class BpyBridge {
     @discardableResult
     public func perform(_ op: LastOperator) -> Outcome {
         var op = op
+        // In Local View an add goes into it, as Blender's does from its view.
+        if session.usesRealBlender, scene?.localView != nil { op = .addingIntoLocalView(op) }
         let outcome: Outcome
         // Which history is in use has to be known before the body is built:
         // with Blender's undo the way back is an undo, and a mesh backup would
         // only be one more copy of the mesh in every undo step.
         if !session.isRunning { session.prepareBackendChange() }
         let byUndo = session.usesRealBlender && session.backendUsesBlenderUndo
-        let push = session.usesRealBlender ? pendingEditSelectionPush() : nil
+        let push = session.usesRealBlender ? (pendingEditSelectionPush() ?? unrecordedEditSelectionPush()) : nil
         // Read before the operator changes it: what it is about to act on.
         let selection = session.usesRealBlender && !op.needsEditMode
             ? scene.map(Bpy.objectSelection(of:)) : nil
@@ -624,6 +664,55 @@ public final class BpyBridge {
         return session.capture(python)
     }
 
+    /// Reads something that depends on Blender's edit selection, after
+    /// handing it what the viewport has selected since Blender last heard.
+    ///
+    /// The Normal orientation and the N panel's Median read Blender's edit
+    /// mesh; a tap in Edit Mode changes only the viewport's selection until
+    /// the next command pushes it (`editSelectionPending`), so read without
+    /// the push they described the selection before the tap. The push is the
+    /// one any command makes, made early. Not while a gesture holds Blender:
+    /// a stroke or a point drag owns the state its frames rewind.
+    ///
+    /// The tap stays pending: the next command pushes it again, in its own
+    /// evaluation, and its redo panel keeps that push (`rememberedPush`).
+    /// This push is outside every undo step, so a redo that rewinds to the
+    /// step before the command lands on the selection before the tap. It
+    /// used to clear the flag, and then the panel re-ran on that older
+    /// selection: measured in 5.2.1 with the app's undo, vertex 7 recorded,
+    /// vertex 0 tapped and read early, a Move of [0], and the panel's Move Z
+    /// 0.5 moved [7] — with the push carried by the command it moved [0]
+    /// (round 4's review of group 5; scripts/run-transformops-blender-check.sh,
+    /// "a tap read early"). Pushing twice is the same push: it writes the
+    /// whole selection and its order afresh (`pushEditSelection`). The push
+    /// is marked as held by no step too (`unrecordedPushMark`), for when a
+    /// setting carries the tap before the command does.
+    public func captureWithSelection(_ python: String) -> String? {
+        guard scene != nil, !session.isRunning, session.gestureHold == nil else { return nil }
+        let push = session.usesRealBlender ? pendingEditSelectionPush() : nil
+        let answer = session.capture([push, python].compactMap { $0 }.joined(separator: "\n"))
+        if push != nil { unrecordedPushMark = historyPlace }
+        return answer
+    }
+
+    /// Blender's transform orientation and its matrix, as the gizmo is to be
+    /// drawn on (`_blenderkit_orient`). Nil off the real Blender, whose
+    /// stand-in has the Global orientation only, and while Blender is busy.
+    public func orientationState() -> OrientationState? {
+        guard session.usesRealBlender,
+              let text = captureWithSelection(OrientationBpy.report) else { return nil }
+        let line = text.split(separator: "\n").last.map(String.init) ?? ""
+        return OrientationState.parse(line)
+    }
+
+    /// What auto keying adds after a gizmo transform's call, as `run` adds it
+    /// (`Bpy.autoKeying`), or nil: the redo panel's operators carry it as
+    /// their `afterward`.
+    public func autoKeying(after python: String) -> String? {
+        let parts = Bpy.autoKeying(after: python, scene: scene, interpreter: session.isRealRuntime)
+        return parts.isEmpty ? nil : parts.joined(separator: "\n")
+    }
+
     // MARK: sculpting
 
     /// Whether strokes in Sculpt Mode go to Blender's own brushes. False on
@@ -644,25 +733,63 @@ public final class BpyBridge {
         set { session.pointDragOpen = newValue }
     }
 
-    /// The stroke in progress, from `sculptBegin` to `sculptEnd`. While it is
-    /// open the session runs nothing else (`BpySession.sculptStrokeOpen`).
+    /// A drag Blender previews because a constraint decides it, from
+    /// `beginConstrainedDrag` to `endConstrainedDrag` (Constraints.swift).
+    /// While it is open the session runs nothing else
+    /// (`BpySession.constrainedDragOpen`).
+    public internal(set) var constrainedDragOpen: Bool {
+        get { session.constrainedDragOpen }
+        set { session.constrainedDragOpen = newValue }
+    }
+
+    /// The stroke in progress, from `sculptBegin` to `sculptEnd` — a sculpt
+    /// stroke, or a Weight Paint or Vertex Paint one. While it is open the
+    /// session runs nothing else (`BpySession.sculptStrokeOpen`).
     public private(set) var sculptStrokeActive = false {
         didSet { session.sculptStrokeOpen = sculptStrokeActive }
     }
 
+    /// Whose brush the stroke in progress is: Sculpt Mode's
+    /// (`_blenderkit_sculpt`), or Weight Paint's or Vertex Paint's
+    /// (`_blenderkit_vwpaint`, the mode it began in).
+    public enum BrushStroke: Equatable, Sendable {
+        case sculpt
+        case paint(InteractionMode)
+
+        /// What a failure is reported under before Blender names the step.
+        public var name: String {
+            switch self {
+            case .sculpt:          return SculptBpy.strokeName
+            case .paint(let mode): return PaintModeBpy.strokeName(mode)
+            }
+        }
+
+        var module: String {
+            switch self {
+            case .sculpt: return "_blenderkit_sculpt"
+            case .paint:  return "_blenderkit_vwpaint"
+            }
+        }
+    }
+
+    /// The kind of the stroke in progress.
+    public private(set) var strokeKind: BrushStroke = .sculpt
+
     /// Starts a stroke on `object` with Blender's brush, the view aimed where
     /// the 3D View's camera looks. Nil, with the reason on the banner, when
-    /// Blender refuses — no mesh in Sculpt Mode, no brush, no undo or GPU.
+    /// Blender refuses — no mesh in the mode, no brush, no undo or GPU.
     ///
     /// No mirroring pass: each chunk mirrors the one object it changed
-    /// (`_blenderkit_sculpt._mirror`), and the history's step is written when
-    /// the stroke ends, as the steps Blender pushed for it.
+    /// (`_blenderkit_sculpt._mirror`, `_blenderkit_vwpaint.push`), and the
+    /// history's step is written when the stroke ends, as the steps Blender
+    /// pushed for it.
     public func sculptBegin(object: String, camera: SculptCamera, viewWidth: Float,
-                            viewHeight: Float, mode: SculptStrokeMode) -> SculptStrokeStart? {
+                            viewHeight: Float, mode: SculptStrokeMode,
+                            kind: BrushStroke = .sculpt) -> SculptStrokeStart? {
         guard scene != nil else { return nil }
         guard session.usesRealBlender else { return nil }
         guard !session.isRunning else {
-            reportFailure("Sculpt Stroke", "A script is running.")
+            reportFailure(kind.name, "A script is running.")
             return nil
         }
         // A stroke whose end never came — its gesture went away without
@@ -673,11 +800,19 @@ public final class BpyBridge {
         // The history's first step is pushed here if it has none yet, before
         // the stroke counts Blender's steps from where the stack stands.
         session.prepareBackendChange()
-        guard let text = sculptCapture(SculptBpy.begin(object: object, camera: camera,
-                                                         viewWidth: viewWidth, viewHeight: viewHeight,
-                                                         mode: mode), failing: "Sculpt Stroke"),
+        let python: String
+        switch kind {
+        case .sculpt:
+            python = SculptBpy.begin(object: object, camera: camera, viewWidth: viewWidth,
+                                     viewHeight: viewHeight, mode: mode)
+        case .paint:
+            python = PaintModeBpy.begin(object: object, camera: camera, viewWidth: viewWidth,
+                                        viewHeight: viewHeight, invert: mode == .invert)
+        }
+        guard let text = sculptCapture(python, failing: kind.name),
               let start = SculptJSON.last(SculptStrokeStart.self, in: text)
         else { return nil }
+        strokeKind = kind
         sculptStrokeActive = true
         return start
     }
@@ -686,29 +821,56 @@ public final class BpyBridge {
     /// the stroke should end.
     public func sculptChunk(_ points: [SculptPoint]) -> SculptChunkResult? {
         guard sculptStrokeActive, !points.isEmpty else { return nil }
-        guard let text = sculptCapture(SculptBpy.chunk(points), failing: "Sculpt Stroke") else { return nil }
+        let python = strokeKind == .sculpt ? SculptBpy.chunk(points) : PaintModeBpy.chunk(points)
+        guard let text = sculptCapture(python, failing: strokeKind.name) else { return nil }
         return SculptJSON.last(SculptChunkResult.self, in: text)
     }
 
     /// Ends the stroke. What it made is one step of the history, as deep as
-    /// the steps Blender pushed for it, so one Undo takes it all back.
+    /// the steps Blender pushed for it, so one Undo takes it all back, named
+    /// as Blender's undo history names it: after the brush ("Draw Brush",
+    /// `SculptStrokeEnd.step`) for a sculpt stroke, after the mode ("Weight
+    /// Paint") for a paint one, or the operator's own name when Blender's
+    /// stack could not be read.
+    ///
+    /// `afterRefusal`: a chunk was just refused. A paint stroke then ends
+    /// without replaying the dabs its throttle held back
+    /// (`PaintModeBpy.cancel`), which would only meet the same refusal again;
+    /// a sculpt stroke's end is the same either way (`_blenderkit_sculpt.cancel`).
     @discardableResult
-    public func sculptEnd(label: String = "Sculpt Stroke") -> SculptStrokeEnd? {
+    public func sculptEnd(label: String? = nil, afterRefusal: Bool = false) -> SculptStrokeEnd? {
         guard sculptStrokeActive else { return nil }
+        let label = label ?? strokeKind.name
         // Open until Blender has ended it, and closed before the history
         // records it: the record is a push the open stroke would refuse.
-        let text = sculptCapture(SculptBpy.end, failing: label)
+        let python = strokeKind == .sculpt ? SculptBpy.end
+            : (afterRefusal ? PaintModeBpy.cancel : PaintModeBpy.end)
+        let text = sculptCapture(python, failing: label)
         sculptStrokeActive = false
         guard let text, let end = SculptJSON.last(SculptStrokeEnd.self, in: text) else { return nil }
         // A stroke gathered for the lift (a Multires level) that could not be
         // made then: what Blender said, where the reader is looking.
         if let refused = end.refused { reportFailure(label, refused) }
         if end.pushed > 0 {
-            session.logOperator("# \(label): \(end.dabs) dabs of Blender's brush in \(end.chunks) "
-                                + "chunk\(end.chunks == 1 ? "" : "s") (_blenderkit_sculpt)", output: [])
-            session.recordBackendChange(label)
+            let step = end.step ?? label
+            session.logOperator("# \(step): \(end.dabs) dabs of Blender's brush in \(end.chunks) "
+                                + "chunk\(end.chunks == 1 ? "" : "s") (\(strokeKind.module))", output: [])
+            session.recordBackendChange(step)
         }
         return end
+    }
+
+    /// Blender's Weight Paint or Vertex Paint settings, read without a
+    /// mirroring pass.
+    public func paintState() -> PaintModeState? {
+        guard session.usesRealBlender, let text = capture(PaintModeBpy.stateQuery) else { return nil }
+        return PaintModeState.parse(text)
+    }
+
+    /// Blender's Essentials brushes for the paint mode Blender is in.
+    public func paintBrushes() -> [String] {
+        guard session.usesRealBlender, let text = capture(PaintModeBpy.brushesQuery) else { return [] }
+        return SculptJSON.last([String].self, in: text) ?? []
     }
 
     /// Blender's sculpt settings, read without a mirroring pass.
@@ -889,6 +1051,10 @@ public enum Bpy {
         _bk_o = bpy.context.view_layer.objects.active
         if _bk_o is None:
             raise RuntimeError(\(quote(what)) + " needs an object. Select a mesh, a curve or a lattice first.")
+        if _bk_o.type == 'FONT':
+            raise RuntimeError(_bk_o.name + "'s text is typed into its Body Text field (Tab, or Properties ▸ "
+                               "Data), which writes Blender's body; Blender's own Edit Mode on a text keeps "
+                               "what is typed where it cannot be read back.")
         if _bk_o.type not in ('MESH', 'CURVE', 'LATTICE'):
             raise RuntimeError(\(quote(what)) + " works on meshes, curves and lattices here, and " + _bk_o.name + " is "
                                + {'LIGHT': 'a light', 'CAMERA': 'a camera', 'EMPTY': 'an empty',
@@ -993,20 +1159,11 @@ public enum Bpy {
         return lines.joined(separator: "\n")
     }
 
-    public static func setLocation(_ name: String, _ v: SIMD3<Float>) -> String {
-        String(format: "bpy.data.objects[%@].location = (%.4f, %.4f, %.4f)",
-               quote(name), v.x, v.y, v.z)
-    }
-
-    public static func setRotation(_ name: String, _ v: SIMD3<Float>) -> String {
-        String(format: "bpy.data.objects[%@].rotation_euler = (%.4f, %.4f, %.4f)",
-               quote(name), v.x, v.y, v.z)
-    }
-
-    public static func setScale(_ name: String, _ v: SIMD3<Float>) -> String {
-        String(format: "bpy.data.objects[%@].scale = (%.4f, %.4f, %.4f)",
-               quote(name), v.x, v.y, v.z)
-    }
+    // An object's Location, Rotation and Scale are written by the Transform
+    // fields' builder (`TransformChannels.python(writing:to:)`), which prices
+    // the new vector first: the three unpriced whole-vector writers that were
+    // here, used by nothing, were removed in round 4's fix round after its
+    // review measured their line passing a move the Data API row refused.
 
     public static func rename(_ name: String, to wanted: String) -> String {
         "bpy.data.objects[\(quote(name))].name = \(quote(wanted))"
@@ -1475,7 +1632,7 @@ public enum Bpy {
     /// `empty_display_size` (measured: scale (1,2,3) made display size 1 into
     /// 3, the largest factor), and so is an area light.
     public static let applyReach = ObjectReach(
-        name: "Apply Transform", undoName: "Apply Object Transform",
+        name: "Apply", undoName: "Apply Object Transform",
         ignoredTypes: ["CAMERA", "LIGHT", "SPEAKER", "LIGHT_PROBE", "VOLUME"],
         lightKinds: ["AREA"])
 
@@ -1601,16 +1758,32 @@ public enum Bpy {
     /// (`ModifierStack.remeshVoxelFloor`), the floor is set in the same
     /// evaluation — `modifiers.active` is the one just added, measured even
     /// ahead of a modifier pinned to last.
+    ///
+    /// Priced first, whoever sends it (`priceAdd`): the Add Modifier rows,
+    /// and the DEBUG hooks that add one. A Remesh is priced at the floor it
+    /// is given in the same evaluation.
     public static func addModifier(_ kind: ModifierKind, on mesh: MeshData) -> [String] {
-        var lines = [addModifier(kind.bpyType)]
+        var settings: [(String, String)] = []
+        var after: [String] = []
         if kind == .remesh {
             let floor = ModifierStack.remeshVoxelFloor(for: mesh)
             if floor > Modifier(kind: .remesh).voxelSize {
-                lines.append(String(format: "bpy.context.object.modifiers.active.voxel_size = %.6f",
-                                    floor))
+                let value = String(format: "%.6f", floor)
+                settings.append(("voxel_size", value))
+                after.append("bpy.context.object.modifiers.active.voxel_size = \(value)")
             }
         }
-        return lines
+        return [priceAdd(kind.bpyType, settings), addModifier(kind.bpyType)] + after
+    }
+
+    /// The vertex budget's price for Add Modifier ▸ `type` on the active
+    /// object (`_blenderkit_budget.price_add`), at Blender's defaults for the
+    /// kind and `settings` (Python literals) the add sets with it. It refuses
+    /// in words before anything is added; the simulator's stand-in passes.
+    public static func priceAdd(_ type: String, _ settings: [(String, String)] = []) -> String {
+        let extra = settings.isEmpty ? ""
+            : ", settings={" + settings.map { "\(quote($0.0)): \($0.1)" }.joined(separator: ", ") + "}"
+        return "__import__('_blenderkit_budget').price_add(\(quote(type))\(extra))"
     }
     /// Apply, on any row. A bare call, so `BpyModeGuard` runs it in object
     /// mode (measured in 5.2.1: from edit mode its poll refuses with "This
@@ -1636,6 +1809,13 @@ public enum Bpy {
     /// success and the row would not move, so the refusal is raised in words.
     /// Not a bare call: the move works in any mode, and the mode guard would
     /// take edit mode down and up for nothing.
+    ///
+    /// The move is priced before Blender makes it (`_blenderkit_multires.
+    /// check_move`): a move changes what each modifier is given, and a
+    /// Subdivision Surface moved above a Skin hands it the subdivided mesh —
+    /// 1,535 loops of edges for a cube at level 4, which Blender's Skin took
+    /// 38.4 s over (round 4's review). Not after: `bpy.ops` evaluates the
+    /// view layer once the move has finished, which took 44.1 s there.
     public static func moveModifier(_ name: String, up: Bool) -> String {
         let direction = up ? "up" : "down"
         let rule = up
@@ -1644,6 +1824,7 @@ public enum Bpy {
         let refusal = "Move \(up ? "Up" : "Down"): Blender keeps \"\(name)\" where it is. "
             + rule + "and nothing moves past either end of the stack"
         return """
+        __import__('_blenderkit_budget').check_move(\(quote(name)), \(up ? "True" : "False"))
         if 'CANCELLED' in bpy.ops.object.modifier_move_\(direction)(modifier=\(quote(name))):
             raise RuntimeError(\(quote(refusal)))
         """
@@ -1708,13 +1889,29 @@ public enum Bpy {
         "bpy.context.object.modifiers[\(quote(modifier))].\(key) = \(value)"
     }
 
-    /// Refuses, before the line after it sets anything, a Subdivision level or
-    /// Array count whose mesh would pass the app's vertex budget or the memory
-    /// left (`_blenderkit_multires.check_setting`). The simulator's stand-in
-    /// has no budget to keep, and the call returns there.
-    public static func checkModifierSetting(_ modifier: String, _ key: String,
-                                            _ value: String) -> String {
-        "__import__('_blenderkit_multires').check_setting(\(quote(modifier)), \(quote(key)), \(value))"
+    /// The vertex budget's price for a modifier row's edit: every setting the
+    /// edit sends, together, laid over Blender's values and the whole stack
+    /// counted again (`_blenderkit_budget.price_modifier`). `modifierEdit`
+    /// puts it in front of every edit, so no row can send a setting bare —
+    /// round 4's reviews found the Bevel's Segments, the Mirror's axes and the
+    /// Screw's Steps sent with no price, each a budget bypass, because each
+    /// row chose which of its settings to price. `settings` are (Blender's
+    /// property name, a Python literal).
+    public static func priceModifierEdit(_ modifier: String, _ settings: [(String, String)]) -> String {
+        "__import__('_blenderkit_budget').price_modifier(\(quote(modifier)), {"
+            + settings.map { "\(quote($0.0)): \($0.1)" }.joined(separator: ", ") + "})"
+    }
+
+    /// (key, value) when `line` is one assignment to the modifier `name`'s
+    /// property, as `setModifierProperty` writes it; nil otherwise.
+    static func modifierAssignment(_ line: String, of name: String) -> (String, String)? {
+        let prefix = "bpy.context.object.modifiers[\(quote(name))]."
+        guard line.hasPrefix(prefix), !line.contains("\n") else { return nil }
+        let rest = line.dropFirst(prefix.count)
+        guard let equals = rest.range(of: " = ") else { return nil }
+        let key = String(rest[..<equals.lowerBound])
+        guard !key.isEmpty, key.allSatisfy({ $0.isLetter || $0.isNumber || $0 == "_" }) else { return nil }
+        return (key, String(rest[equals.upperBound...]))
     }
 
     /// Every setting a modifier row can change, as Blender's own property
@@ -1736,15 +1933,12 @@ public enum Bpy {
         switch m.kind {
         case .subdivision:
             // Blender keeps viewport and render levels apart; a level set in
-            // the panel that a render ignores is a trap. The check rides first
-            // and changes with the level, so `modifierEdit` sends it with
-            // every new level: the stepper had no size check, and each level
-            // is four times the mesh (round 3's review).
-            return [checkModifierSetting(name, "levels", "\(m.levels)"),
-                    set("levels", "\(m.levels)"), set("render_levels", "\(m.levels)")]
+            // the panel that a render ignores is a trap. Priced by
+            // `modifierEdit`, as every row's edit is: each level is four
+            // times the mesh (round 3's review).
+            return [set("levels", "\(m.levels)"), set("render_levels", "\(m.levels)")]
         case .array:
-            return [checkModifierSetting(name, "count", "\(m.count)"),
-                    set("count", "\(m.count)"),
+            return [set("count", "\(m.count)"),
                     set("relative_offset_displace",
                         "(\(f(m.relativeOffset.x)), \(f(m.relativeOffset.y)), \(f(m.relativeOffset.z)))")]
         case .mirror:
@@ -1798,7 +1992,10 @@ public enum Bpy {
             return lines
         case .screw:
             // render_steps alongside steps, the same split Subdivision has:
-            // a viewport value a render would otherwise ignore.
+            // a viewport value a render would otherwise ignore. The stepper
+            // runs to 512 and once sent its steps bare, so a 100,000-vertex
+            // mesh went to 51 million (round 4's review); `modifierEdit`
+            // prices every edit now.
             return [set("angle", f(m.angle)),
                     set("steps", "\(m.count)"),
                     set("render_steps", "\(m.count)"),
@@ -1839,7 +2036,10 @@ public enum Bpy {
         case .multires:
             // The three levels. `total_levels` is read-only; the Subdivide,
             // Unsubdivide and Delete Higher operators change it
-            // (`Bpy.multires`).
+            // (`Bpy.multires`). The Sculpt stepper once sent its level bare,
+            // so from inside Sculpt Mode it went round the base-mesh budget
+            // Sculpt Mode's way in keeps (`refuse_heavy_level`; round 3's
+            // review); `modifierEdit`'s price asks that budget too.
             return [set("levels", "\(m.levels)"),
                     set("sculpt_levels", "\(m.sculptLevels)"),
                     set("render_levels", "\(m.renderLevels)")]
@@ -1876,11 +2076,37 @@ public enum Bpy {
             // Nothing the row can change beyond the two switches every row
             // has (`modifierVisibility`).
             return []
+        case .curve, .wireframe, .skin, .hook, .armature, .surfaceDeform, .meshDeform,
+             .dataTransfer, .normalEdit, .mask, .build:
+            return declaredSettings(m)
         }
     }
 
+    /// A declared row's settings (`ModifierKind.fields`): one assignment per
+    /// setting Blender sent, built from the text it sent, so an unchanged
+    /// setting reproduces its line exactly and `modifierEdit` sends only the
+    /// one that changed. A setting Blender did not send is not written —
+    /// there is no default here to write over what Blender holds. The other
+    /// object goes last, as Boolean's does: a line Blender refuses there has
+    /// had the settings above it. `modifierEdit` prices what is sent.
+    static func declaredSettings(_ m: Modifier) -> [String] {
+        var lines: [String] = [], pointers: [String] = []
+        for field in m.kind.fields where !field.isReadOnly {
+            guard let value = m.values[field.key], let python = field.python(for: value) else { continue }
+            let line = setModifierProperty(m.name, field.key, python)
+            if field.isObject {
+                pointers.append(line)
+            } else {
+                lines.append(line)
+            }
+        }
+        return lines + pointers
+    }
+
     /// The two switches every modifier row has, whatever its kind: Blender's
-    /// `show_viewport` and `show_render`.
+    /// `show_viewport` and `show_render`. Showing one is priced with every
+    /// other edit (`modifierEdit`): a hidden Subdivision at level 6, Skin or
+    /// Wireframe makes nothing until it is shown (round 4, group 8).
     public static func modifierVisibility(_ m: Modifier) -> [String] {
         func py(_ b: Bool) -> String { b ? "True" : "False" }
         return [setModifierProperty(m.name, "show_viewport", py(m.showInViewport)),
@@ -1899,11 +2125,20 @@ public enum Bpy {
     /// and failed each time on the KeyError. Now the row writes nothing
     /// itself — what it shows is what the mirror brings back — and an edit
     /// carries only its own change. An empty list means nothing changed.
+    ///
+    /// Every edit is priced first, all of its settings together
+    /// (`priceModifierEdit`): the price is not the row's to choose. A line
+    /// that is not an assignment of the modifier's own (Smooth by Angle's
+    /// node inputs, `set_node_input`) goes as it is; the node group's inputs
+    /// are outside what the budget can count (`_blenderkit_budget._UNMODELLED`).
     public static func modifierEdit(from current: Modifier, to changed: Modifier) -> [String] {
         let before = Set(modifierVisibility(current) + modifierSettings(current)
                          + modifierVertexGroup(current))
-        return (modifierVisibility(changed) + modifierSettings(changed) + modifierVertexGroup(changed))
+        let lines = (modifierVisibility(changed) + modifierSettings(changed) + modifierVertexGroup(changed))
             .filter { !before.contains($0) }
+        let settings = lines.compactMap { modifierAssignment($0, of: changed.name) }
+        guard !settings.isEmpty else { return lines }
+        return [priceModifierEdit(changed.name, settings)] + lines
     }
 
     /// The Vertex Group field and its Invert, for the kinds that take one
@@ -1924,6 +2159,14 @@ public enum Bpy {
     /// The fallback for a mesh whose vertices the viewport cannot name by
     /// index — one drawn through a modifier that changes its topology.
     ///
+    /// Edges and faces are deselected with the vertices: a BMVert's `select`
+    /// set to False leaves its edges and faces as they were, and Blender
+    /// rebuilds the vertex selection from the faces whenever it reloads the
+    /// edit mesh. Measured in desktop 5.2.1 on a 4 × 4 grid: 10 of 25
+    /// vertices selected this way with 16 faces still selected, and a switch
+    /// of the active shape key — which reloads the edit mesh from the key —
+    /// selected all 25 (round 3's review).
+    ///
     /// The tolerance is 1e-4 of a Blender unit: a tenth of a millimetre at
     /// Blender's default scale, far below anything two distinct vertices of the
     /// same mesh would be apart, and far above the error of a round trip
@@ -1942,6 +2185,10 @@ public enum Bpy {
             bpy.ops.object.mode_set(mode='EDIT')
         _bm = bmesh.from_edit_mesh(_o.data)
         _bm.verts.ensure_lookup_table()
+        for _f in _bm.faces:
+            _f.select = False
+        for _e in _bm.edges:
+            _e.select = False
         for _v in _bm.verts:
             _v.select = False
         for _v in _bm.verts:
@@ -1973,13 +2220,14 @@ public enum Bpy {
                 .map { mesh.vertices[$0].position }
             return selectVertices(of: object.name, at: points)
         }
+        let order = selectionOrder(selection, topology: topology)
         switch mode {
         case .vertex:
             return pushEditSelection(object: object.name, mode: .vertex,
                                      vertices: selection.vertices.sorted()
                                         .filter { $0 < topology.vertexCount },
                                      vertexCount: topology.vertexCount,
-                                     polygonCount: topology.polygonCount)
+                                     polygonCount: topology.polygonCount, order: order)
         case .edge:
             let pairs = selection.edges.sorted().compactMap { e -> (Int, Int)? in
                 let base = e * 2
@@ -1988,15 +2236,38 @@ public enum Bpy {
             }
             return pushEditSelection(object: object.name, mode: .edge, edges: pairs,
                                      vertexCount: topology.vertexCount,
-                                     polygonCount: topology.polygonCount)
+                                     polygonCount: topology.polygonCount, order: order)
         case .face:
             let polygons = Set(selection.faces.compactMap { f -> Int? in
                 f < topology.trianglePolygons.count ? Int(topology.trianglePolygons[f]) : nil
             }).sorted()
             return pushEditSelection(object: object.name, mode: .face, polygons: polygons,
                                      vertexCount: topology.vertexCount,
-                                     polygonCount: topology.polygonCount)
+                                     polygonCount: topology.polygonCount, order: order)
         }
+    }
+
+    /// The selection order as `pushEditSelection` writes it: each entry as
+    /// (kind, a, b) — a vertex or a face by its index (b unused), an edge by
+    /// its two vertices from Blender's edge list, which the push finds it by
+    /// as it finds selected edges — and the active face kept apart. Entries
+    /// the topology does not name are left out.
+    static func selectionOrder(_ selection: EditSelection,
+                               topology: EditTopology) -> (entries: [(Int, Int, Int)], activeFace: Int?) {
+        let ends = topology.blenderEdges
+        let entries = selection.history.compactMap { element -> (Int, Int, Int)? in
+            switch element {
+            case .vertex(let v):
+                return v >= 0 && v < topology.vertexCount ? (0, v, -1) : nil
+            case .edge(let e):
+                guard e >= 0, 2 * e + 1 < ends.count else { return nil }
+                return (1, Int(ends[2 * e]), Int(ends[2 * e + 1]))
+            case .face(let f):
+                return f >= 0 && f < topology.polygonCount ? (2, f, -1) : nil
+            }
+        }
+        let face = selection.activeFace.flatMap { $0 >= 0 && $0 < topology.polygonCount ? $0 : nil }
+        return (entries, face)
     }
 
     /// The same, from Blender's own indices.
@@ -2004,10 +2275,21 @@ public enum Bpy {
     /// The counts are the mesh the indices were read from. If Blender's mesh no
     /// longer has them, the indices name other elements, and acting on those
     /// would be worse than refusing — so it refuses, with a message.
+    ///
+    /// `order` is Blender's selection order to leave behind
+    /// (`selectionOrder`): written after the flags, oldest first, each entry
+    /// only if it is selected then — Blender's order holds selected elements
+    /// (`BM_select_history_validate`) — and the active face set when the last
+    /// entry is a face, as Blender's click on a face sets it
+    /// (`EDBM_select_pick`), or else from `activeFace`. Measured in 5.2.1
+    /// with the app's context: a vertex pushed with its place in the order
+    /// gave `shortest_path_pick` and `select_next_item` the start Blender's
+    /// own click gives them; with no order both did nothing.
     public static func pushEditSelection(object name: String, mode: MeshSelectMode,
                                          vertices: [Int] = [], edges: [(Int, Int)] = [],
                                          polygons: [Int] = [],
-                                         vertexCount: Int, polygonCount: Int) -> String {
+                                         vertexCount: Int, polygonCount: Int,
+                                         order: (entries: [(Int, Int, Int)], activeFace: Int?) = ([], nil)) -> String {
         var lines = [
             "import bmesh",
             "_bk_o = bpy.data.objects[\(quote(name))]",
@@ -2046,7 +2328,32 @@ public enum Bpy {
             lines += ["for _bk_i in [\(faces.map(String.init).joined(separator: ", "))]:",
                       "    _bk_bm.faces[_bk_i].select_set(True)"]
         }
-        lines += ["_bk_bm.select_flush_mode()", "bmesh.update_edit_mesh(_bk_o.data)"]
+        lines += ["_bk_bm.select_flush_mode()"]
+        // A deselect-all clears Blender's order (BM_mesh_elem_hflag_disable_test);
+        // the flags above did not, so it is cleared here and written afresh.
+        lines.append("_bk_bm.select_history.clear()")
+        let entries = order.entries.filter { k, a, b in
+            a >= 0 && (k == 0 ? a < vertexCount : k == 2 ? a < polygonCount
+                       : (b >= 0 && a < vertexCount && b < vertexCount))
+        }
+        if !entries.isEmpty {
+            lines += ["for _bk_k, _bk_a, _bk_b in [\(entries.map { "(\($0.0), \($0.1), \($0.2))" }.joined(separator: ", "))]:",
+                      "    if _bk_k == 0:",
+                      "        _bk_x = _bk_bm.verts[_bk_a]",
+                      "    elif _bk_k == 2:",
+                      "        _bk_x = _bk_bm.faces[_bk_a]",
+                      "    else:",
+                      "        _bk_x = _bk_bm.edges.get((_bk_bm.verts[_bk_a], _bk_bm.verts[_bk_b]))",
+                      "    if _bk_x is not None and _bk_x.select:",
+                      "        _bk_bm.select_history.add(_bk_x)"]
+        }
+        let face = entries.last.flatMap { $0.0 == 2 ? $0.1 : nil }
+            ?? order.activeFace.flatMap { $0 >= 0 && $0 < polygonCount ? $0 : nil }
+        if let face {
+            lines += ["if _bk_bm.faces[\(face)].select:",
+                      "    _bk_bm.faces.active = _bk_bm.faces[\(face)]"]
+        }
+        lines.append("bmesh.update_edit_mesh(_bk_o.data)")
         return lines.joined(separator: "\n")
     }
 
@@ -2076,12 +2383,12 @@ public enum Bpy {
         import _blenderkit
         _bk_o = bpy.data.objects[\(quoted)]
         if _bk_o.mode == 'EDIT':
-            raise RuntimeError("Sculpt Stroke: " + _bk_o.name + " is in Edit Mode.")
+            raise RuntimeError("Sculpt: " + _bk_o.name + " is in Edit Mode.")
         _bk_me = _bk_o.data
         _bk_n = len(_bk_me.vertices)
         _bk_shown = _bk_array('f')
         _bk_shown.frombytes(_blenderkit.mesh_arrays(_bk_o.name)[0])
-        _bk_changed = RuntimeError("Sculpt Stroke: a modifier on " + _bk_o.name + " changes its vertex count, so the stroke cannot be kept. Apply or disable the modifier first.")
+        _bk_changed = RuntimeError("Sculpt: a modifier on " + _bk_o.name + " changes its vertex count, so the stroke cannot be kept. Apply or disable the modifier first.")
         if len(_bk_shown) != 3 * _bk_n:
             raise _bk_changed
         if not any(_bk_m.show_viewport for _bk_m in _bk_o.modifiers):
@@ -2111,6 +2418,50 @@ public enum Bpy {
     public static func uv(_ op: UVOperator) -> String { op.python }
 
     // MARK: helpers
+
+    /// `call`, a file load the app makes itself (the Open sheet, the recovery
+    /// file at launch, File ▸ New), marked so for the vertex budget's gate:
+    /// what the app opens is Blender's to evaluate as it was saved, where a
+    /// file a script loads is priced whole first (`_blenderkit_gate.opening`,
+    /// fix round 3: a script wrote a scene past the budget with
+    /// `bpy.data.libraries.write` and opened it, 160,000 vertices built at a
+    /// budget lowered to 100,000). Where the gate is not loaded (the
+    /// simulator's stand-in), the call runs as it is.
+    public static func appLoad(_ call: String) -> String {
+        """
+        import contextlib as _bk_l_contextlib, sys as _bk_l_sys
+        with getattr(_bk_l_sys.modules.get('_blenderkit_gate'), 'opening', _bk_l_contextlib.nullcontext)():
+            \(call)
+        """
+    }
+
+    /// `call`, a file load the app makes itself that the gate prices whole as
+    /// it would a script's (`_blenderkit_gate.opening(priced=True)`), the
+    /// refusal naming it with `words`: File ▸ New's startup file, which the
+    /// app never writes and a script can, and a recovery file that changed
+    /// after the app wrote it (`RecoveryRecord`). The review of fix round 3
+    /// (October 29) measured the history's own loads of a file a script had
+    /// written building 160,000 vertices at a budget of 100,000.
+    /// File ▸ New (and Load Factory Settings): Blender's startup file, priced
+    /// (`pricedLoad`).
+    public static let newScene = pricedLoad("bpy.ops.wm.read_homefile(load_ui=False)",
+                                            words: "File ▸ New's startup file")
+
+    /// The launch's open of the recovery file that changed after the app wrote
+    /// it (`RecoveryRecord`), priced.
+    public static func changedRecovery(_ call: String) -> String {
+        pricedLoad(call, words: "The recovery file, which changed after this app wrote it,")
+    }
+
+    public static func pricedLoad(_ call: String, words: String) -> String {
+        """
+        import contextlib as _bk_l_contextlib, sys as _bk_l_sys
+        _bk_l_gate = _bk_l_sys.modules.get('_blenderkit_gate')
+        with (_bk_l_gate.opening(words=\(quote(words)), priced=True) if hasattr(_bk_l_gate, 'vouch')
+              else _bk_l_contextlib.nullcontext()):
+            \(call)
+        """
+    }
 
     /// A Python string literal, with quotes and backslashes escaped — object
     /// names come from the user and can contain either.

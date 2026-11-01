@@ -42,7 +42,7 @@ final class SculptStrokeInput {
     /// Starts a stroke. False, with Blender's reason on the banner, when it
     /// refused.
     func begin(object: String, camera: ViewportCamera, viewSize: CGSize, mode: SculptStrokeMode,
-               bridge: BpyBridge) -> Bool {
+               kind: BpyBridge.BrushStroke = .sculpt, bridge: BpyBridge) -> Bool {
         results = []; wallMs = []; pending = []; lastEnd = nil
         policy = SculptStreamPolicy()
         started = CACurrentMediaTime()
@@ -53,7 +53,7 @@ final class SculptStrokeInput {
                                   near: camera.near, far: camera.far)
         guard bridge.sculptBegin(object: object, camera: camera,
                                  viewWidth: Float(viewSize.width), viewHeight: Float(viewSize.height),
-                                 mode: mode) != nil
+                                 mode: mode, kind: kind) != nil
         else {
             isRefused = true
             return false
@@ -85,7 +85,7 @@ final class SculptStrokeInput {
         policy.sent(at: now, cost: cost)
         wallMs.append(cost * 1000)
         guard let result else {
-            _ = finish()
+            _ = finish(afterRefusal: true)
             isRefused = true
             return false
         }
@@ -94,18 +94,19 @@ final class SculptStrokeInput {
     }
 
     /// Ends the stroke: the rest goes to Blender, and the history records it
-    /// as one step.
+    /// as one step. `afterRefusal`: Blender has just refused a chunk, and
+    /// the rest is not sent (`BpyBridge.sculptEnd`).
     @discardableResult
-    func finish() -> SculptStrokeEnd? {
+    func finish(afterRefusal: Bool = false) -> SculptStrokeEnd? {
         guard isStroking else {
             isRefused = false
             return nil
         }
-        if !pending.isEmpty { send(at: CACurrentMediaTime()) }
+        if !afterRefusal, !pending.isEmpty { send(at: CACurrentMediaTime()) }
         guard isStroking else { return lastEnd }
         isStroking = false
         let ending = CACurrentMediaTime()
-        lastEnd = bridge?.sculptEnd()
+        lastEnd = bridge?.sculptEnd(afterRefusal: afterRefusal)
         endMs = (CACurrentMediaTime() - ending) * 1000
         return lastEnd
     }
@@ -151,10 +152,21 @@ enum SculptDragPhase {
 
 extension MetalViewportView.Coordinator {
 
-    /// Whether drags and taps in this view sculpt with Blender's brush: Sculpt
-    /// Mode with the real Blender behind the bridge.
+    /// Whether drags and taps in this view stroke with Blender's brush: Sculpt
+    /// Mode, Weight Paint or Vertex Paint with the real Blender behind the
+    /// bridge. The interface's mode is Blender's in all three (the mirror
+    /// reports it), and the paint modes' strokes stream exactly as sculpt
+    /// strokes do (`_blenderkit_vwpaint`).
     var sculptsInBlender: Bool {
-        parent.scene.mode == .sculpt && parent.bridge?.sculptsInBlender == true
+        (parent.scene.mode == .sculpt || paintsInBlender) && parent.bridge?.sculptsInBlender == true
+    }
+
+    /// Weight Paint or Vertex Paint, Blender's own: on the simulator's
+    /// stand-in the Swift brushes paint the display cache instead
+    /// (`vertexPaintDab`).
+    var paintsInBlender: Bool {
+        (parent.scene.mode == .weightPaint || parent.scene.mode == .vertexPaint)
+            && parent.bridge?.sculptsInBlender == true
     }
 
     /// A finger or Pencil drag in Blender's Sculpt Mode: the whole stroke, from
@@ -235,17 +247,28 @@ extension MetalViewportView.Coordinator {
 
     func beginBlenderSculpt(at point: CGPoint, in view: MTKView, pressure: Float) {
         guard let bridge = parent.bridge, let object = parent.scene.active else { return }
-        let mode: SculptStrokeMode = parent.scene.sculpt.invert ? .invert : .normal
+        let painting = paintsInBlender
+        let kind: BpyBridge.BrushStroke = painting ? .paint(parent.scene.mode) : .sculpt
+        let mode: SculptStrokeMode = !painting && parent.scene.sculpt.invert ? .invert : .normal
         guard sculptInput.begin(object: object.name, camera: parent.camera,
-                                viewSize: view.bounds.size, mode: mode, bridge: bridge) else { return }
-        parent.scene.beginViewportDrag(.brush,
-            "Sculpt  \(parent.scene.sculptBlender?.brush ?? "Brush")")
+                                viewSize: view.bounds.size, mode: mode, kind: kind, bridge: bridge) else { return }
+        parent.scene.beginViewportDrag(.brush, painting
+            ? "\(parent.scene.mode.label)  \(parent.scene.paintBlender?.brush ?? "Brush")"
+            : "Sculpt  \(parent.scene.sculptBlender?.brush ?? "Brush")")
         sculptInput.add(point, pressure: pressure)
     }
 
     private func showSculptCursor(at point: CGPoint, in view: UIView) {
-        guard sculptInput.isStroking, let state = parent.scene.sculptBlender, let size = state.size else { return }
-        let scale = state.regionScale(viewWidth: Float(view.bounds.width), viewHeight: Float(view.bounds.height))
+        guard sculptInput.isStroking else { return }
+        let width = Float(view.bounds.width), height = Float(view.bounds.height)
+        if paintsInBlender {
+            guard let state = parent.scene.paintBlender, let size = state.size else { return }
+            let scale = state.regionScale(viewWidth: width, viewHeight: height)
+            sculptInput.showCursor(at: point, diameter: CGFloat(Float(size) / scale), in: view)
+            return
+        }
+        guard let state = parent.scene.sculptBlender, let size = state.size else { return }
+        let scale = state.regionScale(viewWidth: width, viewHeight: height)
         sculptInput.showCursor(at: point, diameter: CGFloat(Float(size) / scale), in: view)
     }
 
@@ -268,14 +291,16 @@ extension MetalViewportView.Coordinator {
         print(String(format: "[bk-sculpt] %@ %@: %ld chunks, %ld dabs, %ld undo steps (%@), %ld cut(s); "
                      + "chunk ms median %.1f max %.1f (Blender stroke %.1f, mirror %.1f); "
                      + "end %.1f ms (Blender stroke %.1f, mirror %.1f)",
-                     end.strategy, parent.scene.sculptBlender?.brush ?? "?", end.chunks, end.dabs,
+                     end.strategy, (paintsInBlender ? parent.scene.paintBlender?.brush
+                                    : parent.scene.sculptBlender?.brush) ?? "?", end.chunks, end.dabs,
                      end.pushed, end.counted ? "counted on Blender's stack" : "counted by chunk",
                      end.cuts, median(wall), wall.max() ?? 0,
                      median(chunks.map(\.strokeMs)), median(chunks.map(\.mirrorMs)),
                      sculptInput.endMs, end.strategy == "deferred" ? end.strokeMs.last ?? 0 : 0,
                      end.strategy == "deferred" ? end.mirrorMs.last ?? 0 : 0))
         #if DEBUG
-        if ProcessInfo.processInfo.arguments.contains("-sculpt-stroke") {
+        let arguments = ProcessInfo.processInfo.arguments
+        if arguments.contains("-sculpt-stroke") || arguments.contains("-vwpaint-stroke") {
             print("[bk-sculpt] chunks (dabs replayed, applied, undo ms, run ms, mirror ms): " + chunks.map {
                 String(format: "%ld %@ %.1f %.1f %.1f", $0.dabs, $0.applied ? "y" : "n",
                        $0.undoMs ?? 0, $0.runMs ?? 0, $0.mirrorMs)
@@ -319,7 +344,8 @@ extension MetalViewportView.Coordinator {
         // `-sculpt-ops a,b,...`: the header's operations first, each sent as
         // SculptHeader sends it — `dyntopo-on`, `dyntopo-off`, `remesh`,
         // `voxel-<size>`, `multires`, `mask-fill`, `mask-invert`, `mask-clear`,
-        // `facesets-loose`, `facesets-from-mask`, `size-<px>`, `strength-<v>`.
+        // `facesets-loose`, `facesets-from-mask`, `size-<px>`, `strength-<v>`,
+        // and `labelled` (a labelled change with a memfile step of its own).
         for op in (value("-sculpt-ops") ?? "").split(separator: ",").map(String.init) {
             let command: (String, String?)?
             switch op {
@@ -332,6 +358,10 @@ extension MetalViewportView.Coordinator {
             case "mask-clear":         command = (SculptBpy.mask(.clear), SculptBpy.maskUndo)
             case "facesets-loose":     command = (SculptBpy.faceSetsInit(.looseParts), SculptBpy.faceSetsInitUndo)
             case "facesets-from-mask": command = (SculptBpy.faceSetFromMask, SculptBpy.faceSetFromMaskUndo)
+            // A labelled change made in Sculpt Mode, as a Properties field
+            // makes one: a memfile step of the history's own on top of the
+            // sculpt steps (round 3's Dynamic Topology case).
+            case "labelled":           command = ("bpy.context.view_layer.update()", "Labelled Change")
             default:
                 if op.hasPrefix("voxel-"), let v = Float(op.dropFirst(6)) {
                     command = (SculptBpy.setVoxelSize(v), nil)
@@ -366,11 +396,15 @@ extension MetalViewportView.Coordinator {
         }
     }
 
-    private func sculptLaunchStroke(object: BKObject, view: MTKView, bridge: BpyBridge) {
+    private func sculptLaunchStroke(object: BKObject, view: MTKView, bridge: BpyBridge, repeats: Int? = nil) {
         let args = ProcessInfo.processInfo.arguments
         func value(_ flag: String) -> String? {
             args.firstIndex(of: flag).flatMap { $0 + 1 < args.count ? args[$0 + 1] : nil }
         }
+        // `-sculpt-repeat <n>`: n strokes one after another, each over the
+        // last one's Sculpt step (the case a stroke's anchor is left out
+        // for, `_below_is_sculpt_step`); `-sculpt-undo` then follows the last.
+        let repeats = repeats ?? max(1, Int(value("-sculpt-repeat") ?? "") ?? 1)
         print("[bk] sculpt-stroke: the header shows \(parent.scene.sculptBlender?.brush ?? "?"), "
               + "size \(parent.scene.sculptBlender?.size ?? -1) px, strength "
               + "\(parent.scene.sculptBlender?.strength ?? -1), as it read them from Blender")
@@ -425,6 +459,14 @@ extension MetalViewportView.Coordinator {
                 let azimuth = parent.camera.azimuth
                 _ = sculptDrag(.ended, at: to, pressure: 1, owner: drag, in: view)
                 report(before: before, object: object, label: "after the stroke")
+                // The step the history recorded the stroke as, and Blender's
+                // own name for it on its stack: the two are to be one.
+                let blenderStep = bridge.capture("""
+                    import _blenderkit_undo as _bk_u
+                    print(next((_r[2] for _r in reversed(_bk_u.blender_steps() or []) if _r[3]), '?'))
+                    """)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? "?"
+                print("[bk] sculpt-stroke history step '\(parent.bridge?.debugSession.backendHistory.undoLabel ?? "?")', "
+                      + "Blender's step '\(blenderStep)', the stroke's end named it '\(sculptInput.lastEnd?.step ?? "nothing")'")
                 if midstroke != nil {
                     print("[bk] sculpt-midstroke after the lift: stroking \(sculptInput.isStroking), "
                           + "drag owned \(sculptInput.owner != nil), bridge stroke \(bridge.sculptStrokeActive), "
@@ -433,6 +475,15 @@ extension MetalViewportView.Coordinator {
                           + "history \(historyBefore) -> undo '\(parent.bridge?.debugSession.backendHistory.undoLabel ?? "?")'")
                     let open = bridge.capture("import _blenderkit_sculpt\nprint(_blenderkit_sculpt._stroke is None)")
                     print("[bk] sculpt-midstroke: Blender's stroke closed \(open ?? "?")")
+                }
+                if repeats > 1 {
+                    let target = parent.scene.objects.first { $0.name == object.name } ?? object
+                    print("[bk] sculpt-stroke: \(repeats - 1) more")
+                    fflush(stdout)
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) {
+                        self.sculptLaunchStroke(object: target, view: view, bridge: bridge, repeats: repeats - 1)
+                    }
+                    return
                 }
                 if args.contains("-sculpt-undo") { undoAndRedo(before: before, object: object) }
                 print("[bk] sculpt-stroke done")
@@ -479,6 +530,184 @@ extension MetalViewportView.Coordinator {
         fflush(stdout)
     }
 
+    /// `-vwpaint-stroke`: one stroke across the active object in Blender's
+    /// Weight Paint or Vertex Paint, fed at 60 points a second through
+    /// `sculptDrag` — the state machine a finger's drag runs — once the scene
+    /// is in one of them and the header has read Blender's settings.
+    /// `-vwpaint-ops a,b,…` sends the header's settings first, as its controls
+    /// send them: `brush-<name>` (an underscore for a space), `tool-<BRUSH|BLUR|
+    /// AVERAGE|SMEAR>`, `size-<px>`, `strength-<v>`, `weight-<v>`,
+    /// `color-<r>-<g>-<b>`, `blend-<ID>`. `-vwpaint-points <n>` (default 60)
+    /// and `-vwpaint-span <fraction>` (0.3) shape the stroke; `-vwpaint-undo`
+    /// then undoes and redoes it through the top bar's calls. After each,
+    /// what the 3D View draws is printed beside what Blender holds.
+    func vwPaintLaunchStrokeIfRequested(tries: Int = 120) {
+        let args = ProcessInfo.processInfo.arguments
+        guard args.contains("-vwpaint-stroke") else { return }
+        func value(_ flag: String) -> String? {
+            args.firstIndex(of: flag).flatMap { $0 + 1 < args.count ? args[$0 + 1] : nil }
+        }
+        guard tries > 0 else {
+            print("[bk] vwpaint-stroke: never reached Blender's Weight Paint or Vertex Paint with an object")
+            fflush(stdout)
+            return
+        }
+        guard let view, view.bounds.width > 0, let bridge = parent.bridge, !bridge.isRunningScript,
+              paintsInBlender, let object = parent.scene.active, parent.scene.paintBlender != nil
+        else {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+                self.vwPaintLaunchStrokeIfRequested(tries: tries - 1)
+            }
+            return
+        }
+        for op in (value("-vwpaint-ops") ?? "").split(separator: ",").map(String.init) {
+            let parts = op.split(separator: "-", maxSplits: 1).map(String.init)
+            guard parts.count == 2 else { print("[bk] vwpaint-op \(op): unknown"); continue }
+            let python: String?
+            switch parts[0] {
+            case "brush":    python = PaintModeBpy.activate(parts[1].replacingOccurrences(of: "_", with: " "))
+            case "tool":     python = PaintTool(rawValue: parts[1]).map(PaintModeBpy.setTool)
+            case "size":     python = Int(parts[1]).map(PaintModeBpy.setSize)
+            case "strength": python = Float(parts[1]).map(PaintModeBpy.setStrength)
+            case "weight":   python = Float(parts[1]).map(PaintModeBpy.setWeight)
+            case "blend":    python = PaintModeBpy.setBlend(parts[1])
+            case "color":
+                let c = parts[1].split(separator: "-").compactMap { Float($0) }
+                python = c.count == 3 ? PaintModeBpy.setColor(SIMD3(c[0], c[1], c[2])) : nil
+            default:         python = nil
+            }
+            guard let python else { print("[bk] vwpaint-op \(op): unknown"); continue }
+            let outcome = bridge.run(python)
+            parent.scene.paintBlender = bridge.paintState()
+            let state = parent.scene.paintBlender
+            print("[bk] vwpaint-op \(op): " + (outcome.succeeded ? "ran" : "REFUSED: \(outcome.error ?? "")")
+                  + "; Blender: \(state?.mode ?? "?") brush \(state?.brush ?? "?") tool \(state?.tool ?? "?") "
+                  + "size \(state?.size ?? -1) strength \(state?.strength ?? -1) weight \(state?.weight ?? -1) "
+                  + "color \(state?.color ?? []) (Blender holds \(state?.colorHeld ?? []), "
+                  + "\(state?.colorSpace ?? "?")) blend \(state?.blend ?? "?")")
+            fflush(stdout)
+        }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) {
+            self.vwPaintLaunchStroke(object: object, view: view, bridge: bridge)
+        }
+    }
+
+    private func vwPaintLaunchStroke(object: BKObject, view: MTKView, bridge: BpyBridge) {
+        let args = ProcessInfo.processInfo.arguments
+        func value(_ flag: String) -> String? {
+            args.firstIndex(of: flag).flatMap { $0 + 1 < args.count ? args[$0 + 1] : nil }
+        }
+        _ = parent.camera.frameSelected(in: parent.scene)
+        // `-vwpaint-passes <n>`: back and forth n times (the points each
+        // way), so the stroke goes over itself as a long stroke does.
+        let passes = max(1, Int(value("-vwpaint-passes") ?? "") ?? 1)
+        let count = (Int(value("-vwpaint-points") ?? "") ?? 60) * passes
+        let span = CGFloat(Double(value("-vwpaint-span") ?? "") ?? 0.3)
+        let bounds = view.bounds
+        let world = object.worldBounds
+        let clip = parent.camera.viewProjection(aspect: Float(bounds.width / bounds.height))
+            * SIMD4((world.min + world.max) / 2, 1)
+        let screen = CGPoint(x: CGFloat((clip.x / clip.w + 1) / 2) * bounds.width,
+                             y: CGFloat((1 - clip.y / clip.w) / 2) * bounds.height)
+        let from = CGPoint(x: screen.x - bounds.width * span / 2, y: screen.y)
+        let to = CGPoint(x: screen.x + bounds.width * span / 2, y: screen.y + bounds.height * 0.02)
+        let state = parent.scene.paintBlender
+        print("[bk] vwpaint-stroke: \(object.name) in \(parent.scene.mode.label), brush \(state?.brush ?? "?") "
+              + "of \(bridge.paintBrushes().count) Essentials, size \(state?.size ?? -1) px, strength "
+              + "\(state?.strength ?? -1), group \(state?.group ?? "none"), from \(from) to \(to), \(count) points"
+              + (passes > 1 ? " in \(passes) passes, each \(bounds.height * 0.01) lower" : ""))
+        let c = parent.camera
+        print("[bk] vwpaint-stroke camera: " + SculptCamera(target: c.target, distance: c.distance, azimuth: c.azimuth,
+                                                          elevation: c.elevation, fovY: c.fovY,
+                                                          orthographic: c.isOrthographic,
+                                                          near: c.near, far: c.far).python
+              + String(format: " view (%.3f, %.3f)", bounds.width, bounds.height))
+        vwPaintReport(object: object, bridge: bridge, label: "before the stroke")
+        let drag = ObjectIdentifier(self)
+        _ = sculptDrag(.began(touchedDown: from), at: from, pressure: 1, owner: drag, in: view)
+        guard sculptInput.isStroking else {
+            print("[bk] vwpaint-stroke: REFUSED — banner: "
+                  + (bridge.report.map { "\($0.operation): \($0.message)" } ?? "none"))
+            _ = sculptDrag(.ended, at: from, pressure: 1, owner: drag, in: view)
+            fflush(stdout)
+            return
+        }
+        var step = 1
+        func next() {
+            // Where step s of the stroke is: pass s / per, there and back.
+            let per = count / passes
+            func at(_ s: Int) -> CGPoint {
+                let pass = min((s - 1) / per, passes - 1)
+                var t = CGFloat(s - pass * per) / CGFloat(per)
+                if pass % 2 == 1 { t = 1 - t }
+                return CGPoint(x: from.x + (to.x - from.x) * t,
+                               y: from.y + (to.y - from.y) * t + bounds.height * 0.01 * CGFloat(pass))
+            }
+            guard step <= count else {
+                _ = sculptDrag(.ended, at: at(count), pressure: 1, owner: drag, in: view)
+                let target = parent.scene.objects.first { $0.name == object.name } ?? object
+                vwPaintReport(object: target, bridge: bridge, label: "after the stroke")
+                print("[bk] vwpaint-stroke history step '\(bridge.debugSession.backendHistory.undoLabel)', "
+                      + "the stroke's end named it '\(sculptInput.lastEnd?.step ?? "nothing")', "
+                      + "\(sculptInput.lastEnd?.pushed ?? -1) of Blender's steps")
+                if args.contains("-vwpaint-undo") {
+                    bridge.debugSession.performUndo()
+                    vwPaintReport(object: parent.scene.objects.first { $0.name == object.name } ?? object,
+                                  bridge: bridge, label: "after Undo")
+                    bridge.debugSession.performRedo()
+                    vwPaintReport(object: parent.scene.objects.first { $0.name == object.name } ?? object,
+                                  bridge: bridge, label: "after Redo")
+                }
+                print("[bk] vwpaint-stroke done")
+                fflush(stdout)
+                return
+            }
+            _ = sculptDrag(.changed, at: at(step), pressure: 1, owner: drag, in: view)
+            step += 1
+            DispatchQueue.main.asyncAfter(deadline: .now() + 1.0 / 60.0) { next() }
+        }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.0 / 60.0) { next() }
+    }
+
+    /// What the 3D View draws of `object` in the paint mode — the values the
+    /// mirror handed it — beside what Blender holds, read from Blender now.
+    private func vwPaintReport(object: BKObject, bridge: BpyBridge, label: String) {
+        let weight = parent.scene.mode == .weightPaint
+        let drawn: [Float] = weight ? object.vertexWeights
+            : object.vertexColours.flatMap { [$0.x, $0.y, $0.z, $0.w] }
+        let read = bridge.capture("""
+            import json, _blenderkit_vwpaint as _bk_vw
+            from array import array as _bk_array
+            _bk_o = bpy.context.view_layer.objects.active
+            _bk_d = _bk_vw.values(_bk_o) or b''
+            _bk_a = _bk_array('f')
+            _bk_a.frombytes(_bk_d)
+            print(json.dumps([round(_bk_x, 6) for _bk_x in _bk_a]))
+            """).flatMap { SculptJSON.last([Float].self, in: $0) } ?? []
+        let marked: ([Float]) -> Int = { values in
+            weight ? values.filter { $0 > 1e-6 }.count
+                : stride(from: 0, to: values.count - 3, by: 4).filter {
+                    abs(values[$0] - 1) + abs(values[$0 + 1] - 1) + abs(values[$0 + 2] - 1) > 1e-4 }.count
+        }
+        let apart = drawn.count == read.count
+            ? zip(drawn, read).map { abs($0 - $1) }.max() ?? 0 : Float.infinity
+        // The darkest colour painted (sRGB, what the 3D View draws), drawn
+        // and held: a picked colour, painted at full strength, shows there.
+        let darkest: ([Float]) -> String = { values in
+            let start = stride(from: 0, to: values.count - 3, by: 4).min {
+                values[$0] + values[$0 + 1] + values[$0 + 2] < values[$1] + values[$1 + 1] + values[$1 + 2]
+            }
+            return start.map { String(format: "(%.4f, %.4f, %.4f)", values[$0], values[$0 + 1], values[$0 + 2]) }
+                ?? "none"
+        }
+        print(String(format: "[bk] vwpaint-stroke %@: the 3D View draws %ld %@ on %ld of %ld vertices; "
+                     + "Blender holds %ld on %ld; drawn and held at most %.6f apart",
+                     label, drawn.count / (weight ? 1 : 4), weight ? "weights" : "colours",
+                     marked(drawn), object.mesh.vertices.count, read.count / (weight ? 1 : 4), marked(read),
+                     apart) + (weight ? "" : "; darkest drawn \(darkest(drawn)), held \(darkest(read))"))
+        fflush(stdout)
+    }
+
     /// How far the drawn mesh moved from `before`, the mirror's copy of
     /// Blender's evaluated mesh.
     private func report(before: [SIMD3<Float>], object: BKObject, label: String) {
@@ -490,6 +719,11 @@ extension MetalViewportView.Coordinator {
         }
         print("[bk] sculpt-stroke \(label): local bounds before \(box(before)), now \(box(now)); "
               + "the viewport draws a mask on \(object.drawnSculptMask?.filter { $0 > 0 }.count ?? 0) verts")
+        // The normals it is shaded with, which a stroke's chunk carries
+        // (`_blenderkit_anim.push_mesh`), against Blender's.
+        if let bridge = parent.bridge {
+            print("[bk] sculpt-stroke \(label): \(object.shadingReport(bridge))")
+        }
         guard now.count == before.count else {
             print("[bk] sculpt-stroke \(label): \(before.count) -> \(now.count) verts drawn")
             return
@@ -518,6 +752,9 @@ extension MetalViewportView.Coordinator {
     /// with an object, `n` taps through `standInSculptTap` — what a tap
     /// calls — and `n` dabs through `sculptDab`, what a drag calls on every
     /// move, at the object's centre on screen. Prints what each left drawn.
+    /// In Weight Paint or Vertex Paint, `n` moves and the end of a drag
+    /// through `standInPaintDrag`, what a drag's moves call there, printing
+    /// whether each kept the drag and what the 3D View then draws.
     func standInDabLaunchIfRequested(tries: Int = 120) {
         let args = ProcessInfo.processInfo.arguments
         guard let flag = args.firstIndex(of: "-standin-dab") else { return }
@@ -527,8 +764,9 @@ extension MetalViewportView.Coordinator {
             fflush(stdout)
             return
         }
+        let painting = parent.scene.mode == .weightPaint || parent.scene.mode == .vertexPaint
         guard let view, view.bounds.width > 0, !sculptsInBlender, parent.bridge == nil,
-              parent.scene.mode == .sculpt, let object = parent.scene.active
+              parent.scene.mode == .sculpt || painting, let object = parent.scene.active
         else {
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
                 self.standInDabLaunchIfRequested(tries: tries - 1)
@@ -544,6 +782,26 @@ extension MetalViewportView.Coordinator {
         let start = object.mesh.vertices.count
         print("[bk] standin-dab: \(object.name), \(start) verts drawn, evaluated \(object.meshIsEvaluated), "
               + "modifiers \(object.modifiers.map(\.kind.rawValue)), at \(point) in \(bounds.size)")
+        if painting {
+            let drawn = { () -> String in
+                let weights = object.vertexWeights.filter { $0 > 1e-6 }.count
+                let colours = object.vertexColours.filter {
+                    abs($0.x - 1) + abs($0.y - 1) + abs($0.z - 1) > 1e-4 }.count
+                return "\(weights) weighted, \(colours) coloured, texture version \(object.textureVersion)"
+            }
+            let before = drawn()
+            var moves: [String] = []
+            for i in 0..<count {
+                let kept = standInPaintDrag(.changed, at: CGPoint(x: point.x + CGFloat(i), y: point.y), in: view)
+                moves.append(kept ? "painted" : "orbits")
+            }
+            let ended = standInPaintDrag(.ended, at: point, in: view)
+            print("[bk] standin-dab \(parent.scene.mode.label) drag moves: " + moves.joined(separator: ", ")
+                  + "; end \(ended ? "kept" : "orbits")")
+            print("[bk] standin-dab done: before \(before); after \(drawn())")
+            fflush(stdout)
+            return
+        }
         var taps: [String] = []
         for _ in 0..<count {
             let installed = standInSculptTap(at: point, in: view)
@@ -566,10 +824,32 @@ extension MetalViewportView.Coordinator {
         session.performUndo()
         let target = parent.scene.objects.first { $0.name == object.name } ?? object
         report(before: before, object: target, label: "after Undo (from the start)")
-        print("[bk] sculpt-stroke: after Undo Blender is in \(parent.scene.mode.bpyMode)")
+        print("[bk] sculpt-stroke: after Undo Blender is in \(parent.scene.mode.bpyMode), Dynamic Topology "
+              + "\(parent.bridge?.sculptState()?.dyntopo.map { $0 ? "on" : "off" } ?? "?"), "
+              + "\(parent.bridge?.sculptState()?.vertices ?? -1) vertices in Blender")
         session.performRedo()
         let again = parent.scene.objects.first { $0.name == object.name } ?? object
         report(before: before, object: again, label: "after Redo (from the start)")
+        print("[bk] sculpt-stroke: after Redo Dynamic Topology "
+              + "\(parent.bridge?.sculptState()?.dyntopo.map { $0 ? "on" : "off" } ?? "?"), "
+              + "\(parent.bridge?.sculptState()?.vertices ?? -1) vertices in Blender")
+        // `-sculpt-undo-depth <n>`: then n Undos and n Redos through the top
+        // bar's calls, past whatever the `-sculpt-ops` made before the stroke
+        // (a `labelled` change's memfile step, round 3's Dynamic Topology
+        // case), each printed with the history's label and Blender's state.
+        let args = ProcessInfo.processInfo.arguments
+        guard let i = args.firstIndex(of: "-sculpt-undo-depth"), i + 1 < args.count,
+              let depth = Int(args[i + 1]), depth > 0 else { return }
+        for (label, step) in [("Undo", { session.performUndo() }), ("Redo", { session.performRedo() })] {
+            for k in 1...depth {
+                step()
+                let state = parent.bridge?.sculptState()
+                print("[bk] sculpt-stroke: \(label) \(k) of \(depth): history at '\(session.backendHistory.undoLabel)', "
+                      + "Blender in \(parent.scene.mode.bpyMode), Dynamic Topology "
+                      + "\(state?.dyntopo.map { $0 ? "on" : "off" } ?? "?"), \(state?.vertices ?? -1) vertices in "
+                      + "Blender, \(parent.scene.objects.first { $0.name == object.name }?.mesh.vertices.count ?? -1) drawn")
+            }
+        }
     }
     #endif
 }

@@ -59,6 +59,13 @@ _segments = 0
 # segment began. A difference means a load freed Blender's stack.
 _loads = 0
 _segment_loads = 0
+# The loads that put another file in front of the reader — File ▸ New, Open,
+# Recover, Revert, a script's — counted apart from this module's own
+# checkpoint loads (`_loading`), which put back a step of the same file. The
+# interface forgets what it keeps for the file it showed when this moves:
+# the Measure tool's rulers, which Blender keeps in the file's own annotation
+# layer and the app keeps beside it (`file_loads`, `_blenderkit_cursor.push`).
+_file_loads = 0
 # The scene a load replaced, written by the load_pre handler.
 _capture = None
 # Nonzero while this module loads a file itself.
@@ -107,6 +114,61 @@ def _operator(name, **arguments):
         raise RuntimeError('bpy.ops.ed.' + name + ' returned ' + repr(result))
 
 
+def _named(shown, label):
+    """Whether Blender's step name `shown` (as `blender_steps` reads it) is
+    `label`, which Blender keeps to 63 bytes (`UndoStep::name`)."""
+    if shown == label:
+        return True
+    full = label.encode('utf-8')
+    if len(full) <= 63:
+        return False
+    return shown.replace('\ufffd', '') == full[:63].decode('utf-8', errors='ignore')
+
+
+def _push_own(label, alone=False):
+    """`ed.undo_push(message=label)` as a step of the history's own, and how
+    many of Blender's steps it took: 1, or 2 when Blender gave the push to a
+    step a sculpt operator left unfinished.
+
+    A sculpt operator begins its step as it starts (`push_begin_ex`,
+    `BKE_undosys_step_push_init_with_type`) and leaves the push to the
+    operator's finish, which a call from Python without the undo argument
+    skips (`WM_operator_call_py` raises `op_undo_depth`, so `push_end_ex`
+    pushes nothing). The step stays pending, and the next `ed.undo_push`, in
+    any mode and under any name, finishes it as that operator's Sculpt step
+    instead of making its own (`BKE_undosys_step_push` takes `step_init`'s
+    type and keeps its name, undo_system.cc; a second operator's init frees
+    the first). Measured in desktop 5.2.1 with the app's context: a Run that
+    entered Sculpt Mode and filled the mask, then Object Mode, then the
+    history's push "Run Script": Blender's new step was ('Sculpt', 'Mask
+    Flood Fill'), with no memfile step after it. Undo of the next step (a
+    Move) then left the cube moved, and Redo of the Run lost the cube it
+    added; and where the probe ran then (an autosave opened in Sculpt Mode
+    or Vertex Paint defers it), its first push was taken the same way and it
+    failed — "undo ran but did not restore the scene (undone False, redone
+    True)" — and the history fell back to .blend checkpoints (round 4: three
+    launches of three in the app). So when the step Blender shows after the
+    push is not this one, it pushes once more: the finished step is the
+    action's, the second one this push's own.
+
+    `alone`: the action was one sculpt operator and nothing else
+    (`note_pending_alone`, from the Sculpt header's `_blenderkit_sculpt.
+    counted`), so the step it left pending is the whole action, and finishing
+    it is the push, as it was before; Undo and Redo of it were exact. The
+    second push would be a memfile step of the sculpted mesh: measured on a
+    1,002,001-vertex grid in Sculpt Mode, 97 to 221 ms against 0.3 (load
+    average about 270)."""
+    _operator('undo_push', message=label)
+    if alone:
+        return 1
+    rows = blender_steps()
+    active = next((row for row in rows or () if row[3]), None)
+    if active is None or _named(active[2], label):
+        return 1
+    _operator('undo_push', message=label)
+    return 2
+
+
 def _poll(name):
     try:
         with _context():
@@ -138,8 +200,13 @@ def configure(root, force_checkpoints=False):
 
 def _install_handlers():
     handlers = bpy.app.handlers
+    gate = sys.modules.get('_blenderkit_gate')
+    trust = getattr(gate, 'trust', None)
     for collection, function in ((handlers.load_pre, _bk_undo_load_pre),
                                  (handlers.load_post, _bk_undo_load_post)):
+        # The app's own, by identity (`_blenderkit_gate._own`).
+        if trust is not None:
+            trust(function)
         # By name, so a second copy of this module — a test loads its own —
         # replaces the first rather than running beside it.
         for existing in list(collection):
@@ -167,8 +234,15 @@ def _bk_undo_load_pre(*_):
 
 @bpy.app.handlers.persistent
 def _bk_undo_load_post(*_):
-    global _loads
+    global _loads, _file_loads
     _loads += 1
+    if not _loading:
+        _file_loads += 1
+
+
+def file_loads():
+    """How many files have been loaded in front of the reader (`_file_loads`)."""
+    return _file_loads
 
 
 def _live_depth():
@@ -216,6 +290,8 @@ def reserve(extra):
 # The steps an action just pushed, for the next `push` to take:
 # (count, the address of Blender's active step once they were pushed).
 _noted = None
+# Set by `note_pending_alone`, for the next `push` to take.
+_alone = False
 
 
 def blender_steps():
@@ -268,6 +344,39 @@ def blender_steps():
     return rows
 
 
+def ensure_stack(label):
+    """Make Blender's undo stack if it has none, so no operator finds it
+    missing. Returns whether one was made.
+
+    A Blender with no interface has no undo stack until `ed.undo_push` makes
+    one (ed_undo.cc), and a file load frees it again. Sculpt Mode's undo code
+    does not check for that: measured in desktop 5.2.1 with no stack (window
+    and screen in the context, gpu.init()), `object.mode_set(mode='SCULPT')`
+    called with its undo on, `sculpt.sculptmode_toggle` the same way,
+    `paint.mask_flood_fill` and `sculpt.face_sets_init` in Sculpt Mode, and
+    `mask_flood_fill` after a `read_homefile` or `open_mainfile`, each
+    segfaulted (exit 139; `ED_undosys_stack_memfile_id_changed_tag` with a
+    null stack, from `push_enter_sculpt_mode` / `push_begin_ex`). The app hit
+    the first in its own bpy (report BlenderLocal-2026-10-19-210858): its
+    autosave opened with an object in Vertex Paint, which defers `probe`, so
+    nothing had made the stack when a script entered Sculpt Mode. The paint
+    modes, Edit Mode and Dynamic Topology checked fine without one.
+
+    So the history makes the stack whenever it has not (`push` before the
+    probe settles, or with checkpoints) and after every file load
+    (_blenderkit_context's `_FileRead`). The step it pushes is below any the
+    history records, which reach the scene before it through their files.
+    Only where `ed.undo_push` can run: the main thread's window and screen."""
+    rows = blender_steps()
+    if rows is None or rows:
+        return False
+    try:
+        _operator('undo_push', message=label)
+    except RuntimeError:
+        return False
+    return True
+
+
 def mark():
     """The address of Blender's active undo step, or None when it cannot be
     read: what `pushed_since` counts from."""
@@ -309,6 +418,41 @@ def note_pushed(count, own=False):
     _noted = (int(count), mark(), bool(own)) if count and count > 0 else None
 
 
+def join_current(count):
+    """The `count` steps just pushed on Blender's stack belong to the history
+    step the scene is at, which becomes that much deeper: its Undo takes them
+    back with it, and an Undo of the step above stops on them.
+
+    A sculpt stroke's anchor dab (`_blenderkit_sculpt._anchor`) is the one
+    user. Counted into the stroke, the stroke's Undo went down onto the memfile
+    step under it, which comes back without the dynamic topology mesh, and its
+    Redo then had none to replay onto (round 3's review; measured in desktop
+    5.2.1: 5,325 vertices and Dynamic Topology off after both). Joined to the
+    step below, the stroke's Undo stops on the anchor's Sculpt step.
+
+    Only while the step the scene is at is Blender's (its segment is live) and
+    nothing is waiting to be recorded: False otherwise, and the caller counts
+    the steps as its own. Blender dropped its redo steps when these were
+    pushed, so the history's go too."""
+    global _noted
+    if (_mode != 'blender' or count <= 0 or not (0 <= _index < len(_steps))
+            or not _live(_steps[_index]) or _noted is not None):
+        return False
+    _steps[_index]['depth'] += int(count)
+    removed = _steps[_index + 1:]
+    del _steps[_index + 1:]
+    _forget_files(removed)
+    return True
+
+
+def note_pending_alone():
+    """The action that just ran was one sculpt operator alone, run without its
+    undo argument: the step it left pending is the action, and the next
+    `push` takes it as the history's step (`_push_own`'s `alone`)."""
+    global _alone
+    _alone = True
+
+
 def _take_noted():
     """(steps the action pushed, whether the history pushes its own too)."""
     global _noted
@@ -342,7 +486,8 @@ def probe():
     name = None
     try:
         _prefs()
-        _operator('undo_push', message='Original')
+        # Its own step, not one a sculpt operator left pending (`_push_own`).
+        _push_own('Original')
         text = bpy.data.texts.new('_bk_undo_probe')
         name = text.name
         del text
@@ -373,24 +518,94 @@ def probe():
 # --------------------------------------------------------------------------
 # Files
 
+def _gate():
+    return sys.modules.get('_blenderkit_gate')
+
+
+def _saving():
+    """The gate's `saving` (a script's save handlers out of their lists while
+    the app writes its own file), or nothing where there is no gate."""
+    gate = _gate()
+    saving = getattr(gate, 'saving', None) if gate is not None else None
+    return saving() if saving is not None else contextlib.nullcontext()
+
+
+def _vouch(path):
+    """The file the app just wrote, as the gate will open it again: only
+    while it is as written (`_blenderkit_gate.vouch`). A script can write a
+    checkpoint too — the review of fix round 3 measured one Run line copying
+    a heavy scene over the history's files, and the next Undo opening it at
+    160,000 vertices past a budget of 100,000."""
+    gate = _gate()
+    vouch = getattr(gate, 'vouch', None) if gate is not None else None
+    if vouch is not None:
+        vouch(path)
+
+
 def _save():
     target = os.path.join(_root, str(uuid.uuid4()) + '.blend')
-    result = bpy.ops.wm.save_as_mainfile(filepath=target, copy=True, compress=False,
-                                         check_existing=False)
+    with _saving():
+        result = bpy.ops.wm.save_as_mainfile(filepath=target, copy=True, compress=False,
+                                             check_existing=False)
     if 'FINISHED' not in result or not os.path.isfile(target):
         raise RuntimeError('Blender could not write the undo checkpoint')
+    _vouch(target)
     return target
+
+
+def _cursor_state():
+    """The 3D cursor as it stands, or None where there is no scene."""
+    try:
+        c = bpy.context.scene.cursor
+        return (tuple(c.location), c.rotation_mode, tuple(c.rotation_euler),
+                tuple(c.rotation_quaternion), tuple(c.rotation_axis_angle))
+    except (AttributeError, RuntimeError, ReferenceError):
+        return None
+
+
+def _keep_cursor(state):
+    """Puts the 3D cursor back as `_cursor_state` read it.
+
+    Blender's undo never moves the cursor: a memfile step swaps the cursor in
+    hand into the scene it restores (`scene_undo_preserve`, scene.cc), and an
+    Edit Mode step does not touch the scene. A checkpoint is a file load, which
+    took the cursor back with everything else — measured in desktop 5.2.1:
+    after a step, the cursor moved to (7, 8, 9) and Undo, Blender's own history
+    left it at (7, 8, 9) and this one put it back to (0, 0, 0). So the cursor
+    in hand is kept across the load, as Blender keeps it (round 4, group 9)."""
+    if state is None:
+        return
+    try:
+        c = bpy.context.scene.cursor
+        location, mode, euler, quaternion, axis_angle = state
+        c.rotation_mode = mode
+        c.rotation_euler = euler
+        c.rotation_quaternion = quaternion
+        c.rotation_axis_angle = axis_angle
+        c.location = location
+    except (AttributeError, RuntimeError, ReferenceError, TypeError, ValueError):
+        pass
 
 
 def _load(path):
     global _loading, _segment, _segment_loads
+    cursor = _cursor_state()
     _loading += 1
+    gate = _gate()
+    # The app's own checkpoint, Blender's to evaluate as saved while it is as
+    # the app wrote it, else priced as a script's load
+    # (`_blenderkit_gate.opening`).
+    own = (gate.opening(path, "Undo's step file %s, which changed after this app wrote it,"
+                        % os.path.basename(path))
+           if gate is not None and hasattr(gate, 'vouch') else contextlib.nullcontext())
     try:
-        result = bpy.ops.wm.open_mainfile(filepath=path, load_ui=False)
+        with own:
+            result = bpy.ops.wm.open_mainfile(filepath=path, load_ui=False)
     finally:
         _loading -= 1
     if 'FINISHED' not in result:
         raise RuntimeError('Blender could not restore the checkpoint')
+    _keep_cursor(cursor)
     _segment = 0
     _segment_loads = _loads
 
@@ -401,6 +616,9 @@ def _forget_files(removed):
         path = step['file']
         if path and path not in kept and path != _capture and os.path.isfile(path):
             os.remove(path)
+            gate = _gate()
+            if gate is not None and hasattr(gate, 'forget'):
+                gate.forget(path)
 
 
 def autosave(path):
@@ -408,11 +626,15 @@ def autosave(path):
     moved over the old one, so a kill mid-write keeps the last good file."""
     started = time.perf_counter()
     partial = path + '.partial'
-    result = bpy.ops.wm.save_as_mainfile(filepath=partial, copy=True, compress=False,
-                                         check_existing=False)
+    with _saving():
+        result = bpy.ops.wm.save_as_mainfile(filepath=partial, copy=True, compress=False,
+                                             check_existing=False)
     if 'FINISHED' not in result or not os.path.isfile(partial):
         raise RuntimeError('Blender could not write the autosave')
     os.replace(partial, path)
+    # The app keeps what it wrote (BpyRuntime's recovery record), and opens it
+    # at launch as saved only while it is still so.
+    _vouch(path)
     return round((time.perf_counter() - started) * 1000, 2)
 
 
@@ -502,11 +724,16 @@ def push(root, label, replace=False, force_checkpoints=None):
     `force_checkpoints` keeps the history in checkpoint files even where
     Blender's undo works; it only has an effect before the probe has run.
     """
-    global _index, _segment, _segments, _segment_loads, _rewound
+    global _index, _segment, _segments, _segment_loads, _rewound, _alone
     started = time.perf_counter()
     configure(root, _forced if force_checkpoints is None else force_checkpoints)
     if _mode is None:
         probe()
+    if _mode != 'blender':
+        # The probe deferred (an object in a mode other than Object Mode) or
+        # failed: nothing has made Blender's undo stack, and a sculpt operator
+        # crashes without one (`ensure_stack`).
+        ensure_stack(label)
     _notice_loads()
     rewound, _rewound = _rewound, False
     replacing = replace and not rewound and 0 <= _index < len(_steps)
@@ -520,6 +747,7 @@ def push(root, label, replace=False, force_checkpoints=None):
     # chunks, a sculpt operator's own step. They are the step; pushing one more
     # would make an Undo stop between them and the scene they left.
     pushed, own = _take_noted()
+    alone, _alone = _alone, False
     if replacing:
         pushed, own = 0, True
     # Whether this push only recorded steps already on Blender's stack.
@@ -535,16 +763,19 @@ def push(root, label, replace=False, force_checkpoints=None):
                 # before it reach through a file (below).
                 pushed, own = 0, True
             began = time.perf_counter()
+            # Blender's steps this push makes: one, or two when it finished a
+            # step a sculpt operator left pending (`_push_own`).
+            made = 0
             if own or not pushed:
-                _operator('undo_push', message=label)
-                step['depth'] = pushed + 1
+                made = _push_own(label, alone and not replacing)
+                step['depth'] = pushed + made
             else:
                 step['depth'] = pushed
                 recorded_only = True
             timing['blender'] = (time.perf_counter() - began) * 1000
             step['segment'] = _segment
             if replaced is not None and not fresh and _live(replaced):
-                step['depth'] = replaced['depth'] + 1
+                step['depth'] = replaced['depth'] + made
             if fresh and _steps:
                 # The steps before are reached through their files, so the way
                 # back to this one is a file as well.
@@ -580,7 +811,7 @@ def push(root, label, replace=False, force_checkpoints=None):
 
 def step(direction):
     """Undo (-1) or redo (+1) one step."""
-    global _index, _written, _noted
+    global _index, _written, _noted, _alone
     # A sculpt stroke streamed in chunks rewinds the step on top of Blender's
     # stack before each chunk, taking it for its own (`_blenderkit_sculpt`).
     # Measured in desktop 5.2.1: an Undo between two chunks, then the next
@@ -590,8 +821,27 @@ def step(direction):
     sculpting = sys.modules.get('_blenderkit_sculpt')
     if sculpting is not None and getattr(sculpting, '_stroke', None) is not None:
         raise RuntimeError("Undo and Redo wait until the sculpt stroke in progress has ended.")
+    # A Weight Paint or Vertex Paint stroke rewinds its last step the same way
+    # (`_blenderkit_vwpaint`).
+    painting = sys.modules.get('_blenderkit_vwpaint')
+    if painting is not None and getattr(painting, '_stroke', None) is not None:
+        raise RuntimeError("Undo and Redo wait until the paint stroke in progress has ended.")
+    # A drag of objects Blender previews puts the channels back and runs the
+    # move again each frame, from what it found when it began
+    # (`_blenderkit_constraints.drag_frame`). Round 4's review measured an
+    # Undo between two frames, with the app's undo stack: a cube with Limit
+    # Location went back to y 0 and the step to 'Limit Location', then the
+    # next frame and the drag's end put it back at y 2 — the undone change
+    # back with no step, the history and the data disagreeing. The interface
+    # holds Undo for the drag (BpySession.constrainedDragOpen); this holds the
+    # history to it as well. (A curve's or a lattice's point drag checks every
+    # frame against what the last one left, `_blenderkit_points._check`.)
+    dragging = sys.modules.get('_blenderkit_constraints')
+    if dragging is not None and getattr(dragging, '_drag', None) is not None:
+        raise RuntimeError("Undo and Redo wait until the objects being moved are let go.")
     started = time.perf_counter()
     _noted = None
+    _alone = False
     _notice_loads()
     target = _index + direction
     route = _route(target)
@@ -604,6 +854,7 @@ def step(direction):
     timing = {}
     images = _image_sources()
     began = time.perf_counter()
+    fell_back = False
     if route == 'blender':
         depth = _steps[_index]['depth'] if direction < 0 else there['depth']
         name = 'undo' if direction < 0 else 'redo'
@@ -618,8 +869,12 @@ def step(direction):
                 _index = min(_index, len(_steps) - 1)
                 _set_timing(timing)
                 return state()
-            route = 'file'
+            route, fell_back = 'file', True
     if route == 'file':
+        if not fell_back:
+            kept = _keep_live_as_files()
+            if kept:
+                timing['kept'] = kept
         _load(there['file'])
         if _mode == 'blender':
             _start_segment_at(there)
@@ -634,6 +889,60 @@ def step(direction):
     timing['total'] = (time.perf_counter() - started) * 1000
     _set_timing(timing)
     return state()
+
+
+def _keep_live_as_files():
+    """Before a checkpoint load frees Blender's stack: every step only that
+    stack holds — the current one, those below it back to where its segment
+    starts and those above it that Redo reaches — written to a file, so
+    Undo and Redo can still come back to them through files. Fix round 3
+    (October 29): in the app, after an autosave opened in a paint mode (the
+    steps before the probe settles are files), a Run and two moves, Undo to
+    Original and Redo stopped at the Run — the moves were on the stack the
+    load had freed, and `_trim` dropped them. The walk undoes down and then
+    redoes up through Blender's own steps, saving each; the load that
+    follows puts the scene where it goes, so the walk need not come back.
+    Returns the milliseconds it took, or 0 when there was nothing to keep."""
+    global _index
+    if _mode != 'blender' or not _segment or not (0 <= _index < len(_steps)):
+        return 0
+    here = _index
+    if not _live(_steps[here]):
+        return 0
+    low = here
+    while low - 1 >= 0 and _live(_steps[low - 1]):
+        low -= 1
+    high = here
+    while high + 1 < len(_steps) and _live(_steps[high + 1]):
+        high += 1
+    if all(_steps[i]['file'] for i in range(low, high + 1)):
+        return 0
+    started = time.perf_counter()
+    try:
+        if not _steps[here]['file']:
+            _steps[here]['file'] = _save()
+        k = here
+        while k > low and not all(_steps[i]['file'] for i in range(low, k)):
+            for taken in range(_steps[k]['depth']):
+                if not _poll('undo'):
+                    raise RuntimeError('Blender dropped a step the history still had')
+                _operator('undo')
+            k -= 1
+            if not _steps[k]['file']:
+                _steps[k]['file'] = _save()
+        if any(not _steps[i]['file'] for i in range(here + 1, high + 1)):
+            while k < high:
+                for taken in range(_steps[k + 1]['depth']):
+                    if not _poll('redo'):
+                        raise RuntimeError('Blender dropped a step the history still had')
+                    _operator('redo')
+                k += 1
+                if not _steps[k]['file']:
+                    _steps[k]['file'] = _save()
+    except Exception as error:
+        # What was kept stays kept; the rest is lost to the load as before.
+        print(f"[Blender Local] Undo kept only some of Blender's steps as files: {error}")
+    return round((time.perf_counter() - started) * 1000, 2)
 
 
 def _start_segment_at(step_):
@@ -668,6 +977,28 @@ def cancel_rewind():
     if _rewound:
         _rewound = False
         step(1)
+    return state()
+
+
+def current_step():
+    """The step the history stands at, as a handle for `back_to`; None with no
+    step."""
+    return _steps[_index] if 0 <= _index < len(_steps) else None
+
+
+def back_to(handle):
+    """Drop every step after `handle` and stand at it, as a new push drops
+    the steps Redo would reach; the files they were kept in go with them.
+    Test All Features ends this way before it opens the user's scene again,
+    so no step of a feature's scene stays in the history. With `handle` gone
+    (the history's length limit took it), every step goes."""
+    global _index
+    at = next((i for i, step in enumerate(_steps) if step is handle), None)
+    cut = 0 if at is None else at + 1
+    removed = _steps[cut:]
+    del _steps[cut:]
+    _index = len(_steps) - 1
+    _forget_files(removed)
     return state()
 
 

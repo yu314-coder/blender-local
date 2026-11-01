@@ -22,13 +22,14 @@ struct TransformGizmo {
     enum Mode: Equatable {
         case translate, rotate, scale
 
-        /// What the undo entry is called. Blender names the step after the
-        /// operator, and these are the names it uses.
+        /// What the undo entry is called: the step Blender's history records
+        /// for `transform.translate`, `rotate` and `resize` (UndoStep, which
+        /// the names check measures in Blender).
         var undoName: String {
             switch self {
-            case .translate: return "Move"
-            case .rotate:    return "Rotate"
-            case .scale:     return "Resize"
+            case .translate: return UndoStep.move
+            case .rotate:    return UndoStep.rotate
+            case .scale:     return UndoStep.resize
             }
         }
     }
@@ -174,21 +175,47 @@ struct TransformGizmo {
 
     static func make(mode: Mode, scene: BKScene, options: ViewportOptions,
                      camera: ViewportCamera, size: CGSize) -> TransformGizmo? {
-        guard let origin = pivot(of: scene, for: mode) else { return nil }
-
-        // Scale always works in the object's own axes. A per-axis scale along a
-        // *world* axis is not expressible as a loc/rot/scale triple once the
-        // object is rotated — it shears — so offering it would mean drawing a
-        // handle that silently does something else. Move and rotate follow the
-        // orientation dropdown, where both choices are exact.
-        let useLocal = (mode == .scale) || options.orientation == .local
-        var axes: [SIMD3<Float>] = [SIMD3(1, 0, 0), SIMD3(0, 1, 0), SIMD3(0, 0, 1)]
-        if useLocal, let active = scene.active {
-            let r = simd_float4x4(eulerXYZ: active.rotation)
-            axes = [normalize(r.columns.0.xyz), normalize(r.columns.1.xyz), normalize(r.columns.2.xyz)]
-        }
+        guard let origin = pivot(of: scene, for: mode),
+              let m = orientationAxes(scene: scene, camera: camera) else { return nil }
+        // Every handle follows Blender's Orientation, Scale's too, as
+        // Blender's gizmo does (`calc_gizmo_stats` takes the scale slot,
+        // which defaults to the main one). Scale used to be pinned to the
+        // object's own axes, because a scale along a world axis of a turned
+        // object has no exact loc/rot/scale; Blender's answer to that is
+        // `TransMat3ToSize`, which the preview runs too (TransformOperation).
+        let axes = [m.columns.0, m.columns.1, m.columns.2]
         let radius = screenRadius * worldPerPoint(camera: camera, at: origin, size: size)
         return TransformGizmo(mode: mode, origin: origin, axes: axes, radius: radius)
+    }
+
+    /// Blender's View orientation for the app's view: `rv3d->viewinv`'s axes,
+    /// right, up and towards the eye.
+    static func viewAxes(_ camera: ViewportCamera) -> simd_float3x3 {
+        simd_float3x3(camera.right, camera.trueUp, simd_normalize(camera.eye - camera.target))
+    }
+
+    /// The axes the gizmo is drawn on: Blender's matrix for the scene's
+    /// orientation, which `_blenderkit_orient` reports (`scene.orientation`),
+    /// the view's own for View, and Local from the active object's world
+    /// matrix until Blender has answered. Nil — no gizmo — when Blender's
+    /// matrix is not known yet or cannot be worked out here
+    /// (`OrientationState.unavailable`): a gizmo on axes Blender would not
+    /// use would commit something other than what it showed.
+    static func orientationAxes(scene: BKScene, camera: ViewportCamera) -> simd_float3x3? {
+        let state = scene.orientation
+        guard state.unavailable == nil else { return nil }
+        switch state.type {
+        case .global?:
+            return matrix_identity_float3x3
+        case .view?:
+            return viewAxes(camera)
+        default:
+            if let axes = state.axes { return axes }
+            if state.type == .local, let active = scene.active {
+                return OrientationBpy.localAxes(active.modelMatrix)
+            }
+            return nil
+        }
     }
 
     // MARK: screen projection
@@ -356,11 +383,31 @@ struct TransformGizmo {
         /// geometry stays where it is in the world, so the preview moves no
         /// target or neighbour — only what follows an origin (children).
         let originsOnly: Bool
+        /// The scene's falloff, size and Connected Only as the drag began:
+        /// where the redo panel's proportional rows start when the drag had
+        /// proportional editing off.
+        let proportionalDefaults: ProportionalEdit
+        /// The orientation the drag is measured in, frozen with it: what the
+        /// commit says, and what the preview turns its numbers back into.
+        let frame: Frame
 
         /// Individual Origins, which no single `center_override` can express.
         /// Only in object mode: an edit-mode drag has no per-island origin to
         /// use, so it keeps the gizmo's own pivot.
         var usesIndividualOrigins: Bool { pivot == .individualOrigins && edit == nil && points == nil }
+    }
+
+    /// Blender's orientation for one drag.
+    struct Frame {
+        /// Nil for a custom orientation (Create Orientation's), sent as its
+        /// matrix alone.
+        let orientation: TransformOrientation?
+        /// The gizmo's axes as the commit prints them, six places: what
+        /// Blender multiplies the values by (`spacemtx`), and so what the
+        /// preview does.
+        let axes: simd_float3x3
+        /// The view's, for the redo panel's View.
+        let viewAxes: simd_float3x3
     }
 
     /// The curve or lattice a drag in its Edit Mode moves the points of, and
@@ -645,7 +692,14 @@ struct TransformGizmo {
                        snapSource: snapSource,
                        geometry: geometry,
                        autoMerge: editing && points == nil && tools.autoMerge ? tools.mergeThreshold : nil,
-                       originsOnly: originsOnly)
+                       originsOnly: originsOnly,
+                       proportionalDefaults: ProportionalEdit(
+                           falloff: tools.falloff, size: (tools.size * 100_000).rounded() / 100_000,
+                           connected: tools.connected),
+                       frame: Frame(orientation: scene.orientation.type,
+                                    axes: OrientationBpy.printed(simd_float3x3(gizmo.axes[0], gizmo.axes[1],
+                                                                               gizmo.axes[2])),
+                                    viewAxes: OrientationBpy.printed(viewAxes(camera))))
     }
 
     /// What a drag to `point` amounts to. Reported in gizmo space, which is
@@ -857,20 +911,81 @@ struct TransformGizmo {
         return SIMD3(printed(p.x), printed(p.y), printed(p.z))
     }
 
+    /// The commit a result amounts to, as the values the redo panel shows:
+    /// a move's in the orientation's axes, as Blender's exec takes them
+    /// (`global_dir = spacemtx · values`, transform_mode_translate.cc), and a
+    /// rotation about the orientation's axis. The view ring turns about the
+    /// view's own axis, as an orientation whose Z is that axis — Blender has
+    /// no axis called VIEW (`viewRotationArguments`).
+    static func gizmoCommit(_ result: Result, session: Session, afterward: String? = nil) -> GizmoCommit {
+        let frame = session.frame
+        var orientation = frame.orientation
+        var axes = frame.axes
+        var viewAxes = frame.viewAxes
+        let kind: GizmoCommit.Kind
+        switch result {
+        case .translate(let d):
+            let inverse = abs(axes.determinant) > 1e-12 ? axes.inverse : axes.transpose
+            kind = .translate(values: inverse * d, constraint: session.handle.constraintMask)
+        case .rotate(let axis, let angle, let index):
+            if let index {
+                kind = .rotate(angle: angle, axis: index)
+            } else {
+                orientation = .view
+                axes = OrientationBpy.printed(viewRotationMatrix(axis: axis))
+                viewAxes = axes
+                kind = .rotate(angle: angle, axis: 2)
+            }
+        case .scale(let f):
+            kind = .resize(values: f, constraint: session.handle.constraintMask)
+        }
+        let tools = session.proportionalDefaults
+        return GizmoCommit(kind: kind, orientation: orientation, axes: axes, viewAxes: viewAxes,
+                           editing: session.edit != nil,
+                           mirror: session.edit?.symmetry != nil,
+                           proportional: session.proportional, proportionalDefaults: tools,
+                           centre: committedPivot(session),
+                           individualOrigins: session.usesIndividualOrigins,
+                           places: places(session), afterward: afterward)
+    }
+
+    /// The commit as the operator the bridge performs, the redo panel adjusts
+    /// and the Info log shows.
+    static func commitOperator(_ result: Result, session: Session, afterward: String? = nil) -> LastOperator {
+        var commit = gizmoCommit(result, session: session, afterward: afterward)
+        if case .translate = commit.kind { commit.centre = nil }
+        return .gizmo(commit)
+    }
+
     /// The operator a result amounts to, as values — what the preview runs
-    /// here and what `python` asks Blender for.
+    /// here. Built back from the numbers the commit prints, so the two agree
+    /// to the digit: a scale of 10 about a `center_override` printed 5e-5 off
+    /// moved a vertex 5e-4 away from where the preview had put it (measured
+    /// against Blender 5.2.1 in scripts/run-tools-blender-check.sh).
     static func operation(_ result: Result, session: Session) -> TransformOperation {
         let pivot: TransformOperation.Pivot = session.usesIndividualOrigins
             ? .individualOrigins : .point(committedPivot(session))
-        switch committed(result, places: places(session)) {
-        case .translate(let d):
-            return TransformOperation(kind: .translate(d), pivot: pivot,
+        let commit = gizmoCommit(result, session: session)
+        let op = LastOperator.gizmo(commit)
+        switch commit.kind {
+        case .translate:
+            let values = LastOperator.committedValues(op) ?? .zero
+            return TransformOperation(kind: .translate(commit.axes * values), pivot: pivot,
                                       proportional: session.proportional)
-        case .rotate(let axis, let angle, _):
+        case .rotate(_, let index):
+            let angle = LastOperator.committedAngle(op) ?? 0
+            let axis = [commit.axes.columns.0, commit.axes.columns.1, commit.axes.columns.2][index]
             return TransformOperation(kind: .rotate(axis: axis, angle: angle), pivot: pivot,
                                       proportional: session.proportional)
-        case .scale(let factors):
-            return TransformOperation(kind: .resize(factors), pivot: pivot, orientation: .local,
+        case .resize:
+            let values = LastOperator.committedValues(op) ?? SIMD3(repeating: 1)
+            let orientation: TransformOperation.Orientation
+            switch commit.orientation {
+            case .global?: orientation = .global
+            case .local?:  orientation = .local
+            default:       orientation = .axes(commit.axes)
+            }
+            return TransformOperation(kind: .resize(values), pivot: pivot, orientation: orientation,
                                       proportional: session.proportional)
         }
     }
@@ -899,6 +1014,9 @@ struct TransformGizmo {
             var mesh = edit.mesh
             for i in mesh.vertices.indices { mesh.vertices[i].position = moved[i] }
             ModifierStack.recomputeNormals(&mesh, welded: true)
+            // A flat face is drawn by its face's normal, which Blender sends
+            // at the commit: until then it turns with the face.
+            mesh.carryShading(from: edit.mesh)
             // Blender welds after the transform, not during, so each frame
             // welds a copy of the mesh as it was: merging the mesh itself
             // mid-drag would destroy vertices the rest of the drag needs.
@@ -996,41 +1114,44 @@ struct TransformGizmo {
         }
     }
 
-    /// The `bpy.ops` call this drag is equivalent to, for the Info log.
     /// What the drag is doing, in Blender's own header wording.
     ///
     /// Blender writes `D: 0.4521 (0.4521) global X` across its header while a
     /// transform is live, and that readout is most of how you know a drag has
     /// taken hold at all — the object moving under a finger is ambiguous when
     /// the finger is covering it, and with a trackpad or a Pencil there is no
-    /// contact to feel. Same wording here, so the habit carries over.
+    /// contact to feel. Same wording here, so the habit carries over, and the
+    /// distances are in the orientation's axes, as Blender's are.
     static func readout(_ result: Result, session: Session) -> String {
         let axisName: (Int) -> String = { ["X", "Y", "Z"][$0] }
+        let space = (session.frame.orientation?.label ?? "custom").lowercased()
         switch result {
-        case .translate(let d):
+        case .translate(let world):
+            let m = session.frame.axes
+            let d = abs(m.determinant) > 1e-12 ? m.inverse * world : world
             switch session.handle {
             case .axis(let i):
-                return String(format: "D: %.4f  along %@", d[i], axisName(i))
+                return String(format: "D: %.4f  along %@ %@", d[i], space, axisName(i))
             case .plane(let i):
                 let shown = (0..<3).filter { $0 != i }
-                return String(format: "D: %.4f, %.4f  in %@%@ plane",
-                              d[shown[0]], d[shown[1]],
+                return String(format: "D: %.4f, %.4f  in %@ %@%@ plane",
+                              d[shown[0]], d[shown[1]], space,
                               axisName(shown[0]), axisName(shown[1]))
             case .screen:
-                return String(format: "D: %.4f, %.4f, %.4f", d.x, d.y, d.z)
+                return String(format: "D: %.4f, %.4f, %.4f  %@", d.x, d.y, d.z, space)
             }
         case .rotate(_, let angle, let index):
             let degrees = angle * 180 / .pi
             guard let index else { return String(format: "Rot: %.2f°  view", degrees) }
-            return String(format: "Rot: %.2f°  around %@", degrees, axisName(index))
+            return String(format: "Rot: %.2f°  around %@ %@", degrees, space, axisName(index))
         case .scale(let f):
             switch session.handle {
             case .axis(let i):
-                return String(format: "S: %.4f  along %@", f[i], axisName(i))
+                return String(format: "S: %.4f  along %@ %@", f[i], space, axisName(i))
             case .plane(let i):
                 let shown = (0..<3).filter { $0 != i }
-                return String(format: "S: %.4f, %.4f  in %@%@ plane",
-                              f[shown[0]], f[shown[1]],
+                return String(format: "S: %.4f, %.4f  in %@ %@%@ plane",
+                              f[shown[0]], f[shown[1]], space,
                               axisName(shown[0]), axisName(shown[1]))
             case .screen:
                 return String(format: "S: %.4f", f.x)
@@ -1038,54 +1159,35 @@ struct TransformGizmo {
         }
     }
 
+    /// The call this drag commits, as the Info log shows it: what a curve's
+    /// or a lattice's point drag previews each frame with, and what the
+    /// release performs (`commitOperator`).
     static func python(_ result: Result, session: Session) -> String {
-        let places = places(session)
-        switch committed(result, places: places) {
-        case .translate(let d):
-            // No `center_override` and no pivot argument: measured in 5.2.1,
-            // `transform.translate` has no such property, and it would mean
-            // nothing if it had — every pivot moves the selection by the same
-            // vector.
-            let f = "%.\(places)f"
-            var arguments = [String(format: "value=(\(f), \(f), \(f))", d.x, d.y, d.z),
-                             "constraint_axis=" + session.handle.constraintMask]
-            arguments += mirrorArguments(session)
-            arguments += session.proportional?.operatorArguments ?? []
-            return "bpy.ops.transform.translate(" + arguments.joined(separator: ", ") + ")"
+        commitOperator(result, session: session).python
+    }
 
-        case .rotate(let axis, let angle, let index):
-            var arguments: [String]
-            if let index {
-                arguments = [String(format: "value=%.4f", angle),
-                             "orient_axis='\(["X", "Y", "Z"][index])'"]
-            } else {
-                arguments = viewRotationArguments(axis: axis, angle: angle)
-            }
-            arguments += mirrorArguments(session)
-            arguments += session.proportional?.operatorArguments ?? []
-            if session.usesIndividualOrigins {
-                return ToolsBpy.transformIndividual((["'ROTATE'"] + arguments).joined(separator: ", "))
-            }
-            return "bpy.ops.transform.rotate("
-                + (arguments + centreArguments(session)).joined(separator: ", ") + ")"
-
-        case .scale(let f):
-            // In the object's own axes, which is how the gizmo draws and
-            // previews a scale. Without `orient_type` Blender scales along the
-            // global axes, and a rotated object came back a different shape
-            // from the one the drag showed: (1.58, 1.58, 1) for a 45° cube
-            // stretched to (2, 1, 1).
-            var arguments = [String(format: "value=(%.4f, %.4f, %.4f)", f.x, f.y, f.z),
-                             "constraint_axis=" + session.handle.constraintMask,
-                             "orient_type='LOCAL'"]
-            arguments += mirrorArguments(session)
-            arguments += session.proportional?.operatorArguments ?? []
-            if session.usesIndividualOrigins {
-                return ToolsBpy.transformIndividual((["'RESIZE'"] + arguments).joined(separator: ", "))
-            }
-            return "bpy.ops.transform.resize("
-                + (arguments + centreArguments(session)).joined(separator: ", ") + ")"
+    /// The release: the preview rolled back, and the drag performed through
+    /// Blender as the operator the redo panel then adjusts — undo and run
+    /// again, as Blender's Adjust Last Operation does. With nothing for
+    /// Blender to move, nothing is sent and the banner says why.
+    @discardableResult
+    static func commit(_ result: Result, session: Session, bridge: BpyBridge) -> BpyBridge.Outcome? {
+        // A curve's or a lattice's points commit through their own drag
+        // (`BpyBridge.commitPointDrag`), which Blender previewed frame by
+        // frame; performed here, the call would run in Object Mode on the
+        // object instead.
+        guard session.points == nil else { return nil }
+        rollBack(session)
+        if let why = nothingToCommit(session) {
+            bridge.showReport(session.gizmo.mode.undoName, why)
+            return nil
         }
+        // In edit mode the operator acts on Blender's *vertex* selection.
+        // Whatever was tapped since Blender last reported its selection is
+        // handed over by the bridge, in the same evaluation as the operator.
+        let bare = commitOperator(result, session: session)
+        let op = commitOperator(result, session: session, afterward: bridge.autoKeying(after: bare.python))
+        return bridge.perform(op)
     }
 
     /// What a release says instead of committing, or nil to commit.
@@ -1102,40 +1204,6 @@ struct TransformGizmo {
             + "an axis or Topology Mirror off."
     }
 
-    /// `mirror=True` while editing a mesh with an axis of symmetry on, where
-    /// Blender's Info log has it before the proportional arguments. The axes
-    /// are not arguments: Blender reads them from the mesh, which is where
-    /// the header's toggles wrote them (`SymmetryBpy`). Without it a headless
-    /// Blender mirrors nothing (T_NO_MIRROR with no 3D View) — measured in
-    /// 5.2.1, the translate this sent moved 1 vertex with `use_mirror_x` on,
-    /// and with it the vertex and its mirror image, to (-0.9, 0.7, 0.3) and
-    /// (0.9, 0.7, 0.3).
-    private static func mirrorArguments(_ session: Session) -> [String] {
-        session.edit?.symmetry == nil ? [] : ["mirror=True"]
-    }
-
-    /// The pivot, as `center_override` — world space in edit mode as well as
-    /// object mode.
-    ///
-    /// Every pivot but Individual Origins sends one, Median Point included.
-    /// Measured in Blender 5.2.1 headless with cubes at x = 0, 4 and 10: all
-    /// five `transform_pivot_point` identifiers turned the selection about
-    /// x = 5, which is the *bounds* centre — `initTransInfo` falls back to
-    /// V3D_AROUND_CENTER_BOUNDS with no View3D to read `v3d->around` from — and
-    /// the gizmo previews about the median, 4.667. So the default pivot used to
-    /// commit a rotation about a different point from the one it had just
-    /// shown, whenever a selection was not symmetric; the two existing checks
-    /// missed it because their selections were, and median and bounds agree
-    /// there.
-    /// Individual Origins in object mode never reaches here: `python` routes it
-    /// to `_blenderkit_tools.transform_individual` first. In edit mode it does, because
-    /// there it falls back to the gizmo's own pivot — and that point still has
-    /// to be said, or Blender uses the bounds centre instead.
-    private static func centreArguments(_ session: Session) -> [String] {
-        let p = committedPivot(session)
-        return [String(format: "center_override=(%.4f, %.4f, %.4f)", p.x, p.y, p.z)]
-    }
-
     /// A rotation about the view axis — the outer ring, or a free drag with
     /// the Rotate tool.
     ///
@@ -1150,16 +1218,19 @@ struct TransformGizmo {
     /// its sign. Both were measured against the preview's rotation in Blender
     /// 5.2.1, in object and edit mode.
     static func viewRotationArguments(axis: SIMD3<Float>, angle: Float) -> [String] {
+        let m = viewRotationMatrix(axis: axis)
+        return [String(format: "value=%.4f", angle), "orient_axis='Z'", "orient_type='VIEW'",
+                "orient_matrix=" + OrientationBpy.literal(m), "orient_matrix_type='VIEW'"]
+    }
+
+    /// The orientation a view-axis rotation is written in: Z the axis, X and
+    /// Y any pair square to it.
+    static func viewRotationMatrix(axis: SIMD3<Float>) -> simd_float3x3 {
         let z = normalize(axis)
         let helper: SIMD3<Float> = abs(z.z) < 0.99 ? SIMD3(0, 0, 1) : SIMD3(0, 1, 0)
         let x = normalize(cross(helper, z))
         let y = cross(z, x)
-        func row(_ v: SIMD3<Float>) -> String {
-            String(format: "(%.6f, %.6f, %.6f)", v.x, v.y, v.z)
-        }
-        return [String(format: "value=%.4f", angle), "orient_axis='Z'", "orient_type='VIEW'",
-                String(format: "orient_matrix=(%@, %@, %@)", row(x), row(y), row(z)),
-                "orient_matrix_type='VIEW'"]
+        return simd_float3x3(x, y, z)
     }
 }
 

@@ -17,7 +17,12 @@ WORK="$(mktemp -d "${TMPDIR:-/tmp}/blenderlocal-image3d-blender.XXXXXX")"
 trap 'rm -rf "$WORK"' EXIT
 swiftc -O -o "$WORK/dump" Sources/BlenderLocalBridge/*.swift tests/image3d/blender/main.swift
 "$WORK/dump" "$WORK" > "$WORK/calls.txt"
-"$BLENDER" -b --factory-startup --python-exit-code 1 \
+# Blender gets a HOME and BLENDER_USER_RESOURCES of its own: even a bare
+# `-b --factory-startup` run writes ~/.thumbnails into HOME (measured), and an
+# operator can write Blender's settings. Other checks run at the same time.
+home="$WORK/home"
+mkdir -p "$home"
+HOME="$home" BLENDER_USER_RESOURCES="$home/res" "$BLENDER" -b --factory-startup --python-exit-code 1 \
   --python tests/image3d/blender/verify.py -- "$WORK/calls.txt" "$WORK" 2>&1 \
   | grep -vE '^(Blender [0-9]|Read prefs|Read blend|Info: Saved|Saved "|$)'
 exit "${PIPESTATUS[0]}"

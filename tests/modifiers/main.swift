@@ -15,6 +15,13 @@ func check(_ label: String, _ ok: Bool, _ detail: String = "") {
     print(ok ? "  PASS  \(label)" : "  FAIL  \(label)  \(detail)")
     if !ok { failures += 1 }
 }
+
+/// The settings an edit sends, the vertex budget's price in front of them
+/// left out: every edit carries one (`Bpy.modifierEdit`, round 4's fix round),
+/// and tests/budget holds each to it.
+func sent(_ lines: [String]) -> [String] {
+    lines.filter { !$0.hasPrefix("__import__('_blenderkit_budget').price_modifier(") }
+}
 func close(_ a: Float, _ b: Float, _ eps: Float = 1e-4) -> Bool { abs(a - b) < eps }
 
 /// A record in exactly the shape `_blenderkit_sync.py` builds: `key=value`
@@ -413,46 +420,46 @@ do {
                                   + "offset=0.02;target=")[0]
     var offset = gone
     offset.thickness = 0.07
-    let lines = Bpy.modifierEdit(from: gone, to: offset)
+    let lines = sent(Bpy.modifierEdit(from: gone, to: offset))
     check("an Offset edit is one line", lines.count == 1 && lines[0].contains(".offset = 0.0700"),
           lines.joined(separator: " / "))
     var picked = gone
     picked.targetName = "Cube"
     check("picking a target sends the target alone",
-          Bpy.modifierEdit(from: gone, to: picked) == [Bpy.setModifierProperty(
+          sent(Bpy.modifierEdit(from: gone, to: picked)) == [Bpy.setModifierProperty(
               "Shrinkwrap", "target", "bpy.data.objects[\"Cube\"]")],
-          Bpy.modifierEdit(from: gone, to: picked).joined(separator: " / "))
-    check("nothing changed, nothing sent", Bpy.modifierEdit(from: gone, to: gone).isEmpty)
+          sent(Bpy.modifierEdit(from: gone, to: picked)).joined(separator: " / "))
+    check("nothing changed, nothing sent", sent(Bpy.modifierEdit(from: gone, to: gone)).isEmpty)
 
     var mirror = Modifier(kind: .mirror)
     var y = mirror
     y.mirrorY = true
     check("a Mirror axis toggle is one assignment of the three Blender holds",
-          Bpy.modifierEdit(from: mirror, to: y)
+          sent(Bpy.modifierEdit(from: mirror, to: y))
               == [Bpy.setModifierProperty("Mirror", "use_axis", "(True, True, False)")],
-          Bpy.modifierEdit(from: mirror, to: y).joined(separator: " / "))
+          sent(Bpy.modifierEdit(from: mirror, to: y)).joined(separator: " / "))
     mirror.mirrorZ = true
     check("with the axes Blender has, not the ones the row started with",
-          Bpy.modifierEdit(from: mirror, to: { var m = mirror; m.mirrorY = true; return m }())
+          sent(Bpy.modifierEdit(from: mirror, to: { var m = mirror; m.mirrorY = true; return m }()))
               == [Bpy.setModifierProperty("Mirror", "use_axis", "(True, True, True)")])
 
     let unsubdiv = Modifier.stack(from: "kind=DECIMATE;name=Decimate;ratio=1.0;decimate_type=UNSUBDIV")[0]
     var ratio = unsubdiv
     ratio.ratio = 0.5; ratio.decimateType = "COLLAPSE"
-    let decimate = Bpy.modifierEdit(from: unsubdiv, to: ratio)
+    let decimate = sent(Bpy.modifierEdit(from: unsubdiv, to: ratio))
     check("a Ratio edit on a scripted Un-Subdivide sends the type it switches to",
           decimate.count == 2 && decimate.contains { $0.contains("decimate_type = \"COLLAPSE\"") },
           decimate.joined(separator: " / "))
     var collapse = ratio
     collapse.ratio = 0.25
-    check("and on Collapse the ratio alone", Bpy.modifierEdit(from: ratio, to: collapse).count == 1)
+    check("and on Collapse the ratio alone", sent(Bpy.modifierEdit(from: ratio, to: collapse)).count == 1)
 
     let remesh = Modifier.stack(from: "kind=REMESH;name=Remesh;mode=VOXEL;voxel_size=0.3;octree_depth=4.0")[0]
     var blocks = remesh
     blocks.remeshMode = .blocks
     check("a Remesh mode change leaves the voxel size Blender holds alone",
-          Bpy.modifierEdit(from: remesh, to: blocks) == [Bpy.setModifierProperty("Remesh", "mode", "\"BLOCKS\"")],
-          Bpy.modifierEdit(from: remesh, to: blocks).joined(separator: " / "))
+          sent(Bpy.modifierEdit(from: remesh, to: blocks)) == [Bpy.setModifierProperty("Remesh", "mode", "\"BLOCKS\"")],
+          sent(Bpy.modifierEdit(from: remesh, to: blocks)).joined(separator: " / "))
 }
 
 print("\n== Wave: Motion X and Y, mirrored ==")
@@ -533,7 +540,7 @@ do {
     func edit(_ change: (inout Modifier) -> Void) -> [String] {
         var changed = fresh
         change(&changed)
-        return Bpy.modifierEdit(from: fresh, to: changed)
+        return sent(Bpy.modifierEdit(from: fresh, to: changed))
     }
     check("Clipping on sends use_clip alone",
           edit { $0.mirrorClip = true } == [Bpy.setModifierProperty("Mirror", "use_clip", "True")])
@@ -662,13 +669,14 @@ do {
     check("no geometry to measure: the old fixed floor",
           ModifierStack.remeshVoxelFloor(for: MeshData(vertices: [], indices: [])) == 0.01)
     let large = Bpy.addModifier(.remesh, on: MeshBuilder.cube(size: 100))
-    check("Add Modifier on a 100 m cube raises Blender's 0.1 to the floor, on the one it added",
-          large.count == 2 && large[1] == "bpy.context.object.modifiers.active.voxel_size = 0.390625",
+    check("Add Modifier on a 100 m cube raises Blender's 0.1 to the floor, on the one it added, priced at it",
+          large.count == 3 && large[2] == "bpy.context.object.modifiers.active.voxel_size = 0.390625"
+            && large[0] == "__import__('_blenderkit_budget').price_add(\"REMESH\", settings={\"voxel_size\": 0.390625})",
           large.joined(separator: " / "))
-    check("and on a 2 m cube adds it as Blender would",
-          Bpy.addModifier(.remesh, on: MeshBuilder.cube(size: 2)) == [Bpy.addModifier("REMESH")])
-    check("other kinds are added as they always were",
-          Bpy.addModifier(.subdivision, on: MeshBuilder.cube(size: 100)) == [Bpy.addModifier("SUBSURF")])
+    check("and on a 2 m cube adds it as Blender would, priced first",
+          Bpy.addModifier(.remesh, on: MeshBuilder.cube(size: 2)) == [Bpy.priceAdd("REMESH"), Bpy.addModifier("REMESH")])
+    check("other kinds are added as they always were, priced first",
+          Bpy.addModifier(.subdivision, on: MeshBuilder.cube(size: 100)) == [Bpy.priceAdd("SUBSURF"), Bpy.addModifier("SUBSURF")])
     var remesh = Modifier(kind: .remesh)
     remesh.voxelSize = two
     check("the floor goes to Blender with six places: 0.007812, where four sent 0.0078",
@@ -778,7 +786,7 @@ do {
               lines.joined(separator: " / "))
         var wider = m
         wider.angle = .pi / 3
-        let edit = Bpy.modifierEdit(from: m, to: wider)
+        let edit = sent(Bpy.modifierEdit(from: m, to: wider))
         check("an Angle edit sends the angle alone", edit.count == 1 && edit[0].contains("1.0472"), edit.joined())
     }
     // Any other group: named, and nothing sent for inputs the row does not know.
@@ -809,12 +817,14 @@ do {
         "kind=EDGE_SPLIT;name=EdgeSplit;show_viewport=1;show_render=1;split_angle=0.6981317;use_edge_angle=1;use_edge_sharp=0",
         "kind=LAPLACIANSMOOTH;name=LaplacianSmooth;show_viewport=1;show_render=1;iterations=4.0;lambda_factor=0.5;lambda_border=0.2;use_x=1;use_y=0;use_z=1;use_volume_preserve=0;use_normalized=1",
         "kind=SUBSURF;name=Subdivision;show_viewport=1;show_render=1;levels=2.0",
-        "kind=SURFACE_DEFORM;name=SurfaceDeform;type_label=Surface Deform;show_viewport=0;show_render=1",
-        "kind=HOOK;name=Hook-Empty;type_label=Hook;show_viewport=1;show_render=1"))
+        // Two kinds that still have no rows of their own (Surface Deform and
+        // Hook, which stood here, have rows since round 4's group 8).
+        "kind=WARP;name=Warp;type_label=Warp;show_viewport=0;show_render=1",
+        "kind=LAPLACIANDEFORM;name=Laplacian-Empty;type_label=Laplacian Deform;show_viewport=1;show_render=1"))
     check("seven rows for seven modifiers", stack.count == 7, "\(stack.count)")
     check("in Blender's order",
           stack.map(\.name) == ["Multires", "WeightedNormal", "EdgeSplit", "LaplacianSmooth",
-                                "Subdivision", "SurfaceDeform", "Hook-Empty"], "\(stack.map(\.name))")
+                                "Subdivision", "Warp", "Laplacian-Empty"], "\(stack.map(\.name))")
     check("each the kind it is",
           stack.map(\.kind) == [.multires, .weightedNormal, .edgeSplit, .laplacianSmooth,
                                 .subdivision, .other, .other], "\(stack.map(\.kind))")
@@ -835,19 +845,19 @@ do {
                   && !laplace.preserveVolume && laplace.normalized
                   && laplace.waveX && laplace.waveY)
         check("a kind with no settings rows keeps its own type and Blender's name for it",
-              stack[5].blenderType == "SURFACE_DEFORM" && stack[5].typeLabel == "Surface Deform"
+              stack[5].blenderType == "WARP" && stack[5].typeLabel == "Warp"
                   && !stack[5].showInViewport && stack[5].showInRender)
         check("a modelled kind knows its own", stack[4].blenderType == "SUBSURF"
                   && stack[4].typeLabel == "Subdivision Surface")
         check("such a row sends no settings of its own", Bpy.modifierSettings(stack[5]).isEmpty)
         check("but has the two switches every row has",
               Bpy.modifierVisibility(stack[5]) == [
-                "bpy.context.object.modifiers[\"SurfaceDeform\"].show_viewport = False",
-                "bpy.context.object.modifiers[\"SurfaceDeform\"].show_render = True"],
+                "bpy.context.object.modifiers[\"Warp\"].show_viewport = False",
+                "bpy.context.object.modifiers[\"Warp\"].show_render = True"],
               Bpy.modifierVisibility(stack[5]).joined(separator: " / "))
     }
-    check("a record with no label reads the identifier", Modifier.stack(from: "kind=MESH_DEFORM;name=M")
-              .first?.typeLabel == "Mesh Deform")
+    check("a record with no label reads the identifier", Modifier.stack(from: "kind=VERTEX_WEIGHT_EDIT;name=M")
+              .first?.typeLabel == "Vertex Weight Edit")
     check("an entry with no kind is dropped", Modifier.stack(from: "kind=;name=X").isEmpty)
     // Wave's Motion is still Wave's.
     let wave = Modifier.stack(from: "kind=WAVE;name=Wave;use_x=0;use_y=1")[0]
@@ -863,19 +873,20 @@ print("\n== the two switches every row has ==")
 do {
     let m = Modifier.stack(from: "kind=SURFACE_DEFORM;name=SurfaceDeform;type_label=Surface Deform;show_viewport=1;show_render=1")[0]
     let viewport = ModifierRowAction.toggleViewport.command(for: m, in: [m])
-    check("Show in Viewport sends show_viewport alone",
-          viewport?.lines == ["bpy.context.object.modifiers[\"SurfaceDeform\"].show_viewport = False"]
+    check("Show in Viewport sends show_viewport alone, behind the budget's price",
+          sent(viewport?.lines ?? []) == ["bpy.context.object.modifiers[\"SurfaceDeform\"].show_viewport = False"]
+              && viewport?.lines.first == Bpy.priceModifierEdit("SurfaceDeform", [("show_viewport", "False")])
               && viewport?.undo == "Edit Modifier", viewport?.lines.joined(separator: " / ") ?? "nil")
     let render = ModifierRowAction.toggleRender.command(for: m, in: [m])
-    check("Show in Render sends show_render alone",
-          render?.lines == ["bpy.context.object.modifiers[\"SurfaceDeform\"].show_render = False"],
+    check("Show in Render sends show_render alone, behind the budget's price",
+          sent(render?.lines ?? []) == ["bpy.context.object.modifiers[\"SurfaceDeform\"].show_render = False"],
           render?.lines.joined(separator: " / ") ?? "nil")
     // A settings edit still sends only its own change.
     var subsurf = Modifier(kind: .subdivision)
     var hidden = subsurf
     hidden.showInViewport = false
     check("on a modelled kind too, and only that",
-          Bpy.modifierEdit(from: subsurf, to: hidden) == [Bpy.setModifierProperty("Subdivision", "show_viewport", "False")])
+          sent(Bpy.modifierEdit(from: subsurf, to: hidden)) == [Bpy.setModifierProperty("Subdivision", "show_viewport", "False")])
     subsurf.levels = 2
     // The simulator's stack honours the switch, as Blender's evaluation does.
     let cube = MeshBuilder.cube(size: 2)
@@ -934,7 +945,19 @@ do {
               && fresh.sculptLevels == 0 && fresh.renderLevels == 0)
     check("its rows send the three levels, never the read-only total",
           Bpy.modifierSettings(fresh) == ["levels", "sculpt_levels", "render_levels"].map {
-              Bpy.setModifierProperty("Multires", $0, "0") }, Bpy.modifierSettings(fresh).joined(separator: " / "))
+              Bpy.setModifierProperty("Multires", $0, "0") },
+          Bpy.modifierSettings(fresh).joined(separator: " / "))
+    // The Sculpt stepper sent its level bare, so from inside Sculpt Mode it
+    // went round the base-mesh budget (round 3's review); its edit now sends
+    // the check first, carrying the new level, and nothing for the others.
+    var twoLevels = fresh
+    twoLevels.totalLevels = 2
+    var sculpted = twoLevels
+    sculpted.sculptLevels = 1
+    let stepped = Bpy.modifierEdit(from: twoLevels, to: sculpted)
+    check("the Sculpt stepper's edit sends the budget's price for the sculpt level, then the level, and nothing else",
+          stepped == [Bpy.priceModifierEdit("Multires", [("sculpt_levels", "1")]),
+                      Bpy.setModifierProperty("Multires", "sculpt_levels", "1")], stepped.joined(separator: " / "))
     // Each goes through _blenderkit_multires, which takes the object to
     // Object Mode, checks it got there, and refuses in words if not. They
     // used to be bare operators under BpyModeGuard, whose failed mode_set
@@ -983,7 +1006,7 @@ do {
     var heavier = normal
     heavier.weight = 80
     check("a weight edit sends the weight alone, as an integer",
-          Bpy.modifierEdit(from: normal, to: heavier) == [Bpy.setModifierProperty("WeightedNormal", "weight", "80")])
+          sent(Bpy.modifierEdit(from: normal, to: heavier)) == [Bpy.setModifierProperty("WeightedNormal", "weight", "80")])
     check("the mode goes as its identifier",
           Bpy.modifierSettings(normal).contains(Bpy.setModifierProperty("WeightedNormal", "mode", "\"FACE_AREA_WITH_ANGLE\"")))
 
@@ -998,7 +1021,7 @@ do {
     var noZ = laplace
     noZ.smoothZ = false
     check("an axis toggle sends that axis alone",
-          Bpy.modifierEdit(from: laplace, to: noZ) == [Bpy.setModifierProperty("LaplacianSmooth", "use_z", "False")])
+          sent(Bpy.modifierEdit(from: laplace, to: noZ)) == [Bpy.setModifierProperty("LaplacianSmooth", "use_z", "False")])
     laplace.lambdaFactor = 1; laplace.iterations = 3; laplace.smoothZ = false
     let sphere = MeshBuilder.uvSphere(radius: 1, segments: 16, rings: 8)
     let smoothedSphere = ModifierStack.apply([laplace], to: sphere)
@@ -1026,13 +1049,13 @@ do {
     var picked = lattice
     picked.targetName = "Cage"
     check("picking one sends the object alone",
-          Bpy.modifierEdit(from: lattice, to: picked) == [Bpy.setModifierProperty("Lattice", "object", "bpy.data.objects[\"Cage\"]")])
+          sent(Bpy.modifierEdit(from: lattice, to: picked)) == [Bpy.setModifierProperty("Lattice", "object", "bpy.data.objects[\"Cage\"]")])
     check("and the picker's None clears it, which it could not before",
-          Bpy.modifierEdit(from: picked, to: lattice) == [Bpy.setModifierProperty("Lattice", "object", "None")])
+          sent(Bpy.modifierEdit(from: picked, to: lattice)) == [Bpy.setModifierProperty("Lattice", "object", "None")])
     var stronger = lattice
     stronger.thickness = 0.5
     check("a strength edit with nothing picked sends the strength alone",
-          Bpy.modifierEdit(from: lattice, to: stronger) == [Bpy.setModifierProperty("Lattice", "strength", "0.5000")])
+          sent(Bpy.modifierEdit(from: lattice, to: stronger)) == [Bpy.setModifierProperty("Lattice", "strength", "0.5000")])
     lattice = Modifier.stack(from: "kind=LATTICE;name=Lattice;strength=0.5;object=Cage")[0]
     check("and both come back from the record", lattice.targetName == "Cage" && close(lattice.thickness, 0.5))
     check("each new kind is offered by Add Modifier, under Blender's menu name",
@@ -1077,7 +1100,8 @@ do {
           !ModifierStack.canMove(0, up: true, in: stack) && !ModifierStack.canMove(3, up: false, in: stack))
     check("the pure deforms are Blender's OnlyDeform types",
           ModifierKind.allCases.filter(\.onlyDeforms) == [.smooth, .cast, .simpleDeform, .displace, .wave,
-                                                          .shrinkwrap, .laplacianSmooth, .correctiveSmooth, .lattice])
+                                                          .shrinkwrap, .laplacianSmooth, .correctiveSmooth, .lattice,
+                                                          .curve, .hook, .armature, .surfaceDeform, .meshDeform])
 
     check("Apply on a Lattice with nothing picked is refused, and the row stays",
           !cube.applyModifier(named: "Lattice") && cube.modifiers.contains { $0.name == "Lattice" })
@@ -1141,9 +1165,10 @@ do {
         "kind=WIREFRAME;name=a%3Bb%7Cc%3Dd%25e;type_label=Wireframe;show_viewport=1|kind=SUBSURF;name=Subdivision;levels=2.0")
     check("two rows, not three", stack.count == 2, "\(stack.map(\.name))")
     check("the name as Blender has it", stack.first?.name == "a;b|c=d%e", stack.first?.name ?? "nil")
-    check("so the row's switch names that modifier",
+    check("so the row's switch names that modifier, in its price too",
           stack.first.map { ModifierRowAction.toggleViewport.command(for: $0, in: stack)?.lines }
-              == [#"bpy.context.object.modifiers["a;b|c=d%e"].show_viewport = False"#])
+              == [#"__import__('_blenderkit_budget').price_modifier("a;b|c=d%e", {"show_viewport": False})"#,
+                  #"bpy.context.object.modifiers["a;b|c=d%e"].show_viewport = False"#])
     check("and the row after it is untouched", stack.last?.levels == 2)
     check("a stray % that is not an escape is kept",
           Modifier.stack(from: "kind=HOOK;name=100% done;type_label=Hook").first?.name == "100% done")
@@ -1173,33 +1198,37 @@ do {
     check("a different type under the same name is a new row", replaced[0].id != old[0].id)
 }
 
-print("\n== the budget check rides with a level or a count ==")
+print("\n== the budget's price rides with every edit ==")
 do {
-    // The Levels stepper had no size check (round 3's review): the check line
-    // goes first, so Blender refuses before anything is set, and it carries
-    // the value, so `modifierEdit` sends it with every new level.
+    // The Levels stepper had no size check (round 3's review), and round 4's
+    // found three rows that chose to send none (Bevel, Mirror, Screw). The
+    // price goes first, so Blender refuses before anything is set, carries
+    // every setting the edit sends, and is the row's whatever the setting.
     var one = Modifier(kind: .subdivision, name: "Subdivision")
     one.levels = 1
     var seven = one
     seven.levels = 7
     let sent = Bpy.modifierEdit(from: one, to: seven)
-    check("a new level sends the check, then levels, then render_levels",
-          sent.count == 3 && sent[0] == Bpy.checkModifierSetting("Subdivision", "levels", "7")
+    check("a new level sends the price, then levels, then render_levels",
+          sent.count == 3 && sent[0] == Bpy.priceModifierEdit("Subdivision", [("levels", "7"), ("render_levels", "7")])
             && sent[1].hasSuffix(".levels = 7") && sent[2].hasSuffix(".render_levels = 7"),
           sent.joined(separator: " / "))
-    check("the check names the module, the modifier, the key and the value",
-          sent[0] == "__import__('_blenderkit_multires').check_setting(\"Subdivision\", \"levels\", 7)", sent[0])
+    check("the price names the module, the modifier, and each key and value",
+          sent[0] == "__import__('_blenderkit_budget').price_modifier(\"Subdivision\", {\"levels\": 7, \"render_levels\": 7})",
+          sent[0])
     var array = Modifier(kind: .array, name: "Array")
     array.count = 2
     var many = array
     many.count = 40
     let counted = Bpy.modifierEdit(from: array, to: many)
-    check("an Array's new count sends its check first",
-          counted.first == Bpy.checkModifierSetting("Array", "count", "40"), counted.joined(separator: " / "))
+    check("an Array's new count sends its price first",
+          counted.first == Bpy.priceModifierEdit("Array", [("count", "40")]), counted.joined(separator: " / "))
     var offset = array
     offset.relativeOffset = SIMD3(2, 0, 0)
-    check("a change that is not the count sends no check",
-          !Bpy.modifierEdit(from: array, to: offset).contains { $0.contains("check_setting") })
+    let moved = Bpy.modifierEdit(from: array, to: offset)
+    check("and so does a change that is not the count: the price is not the row's to choose",
+          moved.first?.hasPrefix("__import__('_blenderkit_budget').price_modifier(\"Array\", {\"relative_offset_displace\": ") == true,
+          moved.joined(separator: " / "))
 }
 
 print("\n== Duplicate in Edit Mode ==")

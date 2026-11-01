@@ -41,6 +41,13 @@ public enum ModifierKind: String, Codable, CaseIterable, Sendable {
     // assignment does not raise and leaves `object` None), so a mesh in the
     // list would accept a pick and then do nothing.
     case weightedNormal, multires, edgeSplit, laplacianSmooth, correctiveSmooth, lattice
+    // Round 4, group 8: the eleven Add Modifier offered only through the
+    // Operator Search and the Data API before (round 3's review, toolkit item
+    // 13). Their rows are declared (`ModifierKind.fields`, ModifierFields.swift)
+    // rather than typed out one field at a time: each setting is Blender's
+    // property, kept as the text the mirror sent (`Modifier.values`).
+    case curve, wireframe, skin, hook, armature, surfaceDeform, meshDeform
+    case dataTransfer, normalEdit, mask, build
     // Any modifier Blender has that the app has no settings rows for —
     // Armature, Hook, Curve, Surface Deform, Wireframe, the physics ones.
     // The modifier's own type travels in `Modifier.blenderType`. Its row
@@ -61,6 +68,9 @@ public enum ModifierKind: String, Codable, CaseIterable, Sendable {
     /// was taken.
     public static let meshOnly: Set<ModifierKind> = [
         .displace, .boolean, .weightedNormal, .multires, .laplacianSmooth, .correctiveSmooth,
+        // Blender's Add Modifier lists these on a mesh alone
+        // (properties_data_modifier.py: `if ob_type == 'MESH'`).
+        .wireframe, .skin, .mask, .surfaceDeform, .dataTransfer, .normalEdit,
     ]
 
     /// What Add Modifier lists on an object of Blender type `blenderType`:
@@ -77,7 +87,27 @@ public enum ModifierKind: String, Codable, CaseIterable, Sendable {
     public var onlyDeforms: Bool {
         switch self {
         case .smooth, .cast, .simpleDeform, .displace, .wave, .shrinkwrap,
-             .laplacianSmooth, .correctiveSmooth, .lattice:
+             .laplacianSmooth, .correctiveSmooth, .lattice,
+             // `ModifierTypeType::OnlyDeform` in MOD_curve.cc, MOD_hook.cc,
+             // MOD_armature.cc, MOD_surfacedeform.cc and MOD_meshdeform.cc.
+             .curve, .hook, .armature, .surfaceDeform, .meshDeform:
+            return true
+        default:
+            return false
+        }
+    }
+
+    /// The kinds the simulator's stand-in adds and shows rows for but draws
+    /// as if they were not there (`ModifierStack.apply` hands their mesh back
+    /// unchanged): what they build — from edges, vertex groups, the frame,
+    /// or another object — the stand-in's meshes do not hold. Their rows say
+    /// so there: a Wireframe drawn solid under a working-looking row was a
+    /// control whose effect never showed (round 4's review).
+    /// tests/modkinds/main.swift holds this list to `ModifierStack.apply`.
+    public var standInLeavesMesh: Bool {
+        switch self {
+        case .curve, .wireframe, .skin, .hook, .armature, .surfaceDeform, .meshDeform,
+             .dataTransfer, .normalEdit, .mask, .build:
             return true
         default:
             return false
@@ -129,6 +159,18 @@ public enum ModifierKind: String, Codable, CaseIterable, Sendable {
         case .laplacianSmooth:  return "LaplacianSmooth"
         case .correctiveSmooth: return "CorrectiveSmooth"
         case .lattice:          return "Lattice"
+        // Measured in 5.2.1 (`modifier_add` on a cube).
+        case .curve:            return "Curve"
+        case .wireframe:        return "Wireframe"
+        case .skin:             return "Skin"
+        case .hook:             return "Hook"
+        case .armature:         return "Armature"
+        case .surfaceDeform:    return "SurfaceDeform"
+        case .meshDeform:       return "MeshDeform"
+        case .dataTransfer:     return "DataTransfer"
+        case .normalEdit:       return "NormalEdit"
+        case .mask:             return "Mask"
+        case .build:            return "Build"
         case .other:            return "Modifier"
         }
     }
@@ -146,6 +188,10 @@ public enum ModifierKind: String, Codable, CaseIterable, Sendable {
         case .edgeSplit:        return "Edge Split"
         case .laplacianSmooth:  return "Smooth Laplacian"
         case .correctiveSmooth: return "Smooth Corrective"
+        case .surfaceDeform:    return "Surface Deform"
+        case .meshDeform:       return "Mesh Deform"
+        case .dataTransfer:     return "Data Transfer"
+        case .normalEdit:       return "Normal Edit"
         default:                return displayName
         }
     }
@@ -177,6 +223,17 @@ public enum ModifierKind: String, Codable, CaseIterable, Sendable {
         case .laplacianSmooth:  return "LAPLACIANSMOOTH"
         case .correctiveSmooth: return "CORRECTIVE_SMOOTH"
         case .lattice:          return "LATTICE"
+        case .curve:            return "CURVE"
+        case .wireframe:        return "WIREFRAME"
+        case .skin:             return "SKIN"
+        case .hook:             return "HOOK"
+        case .armature:         return "ARMATURE"
+        case .surfaceDeform:    return "SURFACE_DEFORM"
+        case .meshDeform:       return "MESH_DEFORM"
+        case .dataTransfer:     return "DATA_TRANSFER"
+        case .normalEdit:       return "NORMAL_EDIT"
+        case .mask:             return "MASK"
+        case .build:            return "BUILD"
         // Never sent: an `.other` modifier's type is its own
         // (`Modifier.blenderType`), and Add Modifier does not offer one.
         case .other:            return ""
@@ -210,6 +267,17 @@ public enum ModifierKind: String, Codable, CaseIterable, Sendable {
         case .laplacianSmooth:  return "drop.halffull"
         case .correctiveSmooth: return "wand.and.stars"
         case .lattice:          return "grid"
+        case .curve:            return "point.bottomleft.forward.to.point.topright.scurvepath"
+        case .wireframe:        return "square.grid.3x3.square"
+        case .skin:             return "figure.stand"
+        case .hook:             return "link"
+        case .armature:         return "figure.arms.open"
+        case .surfaceDeform:    return "square.3.layers.3d.down.right"
+        case .meshDeform:       return "cube.transparent.fill"
+        case .dataTransfer:     return "arrow.left.arrow.right.square"
+        case .normalEdit:       return "arrow.up.and.down.and.arrow.left.and.right"
+        case .mask:             return "theatermasks"
+        case .build:            return "square.stack.3d.up"
         case .other:            return "puzzlepiece.extension"
         }
     }
@@ -299,9 +367,13 @@ public struct Modifier: Codable, Identifiable, Sendable {
     /// Blender's `isDisabled` for the kinds here that point at another
     /// object: a Boolean, Shrinkwrap or Lattice with nothing picked does
     /// nothing, and Apply on one is refused with "Modifier is disabled,
-    /// skipping apply" (measured in 5.2.1 for the Lattice; verify.py).
+    /// skipping apply" (measured in 5.2.1 for the Lattice; verify.py). Round
+    /// 4's group 8 measured its six with a pointer the same way: Curve, Hook,
+    /// Armature, Surface Deform, Mesh Deform and Data Transfer refused Apply
+    /// with nothing picked; Normal Edit, Mask, Wireframe and Build applied.
     public var isDisabled: Bool {
-        [.boolean, .shrinkwrap, .lattice].contains(kind) && targetName.isEmpty
+        [.boolean, .shrinkwrap, .lattice, .curve, .hook, .armature, .surfaceDeform, .meshDeform,
+         .dataTransfer].contains(kind) && targetName.isEmpty
     }
 
     /// Decimate's collapse ratio. 1 keeps every face.
@@ -401,6 +473,15 @@ public struct Modifier: Codable, Identifiable, Sendable {
     /// offers only those, and shows what came back.
     public var vertexGroup: String
     public var invertVertexGroup: Bool
+
+    /// The settings of a kind whose rows are declared (`ModifierKind.fields`):
+    /// each by Blender's property name, as the text the mirror's record
+    /// carried — a number as Python's `repr(float)`, a switch as 1 or 0, an
+    /// enum as its identifier, an enum set as identifiers joined by commas, a
+    /// pointer as the object's name. Nothing is put here but what Blender
+    /// sent, so a row shows nothing Blender does not hold; and
+    /// `Bpy.modifierSettings` writes only the keys it has.
+    public var values: [String: String]
 
     public enum WeightMode: String, Codable, CaseIterable, Sendable {
         case faceArea, cornerAngle, faceAreaWithAngle
@@ -543,6 +624,7 @@ public struct Modifier: Codable, Identifiable, Sendable {
         self.isBound = false
         self.vertexGroup = ""
         self.invertVertexGroup = false
+        self.values = [:]
 
         // The shared defaults above are Subdivision's and Simple Deform's, and
         // a few kinds disagree with them. On device these are never on screen
@@ -658,6 +740,7 @@ extension Modifier {
         try take(.isBound, &isBound)
         try take(.vertexGroup, &vertexGroup)
         try take(.invertVertexGroup, &invertVertexGroup)
+        try take(.values, &values)
     }
 
     /// Read a stack out of the mirror's record.
@@ -725,6 +808,23 @@ extension Modifier {
         // The two switches every modifier has, whatever its kind.
         if let v = bool("show_viewport")     { m.showInViewport = v }
         if let v = bool("show_render")       { m.showInRender = v }
+        if kind.isDeclared {
+            // Every setting by its own name, and nothing read into the typed
+            // fields above: `offset` is Wireframe's own and would land in
+            // Shrinkwrap's `thickness` there, `mode` is Mask's and Normal
+            // Edit's.
+            for field in kind.fields {
+                if let v = fields[field.key] { m.values[field.key] = v }
+            }
+            if let pointer = kind.fields.first(where: \.isObject), let v = fields[pointer.key] {
+                m.targetName = v
+            }
+            if kind.takesVertexGroup {
+                if let v = fields["vertex_group"] { m.vertexGroup = v }
+                if let v = bool("invert_vertex_group") { m.invertVertexGroup = v }
+            }
+            return
+        }
         if let v = int("levels")     { m.levels = v }
         if let v = int("count")      { m.count = v }
         if let v = int("steps")      { m.count = v }
@@ -867,6 +967,9 @@ extension Modifier {
 public enum ModifierRowAction: Equatable, Sendable {
     case toggleViewport, toggleRender, moveUp, moveDown, apply, remove
     case multires(Bpy.MultiresOperation)
+    /// A declared row's button: Bind, Generate Data Layers, the Hook's and
+    /// the Skin's operators (round 4, group 8).
+    case operation(ModifierOperation)
 
     /// The action a hook names: `viewport`, `render`, `up`, `down`, `apply`,
     /// `remove`, or a Multires operation's raw value.
@@ -879,6 +982,10 @@ public enum ModifierRowAction: Equatable, Sendable {
         case "apply":    self = .apply
         case "remove":   self = .remove
         default:
+            if let op = ModifierOperation(rawValue: hookName) {
+                self = .operation(op)
+                return
+            }
             guard let op = Bpy.MultiresOperation(rawValue: hookName) else { return nil }
             self = .multires(op)
         }
@@ -916,6 +1023,9 @@ public enum ModifierRowAction: Equatable, Sendable {
             case .applyBase:    undo = "Multires Apply Base"
             }
             return ([Bpy.multires(op, modifier.name)], undo)
+        case .operation(let op):
+            guard modifier.kind == op.kind else { return nil }
+            return ([op.python(modifier.name)], op.undo)
         }
     }
 }
@@ -1062,6 +1172,18 @@ public enum ModifierStack {
             // A lattice object is what it deforms by, and the simulator's
             // stand-in has none (its Lattice row finds nothing to pick).
             // Blender leaves the mesh alone for a Lattice with no object.
+            return result
+        case .curve, .hook, .armature, .surfaceDeform, .meshDeform, .dataTransfer, .normalEdit:
+            // Each reads another object (a curve, an empty, an armature, a
+            // cage, a source, a target) or writes data the simulator's meshes
+            // do not carry (custom normals, layers), and this stack has the
+            // one mesh. Blender leaves the mesh alone with no object picked,
+            // as this does; on device the modifier is Blender's own.
+            return result
+        case .wireframe, .skin, .mask, .build:
+            // Built by Blender from edges, vertex groups or the frame, none of
+            // which the simulator's triangle soups keep. Left as they are
+            // rather than approximated into something else.
             return result
         case .other:
             // Never in the simulator's own stack: its Add Modifier offers

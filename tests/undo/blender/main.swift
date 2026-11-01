@@ -37,7 +37,7 @@ emit("EDIT_DELETE_VERTS", BpyModeGuard.wrap(Bpy.deleteSelection(editing: true, m
 // A tap, which records no step of its own and mirrors only the selection.
 emit("TAP", BpyBridge.selectionScript(Bpy.select("Cylinder")))
 
-// Object Details > a property, as OperatorSearch.apply writes it.
+// Properties ▸ Data API ▸ a property, as OperatorSearch.apply writes it.
 func setProperty(_ path: String, _ key: String, _ json: String) -> String {
     BpyModeGuard.wrap("import _blenderkit_sync as _bkui; import json; _bkui.set_property(\(Bpy.quote(path)), \(Bpy.quote(key)), json.loads(\(Bpy.quote(json))))")
 }

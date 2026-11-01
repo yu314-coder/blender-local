@@ -45,6 +45,76 @@ public struct MeshData: Sendable {
     /// unwrap that uses them.
     public var seamEdges: [UInt32] = []
 
+    /// Which normals Blender's Solid view shades this mesh with
+    /// (`Mesh.normals_domain`), when they are not the vertex normals in
+    /// `vertices`. Blender draws a flat face with its face's normal, and a
+    /// mesh with sharp edges or custom normals with its face corners'
+    /// (`Mesh.corner_normals`); the 3D View used to draw every mesh with
+    /// `vertices`' normals, so Shade Flat, Smooth by Angle and the Normals
+    /// menu's custom normals changed a render and not the screen. Measured in
+    /// desktop 5.2.1: 70 of the 80 meshes of the app's Scene.blend and all 48
+    /// of Dinosaur Car Bike.blend are flat (`FACE`), and Point to Target… on
+    /// a flat sphere leaves `CORNER`.
+    public enum ShadingDomain: UInt32, Sendable {
+        /// Blender's `POINT`: the vertex normals in `vertices`.
+        case vertex = 0
+        /// Blender's `FACE`: one normal per triangle, its face's.
+        case triangle = 1
+        /// Blender's `CORNER`: one normal per entry of `indices`.
+        case corner = 2
+    }
+    public var shadingDomain: ShadingDomain = .vertex
+    /// Blender's normals for `shadingDomain`, x, y and z packed as the GPU
+    /// reads them: three floats per triangle (`.triangle`) or per entry of
+    /// `indices` (`.corner`); empty for `.vertex`. Installed by
+    /// `SceneMirror.installShading` from Blender's `corner_normals`.
+    public var shadingNormals: [Float] = []
+
+    /// Whether `shadingNormals` describes these triangles; when not (another
+    /// topology made by a preview, a weld), the renderer draws the vertex
+    /// normals rather than read past the buffer.
+    public var shadingFits: Bool {
+        switch shadingDomain {
+        case .vertex:   return false
+        case .triangle: return !indices.isEmpty && indices.count % 3 == 0 && shadingNormals.count == indices.count
+        case .corner:   return !indices.isEmpty && shadingNormals.count == 3 * indices.count
+        }
+    }
+
+    /// The normal this mesh is shaded with at one entry of `indices`, as
+    /// Blender's Solid view shades it: what the renderer reads.
+    public func shadingNormal(corner: Int) -> SIMD3<Float> {
+        guard shadingFits else { return vertices[Int(indices[corner])].normal }
+        let k = shadingDomain == .triangle ? 3 * (corner / 3) : 3 * corner
+        return SIMD3(shadingNormals[k], shadingNormals[k + 1], shadingNormals[k + 2])
+    }
+
+    /// Turns Blender's shading normals with their triangles, from `old`'s
+    /// positions to these: the live preview of a drag moves vertices and
+    /// Blender sends its normals only at the commit. Each normal is turned by
+    /// the rotation that takes its triangle's old normal to its new one, so a
+    /// flat face's normal stays its face's (exactly, for a planar face) and a
+    /// custom normal keeps its angle to its face. Nothing is done unless
+    /// `old` has these triangles; a degenerate triangle keeps its normals.
+    public mutating func carryShading(from old: MeshData) {
+        guard shadingFits, old.indices == indices, old.vertices.count == vertices.count else { return }
+        let perTriangle = shadingDomain == .triangle
+        for t in 0..<(indices.count / 3) {
+            let a = Int(indices[3 * t]), b = Int(indices[3 * t + 1]), c = Int(indices[3 * t + 2])
+            let before = simd_cross(old.vertices[b].position - old.vertices[a].position,
+                                    old.vertices[c].position - old.vertices[a].position)
+            let after = simd_cross(vertices[b].position - vertices[a].position,
+                                   vertices[c].position - vertices[a].position)
+            let lb = simd_length(before), la = simd_length(after)
+            guard lb > 1e-12, la > 1e-12, lb.isFinite, la.isFinite else { continue }
+            let turn = simd_quatf(from: before / lb, to: after / la)
+            for k in (perTriangle ? [3 * t] : [9 * t, 9 * t + 3, 9 * t + 6]) {
+                let n = turn.act(SIMD3(shadingNormals[k], shadingNormals[k + 1], shadingNormals[k + 2]))
+                shadingNormals[k] = n.x; shadingNormals[k + 1] = n.y; shadingNormals[k + 2] = n.z
+            }
+        }
+    }
+
     public var hasUVs: Bool {
         (!uvs.isEmpty && uvs.count == vertices.count)
             || (!cornerUVs.isEmpty && cornerUVs.count == indices.count)

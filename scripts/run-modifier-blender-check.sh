@@ -19,6 +19,11 @@ BUILD="${TMPDIR:-/tmp}/blenderlocal-modifier-blender"
 mkdir -p "$BUILD"
 swiftc -O -o "$BUILD/dump" Sources/BlenderLocalBridge/*.swift tests/modifiers/blender/main.swift
 "$BUILD/dump" > "$BUILD/calls.txt"
-"$BLENDER" -b --factory-startup --python-exit-code 1 \
+# Blender gets a HOME and BLENDER_USER_RESOURCES of its own: even a bare
+# `-b --factory-startup` run writes ~/.thumbnails into HOME (measured), and an
+# operator can write Blender's settings. Other checks run at the same time.
+home="$BUILD/home"
+mkdir -p "$home"
+HOME="$home" BLENDER_USER_RESOURCES="$home/res" "$BLENDER" -b --factory-startup --python-exit-code 1 \
   --python tests/modifiers/blender/verify.py -- "$BUILD/calls.txt" "$BUILD/records.txt" "$BUILD/dump"
 exec "$BUILD/dump" "$BUILD/records.txt"

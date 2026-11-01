@@ -176,6 +176,29 @@ func bk_sync_groups(_ name: UnsafePointer<CChar>?, _ record: UnsafePointer<CChar
     }
 }
 
+/// A record the interface reads whole (`SceneMirror.carryRecord`): the
+/// collection tree and Local View, held until the pass ends, or an object's
+/// constraints. Outside a pass a scene-wide one goes straight onto the scene.
+@_cdecl("bk_sync_record")
+func bk_sync_record(_ kind: UnsafePointer<CChar>?, _ name: UnsafePointer<CChar>?,
+                    _ record: UnsafePointer<CChar>?) -> Int32 {
+    onMain {
+        guard let kind = string(kind) else { return -1 }
+        let carried = SceneMirror.carryRecord(kind: kind, name: string(name) ?? "",
+                                              record: string(record) ?? "",
+                                              pass: SceneSync.active ? SceneSync.pending : nil,
+                                              screen: PythonSceneBridge.scene?.objects ?? [])
+        switch carried {
+        case .failure: return -1
+        case .object: return 0
+        case .scene(let record):
+            if SceneSync.active { SceneSync.pendingScene.append(record) }
+            else if let scene = PythonSceneBridge.scene { SceneMirror.applyScene([record], to: scene) }
+            return 0
+        }
+    }
+}
+
 /// The object's own location, rotation and scale — `LocalTransform` — which
 /// is what Object ▸ Apply bakes and `matrix_world` cannot say.
 ///

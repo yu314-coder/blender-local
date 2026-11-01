@@ -65,22 +65,27 @@ struct AnimationCommands: Commands {
                 // Present, so the menu keeps its shape, but without I: in
                 // edit mode I belongs to Inset Faces.
                 Button("Insert Keyframe") {}.disabled(true)
-                Button("Delete Keyframe…") {}.disabled(true)
+                Button("Delete Keyframes…") {}.disabled(true)
             } else {
                 Button("Insert Keyframe") { a.insertKeyframe() }
                     .keyboardShortcut("i", modifiers: [])
                     .disabled(a.isRunning)
-                Button("Delete Keyframe…") { a.deleteKeyframe() }
+                // Object ▸ Animation ▸ Delete Keyframes…, Alt+I.
+                Button("Delete Keyframes…") { a.deleteKeyframe() }
                     .keyboardShortcut("i", modifiers: .option)
                     .disabled(a.isRunning)
             }
             Toggle("Auto Keying", isOn: Binding(get: { a.autoKey }, set: { a.setAutoKey($0) }))
                 .disabled(a.isRunning)
             Divider()
-            Button(a.isPlaying ? "Pause Animation" : "Play Animation") { a.togglePlay(false) }
+            // Blender's frame keys, by their operators' names (5.2.1): one
+            // name for both directions, as Blender's keymap lists them, the
+            // key beside each telling them apart — Space and Shift Ctrl Space
+            // are both Play Animation, which pauses as well.
+            Button("Play Animation") { a.togglePlay(false) }
                 .keyboardShortcut(.space, modifiers: [])
                 .disabled(a.isRunning)
-            Button("Play Animation in Reverse") { a.togglePlay(true) }
+            Button("Play Animation") { a.togglePlay(true) }
                 .keyboardShortcut(.space, modifiers: [.shift, .control])
                 .disabled(a.isRunning)
             if a.isPlaying {
@@ -88,28 +93,28 @@ struct AnimationCommands: Commands {
                     .keyboardShortcut(.escape, modifiers: [])
             }
             Divider()
-            Button("Jump to Previous Keyframe") { a.jumpToKeyframe(false) }
+            Button("Jump to Keyframe") { a.jumpToKeyframe(false) }
                 .keyboardShortcut(.upArrow, modifiers: [])
                 .disabled(a.isRunning)
-            Button("Jump to Next Keyframe") { a.jumpToKeyframe(true) }
+            Button("Jump to Keyframe") { a.jumpToKeyframe(true) }
                 .keyboardShortcut(.downArrow, modifiers: [])
                 .disabled(a.isRunning)
-            Button("Previous Frame") { a.offset(-1) }
+            Button("Frame Offset") { a.offset(-1) }
                 .keyboardShortcut(.leftArrow, modifiers: [])
                 .disabled(a.isRunning)
-            Button("Next Frame") { a.offset(1) }
+            Button("Frame Offset") { a.offset(1) }
                 .keyboardShortcut(.rightArrow, modifiers: [])
                 .disabled(a.isRunning)
-            Button("Jump to Start") { a.jumpToEndpoint(false) }
+            Button("Jump to Endpoint") { a.jumpToEndpoint(false) }
                 .keyboardShortcut(.leftArrow, modifiers: .shift)
                 .disabled(a.isRunning)
-            Button("Jump to End") { a.jumpToEndpoint(true) }
+            Button("Jump to Endpoint") { a.jumpToEndpoint(true) }
                 .keyboardShortcut(.rightArrow, modifiers: .shift)
                 .disabled(a.isRunning)
             Divider()
             Toggle("Timeline", isOn: Binding(get: { a.timelineShown }, set: { a.setTimelineShown($0) }))
         } else if viewport == nil {
-            Button("Open the 3D View") { app?.showWorkspace(.layout) }
+            Button(Workspace.layout.rawValue) { app?.showWorkspace(.layout) }
                 .disabled(app == nil)
         }
     }

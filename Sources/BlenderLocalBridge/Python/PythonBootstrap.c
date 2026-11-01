@@ -255,6 +255,32 @@ static PyObject *bk_sync_edges_py(PyObject *self, PyObject *args)
     Py_RETURN_NONE;
 }
 
+/// sync_shading(name, domain, loops, normals) — the normals Blender's Solid
+/// view shades the mesh just pushed with (`_blenderkit_sync._push_shading`):
+/// `domain` 0 for its vertex normals (both buffers empty), 1 for a face's
+/// normal, 2 for each corner's; the loop behind each triangle corner and
+/// Blender's `corner_normals`, three floats per loop. Raises ValueError for
+/// buffers that do not describe the mesh.
+static PyObject *bk_sync_shading_py(PyObject *self, PyObject *args)
+{
+    const char *name;
+    int domain;
+    Py_buffer loops, normals;
+    if (!PyArg_ParseTuple(args, "siy*y*", &name, &domain, &loops, &normals)) return NULL;
+    int rc = -1;
+    if (loops.len % (3 * sizeof(unsigned int)) == 0 && normals.len % (3 * sizeof(float)) == 0) {
+        rc = bk_sync_shading(name, domain,
+                             (const unsigned int *)loops.buf, (int)(loops.len / sizeof(unsigned int)),
+                             (const float *)normals.buf, (int)(normals.len / sizeof(float)));
+    }
+    PyBuffer_Release(&loops); PyBuffer_Release(&normals);
+    if (rc != 0) {
+        PyErr_Format(PyExc_ValueError, "malformed shading normals for mirrored object %s", name);
+        return NULL;
+    }
+    Py_RETURN_NONE;
+}
+
 /// sync_uvs(name, map_name, loops, uvs, seams) — the active UV map of the mesh
 /// just pushed, as Blender holds it (the loop behind each triangle corner and a
 /// UV per loop; both empty for no map), and its seams as vertex pairs.
@@ -403,6 +429,23 @@ static PyObject *bk_sync_groups_py(PyObject *self, PyObject *args)
     if (!PyArg_ParseTuple(args, "ss|p", &name, &record, &during_pass)) return NULL;
     if (bk_sync_groups(name, record, during_pass) != 0) {
         PyErr_Format(PyExc_ValueError, "no mirrored object named %s to carry vertex groups and shape keys", name);
+        return NULL;
+    }
+    Py_RETURN_NONE;
+}
+
+/// sync_record(kind, name, record) — one of the records the interface reads
+/// whole: 'collections' (the view layer's collection tree, `name` empty),
+/// 'localview' (whether the borrowed 3D View is in Local View, and what it
+/// holds) and 'constraints' (the stack of the object `name` the pass just
+/// pushed). `SceneMirror.carryRecord` says where each goes.
+static PyObject *bk_sync_record_py(PyObject *self, PyObject *args)
+{
+    const char *kind, *name, *record;
+    if (!PyArg_ParseTuple(args, "sss", &kind, &name, &record)) return NULL;
+    if (bk_sync_record(kind, name, record) != 0) {
+        PyErr_Format(PyExc_ValueError, "the interface did not take the %s record%s%s",
+                     kind, name[0] ? " of " : "", name);
         return NULL;
     }
     Py_RETURN_NONE;
@@ -910,25 +953,28 @@ static PyObject *bk_texture_info(PyObject *self, PyObject *args)
 
 /// sync_edit_selection(name, select_mode_bits, vertex_selected, triangle_polygons,
 ///                     polygon_selected, edge_vertices, edge_selected
-///                     [, vertex_hidden [, vertex_coordinates]])
+///                     [, vertex_hidden [, vertex_coordinates [, history]]])
 ///
 /// vertex_hidden is empty when nothing is hidden. vertex_coordinates, three
 /// floats per vertex, are the edit mesh's own when a modifier shown in edit
-/// mode may have moved what the viewport drew (`_edit_coordinates`).
+/// mode may have moved what the viewport drew (`_edit_coordinates`), and empty
+/// otherwise. history is Blender's selection order, int32 (kind, index) pairs
+/// (`_blenderkit_select.history_bytes`).
 static PyObject *bk_sync_edit_selection_py(PyObject *self, PyObject *args)
 {
     const char *name;
     int select_mode = 0;
     Py_buffer vsel, tpoly, psel, ends, esel;
-    Py_buffer vhide = {0}, vco = {0};
-    if (!PyArg_ParseTuple(args, "siy*y*y*y*y*|y*y*", &name, &select_mode,
-                          &vsel, &tpoly, &psel, &ends, &esel, &vhide, &vco)) {
+    Py_buffer vhide = {0}, vco = {0}, hist = {0};
+    if (!PyArg_ParseTuple(args, "siy*y*y*y*y*|y*y*y*", &name, &select_mode,
+                          &vsel, &tpoly, &psel, &ends, &esel, &vhide, &vco, &hist)) {
         return NULL;
     }
     int rc = -1;
     if (tpoly.len % sizeof(unsigned int) == 0 &&
         ends.len % (2 * sizeof(unsigned int)) == 0 &&
-        vco.len % (3 * sizeof(float)) == 0) {
+        vco.len % (3 * sizeof(float)) == 0 &&
+        hist.len % (2 * sizeof(int)) == 0) {
         rc = bk_sync_edit_selection(name, select_mode,
                                     (const unsigned char *)vsel.buf, (int)vsel.len,
                                     (const unsigned int *)tpoly.buf,
@@ -938,12 +984,14 @@ static PyObject *bk_sync_edit_selection_py(PyObject *self, PyObject *args)
                                     (int)(ends.len / sizeof(unsigned int)),
                                     (const unsigned char *)esel.buf, (int)esel.len,
                                     (const unsigned char *)vhide.buf, (int)vhide.len,
-                                    (const float *)vco.buf, (int)(vco.len / sizeof(float)));
+                                    (const float *)vco.buf, (int)(vco.len / sizeof(float)),
+                                    (const int *)hist.buf, (int)(hist.len / sizeof(int)));
     }
     PyBuffer_Release(&vsel); PyBuffer_Release(&tpoly); PyBuffer_Release(&psel);
     PyBuffer_Release(&ends); PyBuffer_Release(&esel);
     if (vhide.obj != NULL) PyBuffer_Release(&vhide);
     if (vco.obj != NULL) PyBuffer_Release(&vco);
+    if (hist.obj != NULL) PyBuffer_Release(&hist);
     if (rc != 0) {
         PyErr_Format(PyExc_ValueError, "no edit selection to mirror for %s", name);
         return NULL;
@@ -1089,6 +1137,32 @@ static PyObject *bk_sync_mask_py(PyObject *self, PyObject *args)
     Py_RETURN_NONE;
 }
 
+/// sync_paint(name, kind, bytes) — what Weight Paint ('WEIGHT', one float32
+/// per vertex) or Vertex Paint ('COLOR', four float32 per vertex, sRGB) draws
+/// of one object, read from Blender (`_blenderkit_vwpaint.push`); b'' when
+/// the object has no group or colour layer yet.
+static PyObject *bk_sync_paint_py(PyObject *self, PyObject *args)
+{
+    const char *name;
+    const char *kind;
+    Py_buffer values;
+    if (!PyArg_ParseTuple(args, "ssy*", &name, &kind, &values)) return NULL;
+    int rc = -1;
+    int colour = strcmp(kind, "COLOR") == 0;
+    int stride = colour ? 4 : 1;
+    if ((colour || strcmp(kind, "WEIGHT") == 0)
+        && values.len % (sizeof(float) * stride) == 0) {
+        rc = bk_paint_set_values(name, colour, (const float *)values.buf,
+                                 (int)(values.len / sizeof(float)));
+    }
+    PyBuffer_Release(&values);
+    if (rc < 0) {
+        PyErr_Format(PyExc_ValueError, "no object named %s to paint, or malformed %s values", name, kind);
+        return NULL;
+    }
+    Py_RETURN_NONE;
+}
+
 static PyObject *bk_anim_notice_py(PyObject *self, PyObject *args)
 {
     const char *text;
@@ -1184,7 +1258,9 @@ static PyMethodDef bk_methods[] = {
     {"sync_edges",        bk_sync_edges_py, METH_VARARGS, "Hand the renderer the edges of a mirrored mesh that has no faces."},
     {"sync_points",       bk_sync_points_py, METH_VARARGS, "Hand Edit Mode a curve's or a lattice's control points, and the Data tab its settings."},
     {"sync_groups",       bk_sync_groups_py, METH_VARARGS, "Hand the Data tab a mesh's vertex groups and shape keys."},
+    {"sync_record",       bk_sync_record_py, METH_VARARGS, "Hand the interface the collection tree, Local View, or an object's constraints."},
     {"sync_uvs",          bk_sync_uvs_py, METH_VARARGS, "Hand the UV Editor the active UV map and seams of the mesh just pushed."},
+    {"sync_shading",      bk_sync_shading_py, METH_VARARGS, "Hand the renderer the normals Blender shades the mesh just pushed with."},
     {"sync_uv_layout",    bk_sync_uv_layout_py, METH_VARARGS, "Hand the UV Editor the map before the modifiers, when it differs from the pushed mesh's."},
     {"rename",            bk_rename,    METH_VARARGS, "Rename an object; returns the resolved name."},
     {"remove",            bk_remove,    METH_VARARGS, "Remove one object by name."},
@@ -1232,6 +1308,7 @@ static PyMethodDef bk_methods[] = {
     {"anim_frame",        bk_anim_frame_py, METH_VARARGS, "Mirror a frame change: the frame and what it moved."},
     {"anim_mesh",         bk_anim_mesh_py, METH_VARARGS, "Mirror one mesh a frame change deformed."},
     {"sync_mask",         bk_sync_mask_py, METH_VARARGS, "Mirror Blender's sculpt mask onto one object."},
+    {"sync_paint",        bk_sync_paint_py, METH_VARARGS, "Mirror Blender's painted weights or colours onto one object."},
     {"anim_notice",       bk_anim_notice_py, METH_VARARGS, "Show a report Blender would put in its status bar."},
     {"anim_channels",     bk_anim_channels_py, METH_VARARGS, "The shim's keyed channels on one object."},
     {"tool_state",        bk_tool_state_py, METH_VARARGS, "Mirror snapping, the pivot, proportional editing and the 3D cursor."},

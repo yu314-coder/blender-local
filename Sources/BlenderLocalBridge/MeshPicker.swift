@@ -206,6 +206,33 @@ public enum MeshPicker {
         return all.filter { real.contains($0) }
     }
 
+    /// How Blender ranks what is near the pointer: the Manhattan distance,
+    /// `len_manhattan_v2v2`, to a vertex or to the point of an edge nearest
+    /// it (`find_nearest_vert__doClosest`, `find_nearest_edge__doClosest`,
+    /// editmesh_select.cc; the foot is `line_point_factor_v2`'s, clamped to
+    /// the edge, as `distanceToSegment` takes it). The reach stays a
+    /// finger's circle (`touchRadius`); only which of the elements inside it
+    /// wins is Blender's. Ranked by the straight distance, a tap a quarter of
+    /// the way along a UV sphere's edge took the edge beside it, 2.996 pixels
+    /// away against 3.176 — 3.840 against 3.824 the Manhattan way — where
+    /// Blender's own click (X-Ray on, `view3d.select`) took the one aimed at
+    /// (round 4's review of the picks; scripts/run-selectpick-blender-check.sh).
+    /// Blender's solid-mode click reads its GPU selection buffer instead,
+    /// which nothing headless can, so that one is not measured.
+    static func manhattan(_ a: SIMD2<Float>, _ b: SIMD2<Float>) -> Float {
+        abs(a.x - b.x) + abs(a.y - b.y)
+    }
+
+    /// The Manhattan distance from `p` to the point of the segment nearest
+    /// it, as Blender measures an edge (`manhattan`).
+    static func manhattanToSegment(_ p: SIMD2<Float>, _ a: SIMD2<Float>, _ b: SIMD2<Float>) -> Float {
+        let ab = b - a
+        let length = length_squared(ab)
+        guard length > 1e-9 else { return manhattan(p, a) }
+        let t = min(max(dot(p - a, ab) / length, 0), 1)
+        return manhattan(p, a + ab * t)
+    }
+
     static func nearestVertex<S: Sequence<Int>>(_ candidates: S, screen: [SIMD2<Float>?],
                                                 visible: [Bool]?, to tap: SIMD2<Float>,
                                                 within radius: Float) -> Int? {
@@ -213,8 +240,9 @@ public enum MeshPicker {
         for i in candidates {
             guard i < screen.count, let s = screen[i] else { continue }
             if let visible, i < visible.count, !visible[i] { continue }
-            let d = distance(s, tap)
-            guard d <= radius, best == nil || d < best!.d else { continue }
+            guard distance(s, tap) <= radius else { continue }
+            let d = manhattan(s, tap)
+            guard best == nil || d < best!.d else { continue }
             best = (i, d)
         }
         return best?.index
@@ -234,8 +262,9 @@ public enum MeshPicker {
             // the far side of the silhouette, which is not on screen either.
             if let visible, ia < visible.count, ib < visible.count,
                !(visible[ia] && visible[ib]) { continue }
-            let d = distanceToSegment(tap, a, b)
-            guard d <= radius, best == nil || d < best!.d else { continue }
+            guard distanceToSegment(tap, a, b) <= radius else { continue }
+            let d = manhattanToSegment(tap, a, b)
+            guard best == nil || d < best!.d else { continue }
             best = (e, d)
         }
         return best?.index

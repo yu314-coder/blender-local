@@ -266,6 +266,16 @@ public final class BKObject: Identifiable {
     /// viewport. The Outliner's camera column toggles it.
     public var hideRender = false
 
+    /// Outside the borrowed 3D View's Local View: not drawn (`visible` is
+    /// false) for that reason alone, which the Outliner does not grey, as
+    /// Blender's does not (`_blenderkit_sync._kind`'s `|notlocal`).
+    public var outsideLocalView = false
+
+    /// The object's constraints, as Blender has them, top first — what the
+    /// Object Constraints tab shows. Its matrix is already the constrained
+    /// one: the mirror sends the evaluated `matrix_world`.
+    public var constraints: [ObjectConstraint] = []
+
     /// What Blender draws this object with when it is a camera, a light or an
     /// empty, none of which has a surface to mirror. See `ObjectDisplay`.
     public var display: ObjectDisplay?
@@ -278,7 +288,15 @@ public final class BKObject: Identifiable {
     /// How this object's viewport mesh lines up with Blender's while it is
     /// being edited — present only when the mirror found that it does, index
     /// for index. See `EditTopology`.
-    @ObservationIgnored public var editTopology: EditTopology?
+    @ObservationIgnored public var editTopology: EditTopology? {
+        didSet { editTopologyRevision &+= 1 }
+    }
+
+    /// Changes whenever the mirror hands over a report (`editTopology`), so
+    /// what was worked out from the last one — Loop Cut's rings, its preview
+    /// (CutTools.swift) — is known to be about the mesh as it is now, not one
+    /// with the same counts that a script or an Undo put in its place.
+    @ObservationIgnored public private(set) var editTopologyRevision = 0
 
     /// Blender's `parent`, by name, and every object whose transform or
     /// geometry this one's depends on — the parent, constraint targets,
@@ -300,6 +318,16 @@ public final class BKObject: Identifiable {
 
     /// Blender's Display As Bounds, which its snapping skips.
     @ObservationIgnored public var displaysBounds = false
+    /// Blender's Display As Wire: a ray Blender casts at the 3D View as it is
+    /// seen passes through it (`raycast_obj_fn` skips OB_WIRE as it does
+    /// OB_BOUNDBOX), which the Cursor tool's surface follows.
+    @ObservationIgnored public var displaysWire = false
+    /// In Edit Mode, the last modifier Blender evaluates is a Subdivision
+    /// Surface (`_blenderkit_cursor.subdivides_last`, the mirror's
+    /// `|subdivlast`): Blender's snapping to the final geometry then meets the
+    /// mesh before it, which the mirror does not hold
+    /// (`BKObject.finalGeometryRefusal`). False outside Edit Mode.
+    @ObservationIgnored public var subdividesLastInEditMode = false
 
     /// While a curve or a lattice is in Edit Mode, its control points as
     /// Blender holds them (`_blenderkit_points`, ControlPoints.swift): what
@@ -611,11 +639,16 @@ public final class BKObject: Identifiable {
     /// One paint dab in vertex-paint or weight-paint mode: every vertex within
     /// `radius` of the hit point is blended toward the brush value, falling off
     /// with distance the way Blender's brushes do.
+    ///
+    /// The simulator's stand-in only. Over Blender's evaluated mesh it paints
+    /// nothing and returns 0 (`standInPaintRefusal`): there the colours and
+    /// weights drawn are Blender's, mirrored (`_blenderkit_vwpaint.push`).
     public func paintVertices(at point: SIMD3<Float>, radius: Float, strength: Float,
                               op: VertexPaintOp = .draw,
                               colour: SIMD4<Float>?, weight: Float?,
                               blend: BrushBlend = .mix,
                               falloff: BrushFalloff = .smooth) -> Int {
+        if meshIsEvaluated { return 0 }
         ensurePaintAttributes()
         let local = (modelMatrix.inverse * SIMD4(point, 1)).xyz
         var touched = 0
@@ -728,6 +761,21 @@ public final class BKScene {
     /// such drag is in progress.
     public var selectionStroke: SelectionRegion?
 
+    /// What Loop Cut or the Knife shows before it cuts: the ring Blender's
+    /// loop cut will cross, or the path the knife will cut along
+    /// (CutTools.swift). The renderer reads it every frame, so nothing
+    /// observes it.
+    @ObservationIgnored public var cutPreview: CutPreview?
+
+    /// The Knife's path while it is being drawn, which the Knife's bar
+    /// (Cut Through, Cancel, Done) is drawn from. Nil when there is none.
+    public var knifePath: KnifePath?
+
+    /// The Knife's Cut Through, which its bar shows and Done sends: off, as
+    /// Knife Project's `cut_through` is by default, cuts only the faces the
+    /// view sees (Blender's Knife with Occlude Geometry on, its default).
+    public var knifeCutThrough = false
+
     /// What the viewport drag in progress is doing — the transform a gizmo is
     /// applying, or the camera move, or the brush stroke — phrased the way
     /// Blender phrases it in its header.
@@ -789,13 +837,64 @@ public final class BKScene {
     /// interface last put one (TransformTools.swift).
     public var cursor: SIMD3<Float> = .zero
 
+    /// The 3D cursor's rotation and the toolbar's Cursor settings (Surface
+    /// Project, Orientation) for the mode Blender is in, as Blender holds them
+    /// (`_blenderkit_cursor.record`, every pass). The tool header shows these;
+    /// nothing here writes them.
+    public var cursorState = CursorState()
+
+    /// Where a drag of the 3D cursor has it while the finger is down: drawn in
+    /// place of `cursor` until the drag's `transform.translate` commits it and
+    /// the mirror brings Blender's back (CursorTool.swift). Nil otherwise.
+    public var cursorPreview: SIMD3<Float>?
+
+    /// The scene's units, which the ruler and Edit Mode's measurements print
+    /// with (`scene.unit_settings`, `_blenderkit_cursor.units_record`).
+    public var units = UnitSettings.factory
+
+    /// `tool_settings.snap_elements_tool` — Geometry, or Default for the
+    /// scene's Snap Target — what the ruler snaps to (`v3d_cursor_snap_elements`).
+    public var snapElementsTool = "GEOMETRY"
+
+    /// The Measure tool's rulers, kept until removed (Ruler Remove): the app's
+    /// overlay, which changes nothing in the scene (Ruler.swift). Blender keeps
+    /// its own in an annotation layer once the tool is left; these stay the
+    /// app's, and are not saved.
+    public var rulers: [Ruler] = []
+    /// The ruler last dragged or tapped, which Ruler Remove takes away.
+    public var activeRuler: Int?
+    /// How many files Blender has loaded in front of the reader, as the last
+    /// pass said (`SceneMirror.SceneRecord.fileLoads`); when it moves, the
+    /// rulers above go. Nil until a pass has said.
+    @ObservationIgnored public var fileLoads: Int?
+
+    /// Edit Mode's Statistics and measurements as Blender worked them out for
+    /// the selection (`_blenderkit_measure`), drawn over the 3D View while their
+    /// overlays are on (EditMeasure.swift). Nil when none are asked for.
+    public var editMeasurements: EditMeasurements?
+
     /// Snapping, the pivot point and proportional editing, as Blender holds
     /// them on `scene.tool_settings`. Written through `_blenderkit_tools` and
     /// mirrored back, never set here.
     public var tools = TransformToolSettings()
 
+    /// Blender's transform orientation and its matrix (`_blenderkit_orient`),
+    /// which the gizmo is drawn on and every drag is measured in. Read back
+    /// from Blender by `BpyBridge.orientationState()` whenever what it depends
+    /// on changes — the history, the selection, the mode, the active object —
+    /// never set from the interface. Global until Blender says otherwise.
+    public var orientation = OrientationState(type: .global, axes: matrix_identity_float3x3)
+
     /// Copy Objects / Paste Objects, held for the session.
     public var clipboard: [ObjectState] = []
+
+    /// Blender's collection tree for the view layer, read back every pass;
+    /// nil where Blender has none to read (the simulator's stand-in).
+    public var collections: CollectionTree?
+
+    /// The borrowed 3D View's Local View, or nil outside it. Read back every
+    /// pass: the objects outside it arrive not drawn.
+    public var localView: LocalViewState?
 
     // Blender's frame range. Nothing is animated yet, so scrubbing changes no
     // geometry — which is also what Blender does with no keyframes. The frame
@@ -811,6 +910,12 @@ public final class BKScene {
     /// whenever the history moves in Sculpt Mode (`SculptHeader`). Nil outside
     /// Blender's Sculpt Mode and on the simulator's stand-in.
     public var sculptBlender: SculptState?
+    /// Blender's Weight Paint or Vertex Paint settings — the brush, its
+    /// Radius, Strength, Weight or Color, the group or colour layer it paints
+    /// — read back from Blender whenever the history moves in those modes
+    /// (`PaintModeHeader`). Nil outside them and on the simulator's stand-in,
+    /// whose Swift brushes use `paint` instead.
+    public var paintBlender: PaintModeState?
     /// Texture-paint brush settings.
     public var paint = PaintSettings()
     /// The most recent render, shown in the Image Editor.
@@ -821,9 +926,11 @@ public final class BKScene {
     /// What is selected inside the active object while editing.
     public var editSelection = EditSelection()
 
-    /// True when `editSelection` was changed here — a tap, a box — and Blender
-    /// has not been told. The bridge hands it over before the next command,
-    /// and the mirror clears it when Blender reports its own.
+    /// True when `editSelection` was changed here — a tap, a box — and no
+    /// command has carried it to Blender yet. The bridge hands it over before
+    /// the next command, and the mirror clears it when Blender reports its
+    /// own. A read that hands it over early (`captureWithSelection`) leaves it
+    /// set, so the command still carries it and its redo panel re-runs on it.
     @ObservationIgnored public var editSelectionPending = false
 
     /// Blender only edits one object at a time, and leaving edit mode commits.
@@ -1079,10 +1186,15 @@ public struct BlenderEditReport: Sendable {
     /// sent only when a modifier shown in edit mode may have moved what the
     /// viewport drew (`_blenderkit_sync._edit_coordinates`).
     public var vertexCoordinates: [Float]
+    /// Blender's selection order: (kind, index) pairs, oldest first, and a
+    /// trailing (3, polygon) for an active face kept apart from it
+    /// (`_blenderkit_select.history_bytes`). Empty when there is none.
+    public var history: [Int32]
 
     public init(selectMode: Int32, vertexSelected: [UInt8], trianglePolygons: [UInt32],
                 polygonSelected: [UInt8], edgeVertices: [UInt32], edgeSelected: [UInt8],
-                vertexHidden: [UInt8] = [], vertexCoordinates: [Float] = []) {
+                vertexHidden: [UInt8] = [], vertexCoordinates: [Float] = [], history: [Int32] = []) {
+        self.history = history
         self.selectMode = selectMode
         self.vertexSelected = vertexSelected
         self.trianglePolygons = trianglePolygons
@@ -1098,6 +1210,7 @@ public extension EditSelection {
     /// Whether two selections hold the same elements.
     func matches(_ other: EditSelection) -> Bool {
         vertices == other.vertices && edges == other.edges && faces == other.faces
+            && history == other.history && activeFace == other.activeFace
     }
 
     /// Blender's selection in the viewport's terms, or nil when the viewport's
@@ -1143,6 +1256,21 @@ public extension EditSelection {
             guard let shown = byEnds[key] else { continue }
             realEdges.insert(shown)
             if report.edgeSelected[e] != 0 { selection.edges.insert(shown) }
+        }
+        // Blender's selection order, each entry checked against the report's
+        // own counts: an index past them names nothing on screen.
+        var pair = 0
+        while pair + 1 < report.history.count {
+            let kind = report.history[pair], index = Int(report.history[pair + 1])
+            pair += 2
+            guard index >= 0 else { continue }
+            switch kind {
+            case 0 where index < vertexCount:                    selection.history.append(.vertex(index))
+            case 1 where index < report.edgeSelected.count:      selection.history.append(.edge(index))
+            case 2 where index < report.polygonSelected.count:   selection.history.append(.face(index))
+            case 3 where index < report.polygonSelected.count:   selection.activeFace = index
+            default: break
+            }
         }
         var hidden: Set<Int> = []
         for (i, flag) in report.vertexHidden.enumerated() where flag != 0 { hidden.insert(i) }

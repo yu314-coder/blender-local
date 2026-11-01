@@ -20,6 +20,15 @@ BUILD="${TMPDIR:-/tmp}/blenderlocal-mirror-blender"
 mkdir -p "$BUILD"
 swiftc -O -o "$BUILD/dump" Sources/BlenderLocalBridge/*.swift tests/mirror/blender/main.swift
 "$BUILD/dump" > "$BUILD/calls.txt"
-"$BLENDER" -b --factory-startup --python-exit-code 1 \
-  --python tests/mirror/blender/verify.py -- "$BUILD/calls.txt" "$BUILD/passes.json"
+# Blender gets a HOME and BLENDER_USER_RESOURCES of its own: even a bare
+# `-b --factory-startup` run writes ~/.thumbnails into HOME (measured), and an
+# operator can write Blender's settings. Other checks run at the same time.
+home="$BUILD/home"
+mkdir -p "$home"
+# From the build folder, not the repo: what Blender writes into its working
+# folder stays out of the tree.
+ROOT="$(pwd)"
+cd "$BUILD"
+HOME="$home" BLENDER_USER_RESOURCES="$home/res" "$BLENDER" -b --factory-startup --python-exit-code 1 \
+  --python "$ROOT/tests/mirror/blender/verify.py" -- "$BUILD/calls.txt" "$BUILD/passes.json"
 exec "$BUILD/dump" "$BUILD/passes.json"

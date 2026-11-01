@@ -68,7 +68,7 @@ _, error = run("SMOOTH_BY_ANGLE")
 check("Shade Smooth by Angle, which needs no library, still runs", error is None, error)
 check("and smooths every face", all(p.use_smooth for p in sphere.data.polygons))
 
-# More ▸ All Blender Tools runs it by name through run_operator, which used to
+# More ▸ Operator Search runs it by name through run_operator, which used to
 # pass Blender's 'No asset found at path ""' on bare (round 2's review).
 import types
 sys.modules.setdefault("_blenderkit", types.ModuleType("_blenderkit"))

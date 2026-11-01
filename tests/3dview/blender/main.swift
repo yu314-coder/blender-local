@@ -245,6 +245,9 @@ do {
     o.location = .zero
     o.rotation = SIMD3(0, 0, .pi / 4)
     s.selection = [o.id]; s.activeID = o.id
+    // In the Local orientation: since round 4, group 5 the scale handles
+    // follow Blender's orientation, Global by default, as Blender's do.
+    s.orientation = OrientationState(type: .local)
     let python = drag(.scale, handle: .axis(0), in: s, from: along(0, 1), to: along(0, 2))
     emit("SCALE_LOCAL_OBJECT", python)
     emit("SCALE_LOCAL_OBJECT_START", numbers([0, 0, .pi / 4]))
@@ -259,6 +262,7 @@ do {
     s.selection = [o.id]; s.activeID = o.id
     s.mode = .edit
     s.editSelection.vertices = Set(o.mesh.vertices.indices)
+    s.orientation = OrientationState(type: .local)
     let python = drag(.scale, handle: .axis(0), in: s, from: along(0, 1), to: along(0, 1.6))
     emit("SCALE_LOCAL_EDIT", python)
     emit("SCALE_LOCAL_EDIT_EXPECT", numbers(positions(o)))
@@ -269,6 +273,7 @@ do {
     let a = s.add(.cube); a.location = SIMD3(2, 0, 0); a.rotation = SIMD3(0, 0, .pi / 4)
     let b = s.add(.cube); b.location = SIMD3(-2, 1, 0); b.rotation = SIMD3(0, 0, .pi / 6)
     s.selection = [a.id, b.id]; s.activeID = a.id
+    s.orientation = OrientationState(type: .local)
     let python = drag(.scale, handle: .axis(0), in: s, from: along(0, 1), to: along(0, 1.8))
     emit("SCALE_LOCAL_MULTI", python)
     emit("SCALE_LOCAL_MULTI_EXPECT", numbers([a.location.x, a.location.y, a.location.z,

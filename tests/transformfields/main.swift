@@ -77,11 +77,23 @@ do {
                                   rotation: SIMD4(.pi / 2, 0, 0, 0), scale: .one)
     let name = Bpy.quote("Cube")
     check("one field, one assignment to that component",
-          start.python(writing: start.setting(.location, axis: 2, to: 3.01), to: "Cube")
+          start.assignments(writing: start.setting(.location, axis: 2, to: 3.01), to: "Cube")
               == "bpy.data.objects[\(name)].location[2] = 3.01")
+    // The commit prices the whole vector first (round 4's fix-round review:
+    // these lines went bare while the Data API row refused the same move).
+    check("the commit's first line is the vertex budget's price of the field, laid over Blender's vector",
+          start.python(writing: start.setting(.location, axis: 2, to: 3.01), to: "Cube")
+              == "__import__('_blenderkit_budget').price_channels(bpy.data.objects[\(name)], "
+              + "[(\"location\", 2, 3.01)])\nbpy.data.objects[\(name)].location[2] = 3.01",
+          start.python(writing: start.setting(.location, axis: 2, to: 3.01), to: "Cube") ?? "nil")
+    let both = start.python(writing: start.setting(.location, axis: 0, to: 4).setting(.scale, axis: 1, to: 2),
+                            to: "Cube") ?? ""
+    check("and of every field it changes, in one price",
+          both.hasPrefix("__import__('_blenderkit_budget').price_channels(bpy.data.objects[\(name)], "
+                         + "[(\"location\", 0, 4.0), (\"scale\", 1, 2.0)])\n"), both)
     // The old write sent all three at four places: a 90° X came back 90.0002°
     // when Z was edited, and X 1.234567 came back 1.2346.
-    let turned = start.python(writing: start.setting(.rotation, axis: 2, to: 0.5), to: "Cube") ?? ""
+    let turned = start.assignments(writing: start.setting(.rotation, axis: 2, to: 0.5), to: "Cube") ?? ""
     check("the fields left alone are not written at all", turned == "bpy.data.objects[\(name)].rotation_euler[2] = 0.5"
           && !turned.contains("1.2346"), turned)
     let tiny = start.python(writing: start.setting(.scale, axis: 0, to: 1e-5), to: "Cube") ?? ""
@@ -92,10 +104,10 @@ do {
           start.python(writing: start.setting(.location, axis: 0, to: .infinity), to: "Cube") == nil)
     let quat = TransformChannels(location: .zero, rotationMode: .quaternion, rotation: SIMD4(1, 0, 0, 0), scale: .one)
     check("a quaternion's W is rotation_quaternion[0]",
-          quat.python(writing: quat.setting(.rotation, axis: 0, to: 0.5), to: "Cube")
+          quat.assignments(writing: quat.setting(.rotation, axis: 0, to: 0.5), to: "Cube")
               == "bpy.data.objects[\(name)].rotation_quaternion[0] = 0.5")
     check("a name with quotes is quoted",
-          start.python(writing: start.setting(.location, axis: 0, to: 0), to: "it's \"x\"")?
+          start.assignments(writing: start.setting(.location, axis: 0, to: 0), to: "it's \"x\"")?
               .hasPrefix("bpy.data.objects[\(Bpy.quote("it's \"x\""))]") == true)
 }
 

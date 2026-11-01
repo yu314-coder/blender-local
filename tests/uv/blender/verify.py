@@ -390,11 +390,13 @@ def corners_of(me, editing):
 def editor_map(obj):
     """The map Blender's UV Editor draws: the object's own mesh, before its
     modifiers — in Edit Mode the edited BMesh, read through a scratch mesh."""
-    if obj.mode == 'EDIT':
+    if obj.mode == 'EDIT' or obj.data.is_editmode:
+        # A linked duplicate of an object in Edit Mode shares its edit mesh:
+        # read the same way, its hidden faces drawn (it is not being edited).
         scratch = bpy.data.meshes.new("_truth")
         bmesh.from_edit_mesh(obj.data).to_mesh(scratch)
         try:
-            return corners_of(scratch, True)
+            return corners_of(scratch, obj.mode == 'EDIT')
         finally:
             bpy.data.meshes.remove(scratch)
     return corners_of(obj.data, False)
@@ -513,6 +515,34 @@ bpy.context.view_layer.objects.active = cube
 bpy.ops.mesh.uv_texture_remove()
 check("the cube's only UV map is gone", len(cube.data.uv_layers) == 0)
 mirror("after Unwrap Conformal on the sphere and the cube's map removed")
+
+# A linked duplicate under a Subdivision of a mesh in Edit Mode. The mesh's
+# own arrays read empty while it is edited, its loops not (a cube subdivided
+# in Edit Mode: 96 loops, 0 UVs, desktop 5.2.1), and the mirror's read of the
+# duplicate's map before its modifiers failed the whole pass with a
+# TypeError ("foreach_get(..) sequence length mismatch"), found by the vertex
+# budget's check (9.5f) in round 4's fix round 2.
+bpy.ops.wm.read_homefile(use_empty=True)
+bpy.ops.mesh.primitive_cube_add(location=(0, 0, 0))
+edited = bpy.context.object
+edited.name = "Edited"
+bpy.ops.object.duplicate_move_linked()
+twin = bpy.context.object
+twin.name = "Twin"
+twin.location = (3, 0, 0)
+twin.modifiers.new("Subdivision", 'SUBSURF').levels = 1
+for o in bpy.context.view_layer.objects:
+    o.select_set(o == edited)
+bpy.context.view_layer.objects.active = edited
+bpy.ops.object.mode_set(mode='EDIT')
+bpy.ops.mesh.select_all(action='SELECT')
+bpy.ops.mesh.subdivide()
+try:
+    mirror("a cube subdivided in Edit Mode, and its linked duplicate Twin under a Subdivision")
+    check("the mirror's pass runs with a linked duplicate of the edited mesh", True)
+except TypeError as error:
+    check("the mirror's pass runs with a linked duplicate of the edited mesh", False, error)
+bpy.ops.object.mode_set(mode='OBJECT')
 
 json.dump(passes, open(RECORDS, "w"))
 print("\n" + ("ALL PASS" if not fail else f"{fail} FAILED"))

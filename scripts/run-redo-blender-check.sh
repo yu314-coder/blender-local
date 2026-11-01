@@ -23,8 +23,13 @@ swiftc -O -o "$BUILD/dump" \
   Sources/BlenderLocalBridge/*.swift \
   tests/redo/blender/main.swift
 "$BUILD/dump" > "$BUILD/calls.txt"
+# Blender gets a HOME and BLENDER_USER_RESOURCES of its own: even a bare
+# `-b --factory-startup` run writes ~/.thumbnails into HOME (measured), and an
+# operator can write Blender's settings. Other checks run at the same time.
+home="$BUILD/home"
+mkdir -p "$home"
 echo "  $(grep -c '^###' "$BUILD/calls.txt") calls to put through Blender $("$BLENDER" --version | head -1 | cut -d' ' -f2)"
-"$BLENDER" -b --factory-startup --python tests/redo/blender/verify.py -- "$BUILD/calls.txt"
+HOME="$home" BLENDER_USER_RESOURCES="$home/res" "$BLENDER" -b --factory-startup --python tests/redo/blender/verify.py -- "$BUILD/calls.txt"
 # A second, fresh Blender: which thread starts the GPU module first is the
 # point of this one, and the first run has already started it.
-exec "$BLENDER" -b --factory-startup --python tests/redo/blender/gpu_order.py -- "$BUILD/calls.txt"
+exec env HOME="$home" BLENDER_USER_RESOURCES="$home/res" "$BLENDER" -b --factory-startup --python tests/redo/blender/gpu_order.py -- "$BUILD/calls.txt"

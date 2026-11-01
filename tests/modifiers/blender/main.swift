@@ -60,6 +60,9 @@ let edits: [String: (inout Modifier) -> Void] = [
     "WN_WEIGHT": { $0.weight = 70 },
     "LAPLACIAN_Z": { $0.smoothZ = false },
     "MULTIRES_LEVEL": { $0.levels = 1 },
+    // The panel's Sculpt stepper, one level up from 0 (round 3's review: it
+    // went round Sculpt Mode's base-mesh budget).
+    "MULTIRES_SCULPT_STEP": { $0.sculptLevels = 1 },
     // The Lattice row's picker, from a record whose object is empty.
     "LATTICE_PICK": { $0.targetName = "Cage" },
     // The picker's None, from a record whose object is the cage.
@@ -217,7 +220,7 @@ if args.count < 2 {
                                    ("SHIM_VIEWPORT_WAVE", .toggleViewport, 1)] {
         emit(name, action.command(for: pair[target], in: pair)!.lines.joined(separator: "\n"))
     }
-    // Where a row with no settings of its own opens the Every Property
+    // Where a row with no settings of its own opens the Data API
     // browser, for a modifier named with the record's separators.
     emit("DATA_PATH_ODD", Bpy.modifierDataPath("a;b|c=d%e"))
     // A move the row never offers, to see the refusal: past the top.

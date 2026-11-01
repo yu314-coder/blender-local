@@ -22,6 +22,18 @@ struct SelectMenuItems: View {
     var send: (SelectMenu.Command) -> Void
     /// Select Pattern…, which needs the pattern typed.
     var askPattern: () -> Void
+    /// What a finger's tap does while editing a mesh: one of Blender's pick
+    /// selections, or nil for an ordinary select (MetalViewportView.pick).
+    var pick: SelectPick? = nil
+    var pickShift = false
+    var setPick: (SelectPick?) -> Void = { _ in }
+    var setPickShift: (Bool) -> Void = { _ in }
+    /// Whether the 3D View hands a tap to the pick: while a mesh is edited,
+    /// not a curve's or a lattice's points (LayoutWorkspace gives the view
+    /// `pick` only then). The rows that set it are drawn only then too —
+    /// round 4's review: a row ticked there that taps then ignore is a
+    /// control that reaches nothing. Off unless the caller says so.
+    var picks = false
 
     var body: some View {
         Button("All") { send(.all) }
@@ -34,7 +46,36 @@ struct SelectMenuItems: View {
             }
         }
         Divider()
-        if editing { editRows } else { objectRows }
+        if editing {
+            if picks {
+                pickRows
+                Divider()
+            }
+            editRows
+        } else { objectRows }
+    }
+
+    // MARK: picks
+
+    /// Blender's pick selections, which are keys and not rows in Blender's
+    /// menu (Alt+click, Ctrl+Alt+click, Ctrl+click, L): a touch screen has no
+    /// Alt or Ctrl, so here each is a row that makes it what a tap does,
+    /// ticked while it is, with Blender's keys under its name, and the row of
+    /// what Shift adds in Blender's keymap (to an ordinary click, Toggle
+    /// Selection). Select puts the tap back.
+    @ViewBuilder private var pickRows: some View {
+        Button { setPick(nil) } label: {
+            Label("Select", systemImage: pick == nil ? "checkmark" : "cursorarrow.click")
+        }
+        ForEach(SelectPick.allCases, id: \.self) { item in
+            Button { setPick(item) } label: {
+                Label { Text(item.operatorName); Text(item.keys) } icon: {
+                    Image(systemName: pick == item ? "checkmark" : item.icon)
+                }
+            }
+        }
+        Toggle(pick?.shiftLabel ?? SelectPick.toggleLabel,
+               isOn: Binding(get: { pickShift }, set: { setPickShift($0) }))
     }
 
     // MARK: edit mode
@@ -48,11 +89,10 @@ struct SelectMenuItems: View {
             mesh(.more)
             mesh(.less)
             Divider()
-            // Both walk Blender's selection history, which a selection handed
-            // over from the viewport does not carry: measured, Next Active
-            // changed nothing.
-            BUnavailable("Next Active")
-            BUnavailable("Previous Active")
+            // Both walk Blender's selection order, which a tap now leaves
+            // as Blender's click does (`EditSelection.history`).
+            mesh(.nextActive)
+            mesh(.previousActive)
         }
         Divider()
         Menu("Select Similar") {
@@ -90,13 +130,12 @@ struct SelectMenuItems: View {
         }
         Divider()
         mesh(.sharpEdges)
-        // Needs the active vertex, which is Blender's selection history
-        // again: measured, it returns CANCELLED.
-        BUnavailable("Side of Active")
+        // From the active vertex, the one tapped last.
+        mesh(.sideOfActive)
         Divider()
-        // Needs an active boolean attribute ("There must be an active
-        // attribute"), and nothing here sets one.
-        BUnavailable("By Attribute")
+        // Blender's poll says why when the mesh has no active boolean
+        // attribute ("There must be an active attribute").
+        mesh(.byAttribute)
     }
 
     private func mesh(_ item: SelectMenu.MeshItem) -> some View {
@@ -126,9 +165,14 @@ struct SelectMenuItems: View {
                 Button(type.label) { send(.byType(type.identifier)) }
             }
         }
-        // Fails its poll without a window, even inside the 3D View override
-        // the app's other view operators use (measured in 5.2.1).
-        BUnavailable("Select Grouped")
+        // Blender's operator fails its poll without an interface, so this is
+        // its exec, type for type (`_blenderkit_select.select_grouped`).
+        Menu("Select Grouped") {
+            ForEach(SelectMenu.groupedTypes, id: \.identifier) { type in
+                Button(type.label) { send(.grouped(type.identifier)) }
+            }
+        }
+        .disabled(!hasActive)
         Menu("Select Linked") {
             ForEach(SelectMenu.linkedTypes, id: \.identifier) { type in
                 Button(type.label) { send(.linked(type.identifier)) }

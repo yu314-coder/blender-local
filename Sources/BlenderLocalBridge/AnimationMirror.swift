@@ -215,6 +215,10 @@ public enum AnimationMirror {
                 mesh.vertices[i].position = SIMD3(positions[p], positions[p + 1], positions[p + 2])
                 mesh.vertices[i].normal = SIMD3(normals[p], normals[p + 1], normals[p + 2])
             }
+            // Blender's face and corner normals follow in `sync_shading`
+            // (`_blenderkit_anim.push_mesh`); until then the ones on screen
+            // turn with their faces rather than stay where they were.
+            mesh.carryShading(from: base)
         } else {
             var vertices: [MeshVertex] = []
             vertices.reserveCapacity(vertexCount)

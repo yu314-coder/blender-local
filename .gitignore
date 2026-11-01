@@ -17,3 +17,7 @@ __pycache__/
 scripts/local.env
 Config/Signing.local.xcconfig
 ExportOptions.plist
+
+# Mantaflow writes its wavelet noise tile (25 MB) into Blender's working folder when
+# it is missing (noisefield.cpp); the budget check steps Fluid domains from the repo root.
+waveletNoiseTile.bin

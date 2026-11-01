@@ -209,7 +209,8 @@ check("occlusion, culling, normal falloff and its angle, and seam bleed are Blen
 slot_name, uv_name, stroke_name = blocks["UNDO_NAMES"].splitlines()
 check("undo steps carry Blender's operator names, and entering that makes nothing makes none",
       slot_name == bpy.ops.paint.add_texture_paint_slot.get_rna_type().name
-      and uv_name == bpy.ops.paint.add_simple_uvs.get_rna_type().name and stroke_name == "Texture Paint"
+      and uv_name == bpy.ops.paint.add_simple_uvs.get_rna_type().name
+      and stroke_name == bpy.ops.paint.image_paint.get_rna_type().name
       and blocks["UNDO_NONE"] == "none",
       (slot_name, uv_name, stroke_name, blocks["UNDO_NONE"]))
 
@@ -441,7 +442,7 @@ native.pushed.clear()
 sync.sync()
 check("so the next mirroring pass does not read the image back", "Canvas Base Color" not in native.pushed,
       native.pushed)
-state = sync.checkpoint(root, "Texture Paint")
+state = sync.checkpoint(root, "Image Paint")
 check("the stroke is one undo step", state == {'undo': True, 'redo': False}, state)
 sync.history_step(-1)
 check("undo restores the pixels from before the stroke", image_bytes(bpy.data.images["Canvas Base Color"]) == before)
@@ -546,7 +547,7 @@ check("where the brush reached full strength a texel is the swatch in Blender's 
 grid = [mathutils.Color((b / 255,) * 3).from_srgb_to_scene_linear()[0] for b in range(256)]
 off = sum(1 for i in changed if min(abs(after[i + 1] - g) for g in grid) > 1e-4)
 check("and where it faded, values between any two an sRGB byte can hold", off > 20, off)
-state = sync.checkpoint(root, "Texture Paint")
+state = sync.checkpoint(root, "Image Paint")
 check("the float stroke is one undo step", state == {'undo': True, 'redo': False}, state)
 sync.history_step(-1)
 back = floats_of(bpy.data.images["Canvas Float"])

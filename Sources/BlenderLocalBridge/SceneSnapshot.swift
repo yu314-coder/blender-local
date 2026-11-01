@@ -329,27 +329,47 @@ public extension BpySession {
     /// that tests it cannot drift apart: an exporter that fails its poll
     /// writes nothing, and a menu item that quietly writes nothing is the
     /// worst way to find that out.
+    ///
+    /// In Blender's Export menu's order, under its labels (5.2.1,
+    /// `TOPBAR_MT_file_export`; docs/blender-names.md).
     static let exporters: [(ext: String, op: String, label: String)] = [
-        ("glb", "export_scene.gltf", "glTF Binary (.glb)"),
-        ("obj", "wm.obj_export", "Wavefront (.obj)"),
-        ("usd", "wm.usd_export", "Universal Scene Description (.usd)"),
-        ("stl", "wm.stl_export", "STL (.stl)"),
-        ("ply", "wm.ply_export", "Stanford PLY (.ply)"),
-        ("fbx", "export_scene.fbx", "FBX (.fbx)"),
         ("abc", "wm.alembic_export", "Alembic (.abc)"),
+        ("usd", "wm.usd_export", "Universal Scene Description (.usd*)"),
+        ("obj", "wm.obj_export", "Wavefront (.obj)"),
+        ("ply", "wm.ply_export", "Stanford PLY (.ply)"),
+        ("stl", "wm.stl_export", "STL (.stl)"),
+        ("fbx", "export_scene.fbx", "FBX (.fbx)"),
+        ("glb", "export_scene.gltf", "glTF 2.0 (.glb/.gltf)"),
     ]
 
-    /// The importers File ▸ Import Model… offers, by file extension.
+    /// File ▸ Import's rows: Blender's Import menu's label for each importer
+    /// the app runs, in that menu's order (5.2.1, `TOPBAR_MT_file_import`),
+    /// the extensions it reads, and its operator's name — the undo step
+    /// Blender records for an import.
     ///
     /// `import_scene.*` are Python add-ons; `wm.*_import` are Blender's own C++
     /// operators, and those poll for a window. That is the whole reason an
     /// import has to run where the menus run rather than on the script thread.
-    static let importers: [String: String] = [
-        "obj": "wm.obj_import", "glb": "import_scene.gltf", "gltf": "import_scene.gltf",
-        "usd": "wm.usd_import", "usda": "wm.usd_import", "usdc": "wm.usd_import",
-        "stl": "wm.stl_import", "ply": "wm.ply_import", "fbx": "import_scene.fbx",
-        "abc": "wm.alembic_import",
+    /// The FBX importer is the add-on, which 5.2.1's menu calls "FBX (.fbx)
+    /// (Legacy)" beside its new C++ one.
+    static let importFormats: [(label: String, op: String, exts: [String], undo: String)] = [
+        ("Alembic (.abc)", "wm.alembic_import", ["abc"], "Import Alembic"),
+        ("Universal Scene Description (.usd*)", "wm.usd_import", ["usd", "usda", "usdc"], "Import USD"),
+        ("Wavefront (.obj)", "wm.obj_import", ["obj"], "Import Wavefront OBJ"),
+        ("Stanford PLY (.ply)", "wm.ply_import", ["ply"], "Import PLY"),
+        ("STL (.stl)", "wm.stl_import", ["stl"], "Import STL"),
+        ("FBX (.fbx) (Legacy)", "import_scene.fbx", ["fbx"], "Import FBX"),
+        ("glTF 2.0 (.glb/.gltf)", "import_scene.gltf", ["glb", "gltf"], "Import glTF 2.0"),
     ]
+
+    /// The importer for a file extension, from `importFormats`.
+    static let importers: [String: String] = Dictionary(
+        uniqueKeysWithValues: importFormats.flatMap { format in format.exts.map { ($0, format.op) } })
+
+    /// The undo step an importer's run is recorded as: its operator's name.
+    static func importUndo(_ op: String) -> String {
+        importFormats.first { $0.op == op }?.undo ?? "Import"
+    }
 
     /// The line an importer is run by.
     static func importPython(_ op: String, from path: String) -> String {
@@ -368,9 +388,12 @@ public extension BpySession {
     /// Nil when the operator did not finish *or* wrote nothing: several of
     /// Blender's exporters report success having written no file, and a menu
     /// that says "Exported" without a file to show for it is a lie.
+    /// `folder` is Documents for the menu; Test All Features writes into the
+    /// temporary folder, so the user's Documents never see its file.
     func exportModel(_ op: String, ext: String,
-                     name: String = "Export-" + UUID().uuidString) -> URL? {
-        let url = SceneDocument.documentsURL.appendingPathComponent(name + "." + ext)
+                     name: String = "Export-" + UUID().uuidString,
+                     in folder: URL = SceneDocument.documentsURL) -> URL? {
+        let url = folder.appendingPathComponent(name + "." + ext)
         let result = capture(Self.exportPython(op, to: url.path))
         guard result?.contains("FINISHED") == true,
               let size = try? FileManager.default

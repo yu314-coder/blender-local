@@ -36,7 +36,17 @@ landmines worth knowing before touching any of it.
   stack, with `.blend` checkpoints as the fallback. The scene autosaves, as a
   `.blend`, and comes back on launch.
 - **Scripts drive the same Blender.** The Scripting tab runs Python against the
-  scene the 3D View shows.
+  scene the Layout tab shows.
+- **Blender's names.** Tools, menus, panels and commands Blender has are
+  called what Blender 5.2 calls them, checked against Blender's own menus,
+  toolbar and RNA; what Blender has no equivalent for keeps a name of the
+  app's own, and docs/blender-names.md lists both and the places the app
+  still differs. An operator's undo step is the one Blender's own history
+  records for the same call — measured in desktop 5.2.1 and in the app's own
+  bpy. A field edit's step is named by the field's text, the way Blender's
+  source names one, which no headless Blender can measure; a modifier
+  setting's is "Edit Modifier", and the 3D cursor's snaps keep a step
+  Blender does not record.
 
 The iOS Simulator has no arm64-iphoneos slice of `bpy`, so there a small Python
 stand-in plays Blender's part for UI testing. Device and Mac
@@ -44,20 +54,21 @@ stand-in plays Blender's part for UI testing. Device and Mac
 
 ## What it does
 
-**3D View**
+**Layout** (the 3D Viewport)
 - Add meshes, curves, lattices, empties, cameras, lights and text.
 - Select by tap, Box, Circle or Lasso, or from the Select menu and the Outliner.
 - Move, Rotate and Scale with a gizmo, with snapping, proportional editing,
   pivots and the 3D cursor.
-- The Object menu: Duplicate, Join, Parent, Convert, Set Origin, Apply,
-  shading, QuadriFlow Remesh, and more.
-- An operator search that runs any of Blender's mesh, object, UV, sculpt,
+- The Object menu: Duplicate Objects, Duplicate Linked, Join, Parent,
+  Convert, Set Origin, Apply, shading, QuadriFlow Remesh, and more.
+- Operator Search, which runs any of Blender's mesh, object, UV, sculpt,
   paint, curve, animation and render operators by name.
 
 **Edit Mode**
 - Vertex, edge and face selection.
-- Extrude, Inset, Bevel, Loop Cut, Knife Project, Spin, Bisect, Merge,
-  Dissolve, Bridge, Fill, normals, and the redo panel to adjust the last step.
+- Blender's Mesh, Vertex, Edge and Face menus: Extrude, Inset Faces, Bevel,
+  Loop Cut, Knife Project, Spin, Bisect, Merge, Dissolve, Bridge Edge Loops,
+  Grid Fill, Normals, and Adjust Last Operation for the last step.
 - X, Y, Z and Topology Mirror editing.
 - Curves' and lattices' control points.
 - Vertex groups and shape keys.
@@ -71,18 +82,22 @@ Apply and reordering. These have their own rows:
   Displace, Wave, Shrinkwrap and Lattice.
 - **Normals:** Weighted Normal.
 
-Everything else can be edited through Every Property. A vertex budget keeps a
+Everything else can be edited through the Data API browser. A vertex budget keeps a
 subdivision or remesh from running the device out of memory.
 
 **Sculpt Mode** uses Blender's Essentials brushes, with Dynamic Topology, Voxel
 Remesh, Multiresolution, masks, face sets and symmetry.
+
+**Weight Paint and Vertex Paint** are Blender's own, with its Essentials brushes
+(Brush, Blur, Average, Smear), the active vertex group or colour attribute
+drawn as Blender holds it, and each stroke one undo step.
 
 **More**
 - UV editing: unwrap, Smart UV Project, seams and packing.
 - Texture paint.
 - Materials: the Principled BSDF's base colour, metallic and roughness.
 - Keyframes and a timeline.
-- Rendering with Cycles on the Metal GPU, Eevee or Workbench, with progress,
+- Rendering with Cycles on the Metal GPU, EEVEE or Workbench, with progress,
   and camera and light panels.
 
 **Image to 3D Model** turns a photo into a model, on the device:
@@ -136,7 +151,7 @@ ignores, with a committed `.example` beside it:
 ```
 Sources/BlenderLocalApp/     app entry, keyboard and menu-bar commands
 Sources/BlenderLocalBridge/  the bridge to bpy: scene mirror, operators, undo
-Sources/BlenderLocalUI/      Metal viewport, 3D View and Scripting, editors
+Sources/BlenderLocalUI/      Metal viewport, Layout and Scripting, editors
 Resources/python/site/       the app's Python side (_blenderkit_*.py) and the simulator's stand-in
 tests/                       host suites and desktop-Blender checks
 scripts/                     build, staging, test runners, release

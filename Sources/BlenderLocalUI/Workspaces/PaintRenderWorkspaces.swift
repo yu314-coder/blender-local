@@ -42,7 +42,7 @@ struct RenderingWorkspace: View {
     /// Cycles compiles its Metal kernels the first time it renders on a
     /// device — minutes, once, cached afterwards. Remembered so the warning
     /// is shown before that render and not after.
-    @AppStorage("bl_cycles_kernels_built") private var kernelsBuilt = false
+    @AppStorage(CyclesKernels.builtKey) private var kernelsBuilt = false
 
     private var usesCamera: Bool { !fromView && session.usesRealBlender }
 
@@ -78,7 +78,7 @@ struct RenderingWorkspace: View {
             }
             return "No render yet.\nThis renders through \(name), at \(size)."
         }
-        return "No render yet.\nThis renders the 3D View's own viewpoint, at \(size)."
+        return "No render yet.\nThis renders the 3D Viewport's own viewpoint, at \(size)."
     }
 
     private var renderButton: some View {
@@ -152,28 +152,32 @@ struct RenderingWorkspace: View {
             Button {
                 fromView = false
             } label: {
-                Label(scene.sceneCamera.map { "Camera: \($0.name)" } ?? "Scene Camera",
+                // Blender's Scene panel's Camera, the render's.
+                Label(scene.sceneCamera.map { "Camera: \($0.name)" } ?? "Camera",
                       systemImage: usesCamera ? "checkmark" : "video")
             }
             .disabled(!session.usesRealBlender)
             Button {
                 fromView = true
             } label: {
-                Label("3D View", systemImage: !usesCamera ? "checkmark" : "cube")
+                // The editor's name in Blender: the 3D Viewport.
+                Label("3D Viewport", systemImage: !usesCamera ? "checkmark" : "cube")
             }
             if scene.cameras.count > 1 {
                 Divider()
-                Section("Scene Camera") {
+                Section("Camera") {
                     ForEach(scene.cameras, id: \.id) { object in
                         Button(object.name) {
-                            _ = bridge?.run(Bpy.setSceneCamera(object.name), undo: "Set Scene Camera")
+                            // The Scene panel's Camera field, which names the
+                            // step it records.
+                            _ = bridge?.run(Bpy.setSceneCamera(object.name), undo: "Camera")
                             fromView = false
                         }
                     }
                 }
             }
         } label: {
-            chip(usesCamera ? (scene.sceneCamera?.name ?? "Camera") : "3D View")
+            chip(usesCamera ? (scene.sceneCamera?.name ?? "Camera") : "3D Viewport")
         }
     }
 
@@ -193,7 +197,7 @@ struct RenderingWorkspace: View {
             note(problem, colour: .orange) {
                 if problemWantsCamera {
                     BButton("Add Camera", icon: "video") { addCamera() }
-                    BButton("Render the 3D View", icon: "cube") { fromView = true; render() }
+                    BButton("Render the 3D Viewport", icon: "cube") { fromView = true; render() }
                 }
             }
         } else if rendering {
@@ -213,7 +217,7 @@ struct RenderingWorkspace: View {
         } else if usesCamera && scene.sceneCamera == nil {
             note("This scene has no camera.", colour: BTheme.textDim) {
                 BButton("Add Camera", icon: "video") { addCamera() }
-                BButton("Render the 3D View", icon: "cube") { fromView = true }
+                BButton("Render the 3D Viewport", icon: "cube") { fromView = true }
             }
         } else if engine.usesSceneLighting && scene.lights.isEmpty {
             note("Nothing lights this scene, so \(engine.label) will render it black.",
@@ -221,13 +225,11 @@ struct RenderingWorkspace: View {
                 BButton("Add Light", icon: "lightbulb") {
                     _ = bridge?.add(.light(.point), at: SIMD3(4, 1, 6), view: camera)
                 }
-                BButton("Use Solid", icon: "circle.lefthalf.filled") { engine = .workbench }
+                BButton("Use \(RenderRequest.Engine.workbench.label)", icon: "circle.lefthalf.filled") { engine = .workbench }
             }
         } else if engine == .cycles && !kernelsBuilt {
-            note("Cycles renders on the GPU. The first one builds its shaders, which takes a few "
-                 + "minutes once; every render after that is quick. Eevee needs no wait.",
-                 colour: BTheme.textDim) {
-                BButton("Use Eevee", icon: "bolt") { engine = .eevee }
+            note(CyclesKernels.warning, colour: BTheme.textDim) {
+                BButton("Use \(RenderRequest.Engine.eevee.label)", icon: "bolt") { engine = .eevee }
             }
         } else if let savedName {
             note("\(device.map { $0 + ". " } ?? "")Saved as \(savedName) in Files ▸ Blender Local ▸ Renders.",

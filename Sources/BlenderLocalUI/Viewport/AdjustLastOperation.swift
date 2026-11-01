@@ -99,6 +99,10 @@ struct AdjustLastOperation: View {
     private func parameters(_ op: LastOperator) -> some View {
         VStack(spacing: 3) {
             ForEach(Array(op.parameters.enumerated()), id: \.element.id) { index, parameter in
+                // Rows Blender's panel leaves out until another row says
+                // otherwise (`Parameter.shownWhen`): the proportional
+                // settings while Proportional Editing is off.
+                if op.isShown(parameter) {
                 Group {
                     switch parameter.kind {
                     case .choice(let options), .literal(let options):
@@ -122,13 +126,28 @@ struct AdjustLastOperation: View {
                                         value: binding(at: index),
                                         step: Float(parameter.step),
                                         accent: Self.axisColours[min(max(axis, 0), 2)],
-                                        unit: .meters,
+                                        unit: parameter.unit,
                                         onEnded: finishDrag)
+                    case .toggle(_, let heading, let axis):
+                        // One axis of a vector of booleans, as Blender draws
+                        // Mirror's Constraint Axis: X, Y and Z under a heading.
+                        if axis == 0 { groupHeading(heading) }
+                        choiceRow(parameter, options: [LastOperator.Parameter.Option("False", "Off"),
+                                                       LastOperator.Parameter.Option("True", "On")],
+                                  at: index)
+                    case .flag(let keyword, let heading, _):
+                        // One item of a set Blender draws as a row of toggle
+                        // buttons under its heading (Loop Select's Delimit).
+                        if Self.firstFlag(of: keyword, at: index, in: op) { groupHeading(heading) }
+                        choiceRow(parameter, options: [LastOperator.Parameter.Option("False", "Off"),
+                                                       LastOperator.Parameter.Option("True", "On")],
+                                  at: index)
                     }
                 }
                 // Greyed, not hidden, while another row makes it inert
                 // (`Parameter.activeWhen`), as Blender greys one.
                 .opacity(op.isActive(parameter) ? 1 : 0.45)
+                }
             }
 
             // Blender draws Location as a labelled XYZ column, colour-coded to
@@ -150,6 +169,15 @@ struct AdjustLastOperation: View {
     }
 
     private static let axisColours = [BTheme.axisX, BTheme.axisY, BTheme.axisZ]
+
+    /// Whether the row at `index` is the first item of its enum flag, which
+    /// the heading goes over.
+    private static func firstFlag(of keyword: String, at index: Int, in op: LastOperator) -> Bool {
+        op.parameters.firstIndex {
+            if case .flag(let k, _, _) = $0.kind { return k == keyword }
+            return false
+        } == index
+    }
 
     /// The dim caption over an XYZ column.
     private func groupHeading(_ title: String) -> some View {
@@ -289,6 +317,17 @@ private struct RedoNumberField: View {
     var onEnded: () -> Void
 
     @State private var dragStart: Float?
+    /// The number being typed, while it is: Blender's redo fields take a
+    /// typed value on a click as its other fields do, and on a tablet a typed
+    /// number is the only exact one — Move X 0.5 after a gizmo drag.
+    @State private var typing: String?
+    /// The text the field opened with, so a field dismissed untouched
+    /// changes nothing: `editable` rounds (to four places), and comparing the
+    /// rounded number with the value re-ran a gizmo Move kept at six places
+    /// for its snap — the 5e-5 error `places` exists to prevent (round 4's
+    /// review of group 5).
+    @State private var typingFrom: String?
+    @FocusState private var typingFocused: Bool
 
     init(_ label: String, value: Binding<Float>, step: Float, accent: Color? = nil,
          unit: BNumberField.Unit, onEnded: @escaping () -> Void) {
@@ -310,10 +349,25 @@ private struct RedoNumberField: View {
                 .foregroundStyle(BTheme.textDim)
                 .padding(.leading, 6)
             Spacer(minLength: 4)
-            Text(unit.format(value))
-                .font(BTheme.Font.mono(11))
-                .foregroundStyle(dragStart == nil ? BTheme.text : BTheme.active)
-                .padding(.trailing, 8)
+            if let typed = typing {
+                TextField("", text: Binding(get: { typed }, set: { typing = $0 }))
+                    .font(BTheme.Font.mono(11))
+                    .foregroundStyle(BTheme.text)
+                    .multilineTextAlignment(.trailing)
+                    .keyboardType(.numbersAndPunctuation)
+                    .submitLabel(.done)
+                    .autocorrectionDisabled()
+                    .textInputAutocapitalization(.never)
+                    .focused($typingFocused)
+                    .onSubmit { finishTyping() }
+                    .padding(.trailing, 8)
+                    .frame(maxWidth: 90)
+            } else {
+                Text(unit.format(value))
+                    .font(BTheme.Font.mono(11))
+                    .foregroundStyle(dragStart == nil ? BTheme.text : BTheme.active)
+                    .padding(.trailing, 8)
+            }
         }
         .frame(height: 22)
         .background(BTheme.field)
@@ -337,13 +391,43 @@ private struct RedoNumberField: View {
         .gesture(
             DragGesture(minimumDistance: 1)
                 .onChanged { g in
+                    if typing != nil { return }
                     if dragStart == nil { dragStart = value }
                     value = (dragStart ?? value) + Float(g.translation.width) * step
                 }
                 .onEnded { _ in
+                    guard typing == nil else { return }
                     dragStart = nil
                     onEnded()
                 }
         )
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(label)
+        .accessibilityValue(unit.format(value))
+        .accessibilityAction { startTyping() }
+        // A tap types; the drag takes anything that moves.
+        .onTapGesture {
+            guard typing == nil else { return }
+            startTyping()
+        }
+        .onChange(of: typingFocused) { _, focused in
+            if !focused, typing != nil { finishTyping() }
+        }
+    }
+
+    private func startTyping() {
+        typing = unit.editable(value)
+        typingFrom = typing
+        typingFocused = true
+    }
+
+    /// The typed number goes in as one change, re-run and recorded once.
+    /// Text left as it opened is no change at all.
+    private func finishTyping() {
+        defer { typing = nil; typingFrom = nil; typingFocused = false }
+        guard let text = typing, text != typingFrom,
+              let number = unit.typed(text), number != value else { return }
+        value = number
+        onEnded()
     }
 }

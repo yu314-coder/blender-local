@@ -141,7 +141,7 @@ class Bridge(types.ModuleType):
         self.modes.append(mode)
         self.shown = mode
 
-    def sync_edit_selection(self, name, bits, vsel, tpoly, psel, ends, esel, vhide=b'', vco=b''):
+    def sync_edit_selection(self, name, bits, vsel, tpoly, psel, ends, esel, vhide=b'', vco=b'', hist=b''):
         def typed(code, raw):
             values = array(code)
             values.frombytes(raw)
@@ -261,7 +261,7 @@ bpy.context.view_layer.objects.active = sun
 said = refusal("MODE_EDIT")
 # Edit Mode is a mesh's, a curve's and a lattice's (2026-10-01: curves and
 # lattices are edited by their control points), so the sentence names all three.
-check("Edit Mesh on a light is refused in a sentence",
+check("Edit Mode on a light is refused in a sentence",
       said == "Edit Mode works on meshes, curves and lattices here, and Sun is a light.", said)
 check("and Blender is left in object mode", sun.mode == 'OBJECT', sun.mode)
 check("Tab is refused the same way", refusal("TOGGLE") == said, refusal("TOGGLE"))
@@ -670,7 +670,7 @@ check("and Apply Scale makes the bevel the width the modifier asks for",
 # Neither operator fails on a type it cannot handle — origin_set returns
 # FINISHED and does nothing, transform_apply returns CANCELLED — so the guard
 # in setup: is what turns a silent no-op into a sentence the banner can show.
-for name, what in (("ORIGIN_CURSOR", "Set Origin"), ("APPLY_SCALE", "Apply Transform")):
+for name, what in (("ORIGIN_CURSOR", "Set Origin"), ("APPLY_SCALE", "Apply")):
     bpy.ops.wm.read_homefile(use_empty=True)
     bpy.ops.object.camera_add(location=(1, 2, 3))
     bpy.context.view_layer.update()

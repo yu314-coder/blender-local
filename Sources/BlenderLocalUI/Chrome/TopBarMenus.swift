@@ -21,21 +21,27 @@ struct FileMenu: View {
     var bridge: BpyBridge?
     @Binding var savedFiles: [URL]
     @State private var choosingFile = false
-    @State private var importing = false
+    /// The Import row picked: Blender's importer for that format, which the
+    /// chosen file is held to. Nil for Open.
+    @State private var importing: (label: String, op: String, exts: [String], undo: String)?
     @State private var namingSave = false
     @State private var saveName = "Scene"
     @State private var lastSavedURL: URL?
+    /// Preferences (`PreferencesSheet`), which the top bar presents: its gear
+    /// opens the same sheet.
+    @Binding var showPreferences: Bool
 
     var body: some View {
-        Menu("File") {
+        Menu {
             Menu("New") {
                 Button("General") { newScene() }
                 BUnavailable("2D Animation")
                 BUnavailable("Sculpting")
+                BUnavailable("Storyboarding")
                 BUnavailable("VFX")
                 BUnavailable("Video Editing")
             }
-            Button("Open…") { importing = false; choosingFile = true }
+            Button("Open…") { importing = nil; choosingFile = true }
                 .disabled(session.isRunning)
             Menu("Open Recent") {
                 if savedFiles.isEmpty {
@@ -67,8 +73,14 @@ struct FileMenu: View {
             BUnavailable("Data Previews")
 
             Divider()
-            Button("Import Model…") { importing = true; choosingFile = true }
-                .disabled(!session.usesRealBlender || session.isRunning)
+            // Blender's Import menu, one row per format the app's importers
+            // read, under that menu's labels and in its order.
+            Menu("Import") {
+                ForEach(BpySession.importFormats, id: \.op) { format in
+                    Button(format.label) { importing = format; choosingFile = true }
+                }
+            }
+            .disabled(!session.usesRealBlender || session.isRunning)
             Menu("Export") {
                 ForEach(BpySession.exporters, id: \.ext) { exporter in
                     Button(exporter.label) { exportModel(exporter.op, ext: exporter.ext) }
@@ -97,6 +109,18 @@ struct FileMenu: View {
                 BUnavailable("Save Startup File")
                 Button("Load Factory Settings") { newScene() }
             }
+
+            Divider()
+            // Blender keeps Preferences… in its Edit menu, which this top bar
+            // does not have.
+            Button("Preferences…") { showPreferences = true }
+        } label: {
+            // The title's own size was the only place to tap: 20 × 14 points,
+            // the one way to Save and Open. A finger's 44 now.
+            Text("File")
+                .padding(.horizontal, 10)
+                .frame(minWidth: 44, minHeight: 44)
+                .contentShape(Rectangle())
         }
         .menuStyle(BlenderMenuStyle())
         .fileImporter(isPresented: $choosingFile, allowedContentTypes: [.data]) { result in
@@ -104,12 +128,12 @@ struct FileMenu: View {
             case .success(let url):
                 let access = url.startAccessingSecurityScopedResource()
                 defer { if access { url.stopAccessingSecurityScopedResource() } }
-                if importing { importModel(url) }
+                if let format = importing { importModel(url, as: format) }
                 else { session.openDocument(url, scene: scene) }
             case .failure(let error): session.note("Open failed: \(error.localizedDescription)")
             }
         }
-        .alert("Save Scene", isPresented: $namingSave) {
+        .alert("Save As", isPresented: $namingSave) {
             TextField("Name", text: $saveName)
             Button("Save") { save(named: saveName) }
             Button("Cancel", role: .cancel) {}
@@ -122,13 +146,21 @@ struct FileMenu: View {
     /// window, and a script thread has none: sent through `submit`, six of the
     /// seven formats answered "context is incorrect" and nothing arrived. Only
     /// glTF worked, because its importer is a Python add-on that does not ask.
-    private func importModel(_ url: URL) {
-        guard let op = BpySession.importers[url.pathExtension.lowercased()] else {
-            session.note("Choose OBJ, GLB/glTF, USD, STL, PLY, FBX or Alembic."); return
+    ///
+    /// The row's importer reads the file, and only a file of its format: a
+    /// .glb picked from Wavefront (.obj) is refused in words rather than read
+    /// by another importer than the row names.
+    private func importModel(_ url: URL, as format: (label: String, op: String, exts: [String], undo: String)) {
+        let ext = url.pathExtension.lowercased()
+        guard format.exts.contains(ext) else {
+            session.note("\(format.label) reads " + format.exts.map { "." + $0 }.joined(separator: " and ")
+                         + " files, and \(url.lastPathComponent) is not one."); return
         }
         guard let bridge else { session.note("Import needs Blender."); return }
         let before = scene.objects.count
-        let outcome = bridge.run(BpySession.importPython(op, from: url.path), undo: "Import Model")
+        // The step is named after the importer, as Blender's undo history
+        // names an import (`Import Wavefront OBJ`, ...).
+        let outcome = bridge.run(BpySession.importPython(format.op, from: url.path), undo: format.undo)
         if outcome.succeeded, scene.objects.count > before {
             session.note("Imported \(url.lastPathComponent).")
         } else {
@@ -171,7 +203,9 @@ struct FileMenu: View {
     /// handler), so the step before New can still be returned to.
     private func newScene() {
         guard let bridge, !session.isRunning else { return }
-        bridge.run("bpy.ops.wm.read_homefile(load_ui=False)")
+        // Priced as a script's load: the startup file is one the app never
+        // writes and a script can (`Bpy.pricedLoad`).
+        bridge.run(Bpy.newScene)
     }
 
     /// Blender prompts for a path; without a document browser this picks the

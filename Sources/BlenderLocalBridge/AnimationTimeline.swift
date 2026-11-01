@@ -381,6 +381,11 @@ public enum BpyAnimation {
         let lines = python.split(separator: "\n").map { $0.trimmingCharacters(in: .whitespaces) }
             .filter { !$0.isEmpty }
         guard lines.count == 1, let line = lines.first else { return nil }
+        // The Cursor tool's drag moves the 3D cursor, which Blender keys
+        // nothing for; the follow-up would report the selected objects'
+        // "Could not create … F-Curve" though nothing moved them (round 4's
+        // review of the Cursor tool, `CursorTool.dragPython`).
+        if line.contains("cursor_transform=True") { return nil }
         if line.hasPrefix("bpy.ops.transform.translate(") { return "TRANSLATE" }
         if line.hasPrefix("bpy.ops.transform.rotate(") { return "ROTATE" }
         if line.hasPrefix("bpy.ops.transform.resize(") { return "RESIZE" }
@@ -618,19 +623,26 @@ public final class TimelineDriver {
     // MARK: settings
 
     /// The Start field. Blender's own rules apply, so the value shown at once
-    /// is the value Blender keeps; the mirror confirms it. The undo steps are
-    /// named as Blender names them: after the property.
+    /// is the value Blender keeps; the mirror confirms it.
+    ///
+    /// The undo steps carry the fields' own text, Start and End, as the app's
+    /// other field edits do: Blender names a field's step after the text it
+    /// draws, up to its colon (`ui_apply_but_undo`, interface_handlers.cc in
+    /// the bundled 5.3 source), and its Timeline draws these four as Start
+    /// and End (space_time.py, 5.2.1). Read from the source, not measured: a
+    /// Blender with no interface has no field to press. They were the
+    /// properties' names, Start Frame and End Frame, which no field shows.
     public func setFrameStart(_ value: Int) {
         guard let scene, let session, !session.isRunning else { return }
         let range = FrameRange.settingStart(value, end: scene.frameEnd)
-        if session.isRealRuntime { bridge?.run(BpyAnimation.setFrameStart(range.start), undo: "Start Frame") }
+        if session.isRealRuntime { bridge?.run(BpyAnimation.setFrameStart(range.start), undo: "Start") }
         apply(range, to: scene)
     }
 
     public func setFrameEnd(_ value: Int) {
         guard let scene, let session, !session.isRunning else { return }
         let range = FrameRange.settingEnd(value, start: scene.frameStart)
-        if session.isRealRuntime { bridge?.run(BpyAnimation.setFrameEnd(range.end), undo: "End Frame") }
+        if session.isRealRuntime { bridge?.run(BpyAnimation.setFrameEnd(range.end), undo: "End") }
         apply(range, to: scene)
     }
 
@@ -643,7 +655,7 @@ public final class TimelineDriver {
         guard let scene, let session, !session.isRunning else { return }
         let range = FrameRange.settingPreviewStart(value, end: scene.animation.previewEnd)
         if session.isRealRuntime {
-            bridge?.run(BpyAnimation.setPreviewStart(range.start), undo: "Preview Range Start Frame")
+            bridge?.run(BpyAnimation.setPreviewStart(range.start), undo: "Start")
         }
         applyPreview(range, to: scene)
     }
@@ -652,7 +664,7 @@ public final class TimelineDriver {
         guard let scene, let session, !session.isRunning else { return }
         let range = FrameRange.settingPreviewEnd(value, start: scene.animation.previewStart)
         if session.isRealRuntime {
-            bridge?.run(BpyAnimation.setPreviewEnd(range.end), undo: "Preview Range End Frame")
+            bridge?.run(BpyAnimation.setPreviewEnd(range.end), undo: "End")
         }
         applyPreview(range, to: scene)
     }

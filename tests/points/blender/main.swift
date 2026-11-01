@@ -146,9 +146,9 @@ func dump(_ path: String) {
         return runtime.sources.count > before ? runtime.sources[runtime.sources.count - 1] : ""
     }
 
-    emit("ENTER_EDIT", sent { bridge.run(Bpy.setMode(.edit), undo: "Toggle Edit Mode") })
-    emit("TOGGLE_EDIT", sent { bridge.run(Bpy.toggleEditMode, undo: "Toggle Edit Mode") })
-    emit("LEAVE_EDIT", sent { bridge.run(Bpy.setMode(.object), undo: "Toggle Edit Mode") })
+    emit("ENTER_EDIT", sent { bridge.run(Bpy.setMode(.edit), undo: "Edit Mode") })
+    emit("TOGGLE_EDIT", sent { bridge.run(Bpy.toggleEditMode, undo: "Edit Mode") })
+    emit("LEAVE_EDIT", sent { bridge.run(Bpy.setMode(.object), undo: "Edit Mode") })
     emit("SCULPT_MODE", sent { bridge.run(Bpy.setMode(.sculpt), undo: "Sculpt Mode") })
 
     // A tap and a box, from above, in a 1000 x 800 view.
@@ -251,8 +251,18 @@ func dump(_ path: String) {
     emit("TURN_PIVOT", "\(turned.x),\(turned.y),\(turned.z)")
     if let stretch = gizmoSession(.scale, .axis(0)) {
         let call = TransformGizmo.python(.scale(SIMD3(1.5, 1, 1)), session: stretch)
-        check("a scale is in the object's axes, about the median", call.contains("orient_type='LOCAL'")
-              && call.contains("center_override="), call)
+        // A scale follows Blender's orientation, Global by default, as
+        // Blender's gizmo does (round 4, group 5); in Local it goes bare,
+        // for Blender to scale along the object's own axes.
+        check("a scale is in the scene's orientation (Global), about the median",
+              call.contains("orient_type='GLOBAL'") && call.contains("center_override="), call)
+        scene.orientation = OrientationState(type: .local)
+        if let local = gizmoSession(.scale, .axis(0)) {
+            let localCall = TransformGizmo.python(.scale(SIMD3(1.5, 1, 1)), session: local)
+            check("and in Local, the object's axes", localCall.contains("orient_type='LOCAL'")
+                  && !localCall.contains("orient_matrix"), localCall)
+        }
+        scene.orientation = OrientationState(type: .global, axes: matrix_identity_float3x3)
         emit("SCALE_BEGIN", PointsBpy.beginDrag(object: "Circle", followers: []))
         emit("SCALE_FRAME", sent { _ = bridge.previewPointDrag(call, undo: "Resize") })
         emit("SCALE_COMMIT", sent { bridge.commitPointDrag(call, undo: "Resize") })
@@ -379,10 +389,10 @@ func dump(_ path: String) {
     }
     emit("CYCLIC", row(PointsBpy.toggleCyclic))
     emit("SWITCH", row(PointsBpy.switchDirection))
-    emit("CURVE_ALL", sent { bridge.run(PointsBpy.selectAll("SELECT", lattice: false), undo: "Select All") })
-    emit("CURVE_NONE", sent { bridge.run(PointsBpy.selectAll("DESELECT", lattice: false), undo: "Deselect") })
-    emit("CURVE_INVERT", sent { bridge.run(PointsBpy.selectAll("INVERT", lattice: false), undo: "Invert Selection") })
-    emit("LATTICE_ALL", sent { bridge.run(PointsBpy.selectAll("SELECT", lattice: true), undo: "Select All") })
+    emit("CURVE_ALL", sent { bridge.run(PointsBpy.selectAll("SELECT", lattice: false), undo: SelectMenu.selectAllUndo) })
+    emit("CURVE_NONE", sent { bridge.run(PointsBpy.selectAll("DESELECT", lattice: false), undo: SelectMenu.selectAllUndo) })
+    emit("CURVE_INVERT", sent { bridge.run(PointsBpy.selectAll("INVERT", lattice: false), undo: SelectMenu.selectAllUndo) })
+    emit("LATTICE_ALL", sent { bridge.run(PointsBpy.selectAll("SELECT", lattice: true), undo: SelectMenu.selectAllUndo) })
     emit("MAKE_REGULAR", row(PointsBpy.makeRegular))
     emit("FLIP_U", row(PointsBpy.flip("U")))
     for what in Bpy.ShowHide.allCases {
@@ -407,7 +417,7 @@ func dump(_ path: String) {
     // Add ▸ Lattice, as `perform` sends it, and its redo panel's re-run.
     let add = LastOperator.add(.lattice, at: SIMD3(1, 2, 3))
     check("Add Lattice is object.add with the type", add.python.hasPrefix("bpy.ops.object.add(")
-          && add.python.contains("type='LATTICE'") && add.name == "Add Lattice", add.python)
+          && add.python.contains("type='LATTICE'") && add.name == "Add Object", add.python)
     emit("ADD_LATTICE", BpyBridge.performBody(for: add))
     var rerun = add
     rerun.subject = "@SUBJECT@"

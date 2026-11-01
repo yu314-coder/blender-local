@@ -88,6 +88,10 @@ def load(name):
 # these modules; the app has them on its path and this check has to load them.
 for sibling in ("_blenderkit_texpaint", "_blenderkit_anim", "_blenderkit_tools"):
     load(sibling)
+# And what the Multires buttons ask from Sculpt Mode (`refuse_heavy_level`), and
+# the mirroring pass reads a sculpted level through.
+for sibling in ("_blenderkit_knife", "_blenderkit_undo", "_blenderkit_sculpt"):
+    load(sibling)
 sync = load("_blenderkit_sync")
 # What Multires's buttons call (`Bpy.multires`); their lines import it by name.
 multires_module = load("_blenderkit_multires")
@@ -305,14 +309,26 @@ def edit(case, setup=lambda obj, m: None):
     sync.sync()
     with tempfile.NamedTemporaryFile("w", suffix=".txt", delete=False) as f:
         f.write(bridge.modifiers.get(obj.name, ""))
-    lines = subprocess.run([DUMP, "--edit", case, f.name], capture_output=True,
-                           text=True, check=True).stdout.strip()
+    full = subprocess.run([DUMP, "--edit", case, f.name], capture_output=True,
+                          text=True, check=True).stdout.strip()
+    # Every edit goes behind the vertex budget's price (round 4's fix round);
+    # the lines a check reads are the settings after it.
+    price, _, lines = full.partition("\n")
+    if not price.startswith("__import__('_blenderkit_budget').price_modifier("):
+        price, lines = "", full
+        if ".modifiers[" in full and " = " in full:
+            UNPRICED.append(case)
+    LAST_FULL[0] = full
     try:
-        exec(compile(lines, "<edit " + case + ">", "exec"), {"bpy": bpy})
+        exec(compile(full, "<edit " + case + ">", "exec"), {"bpy": bpy})
     except Exception as error:                     # noqa: BLE001 - the failure is the finding
         check(case + ": Blender accepts the edit", False, type(error).__name__ + ": " + str(error))
         return lines, None
     return lines, obj.modifiers[-1]
+
+
+UNPRICED = []
+LAST_FULL = [""]
 
 
 def gone(obj, m):
@@ -462,11 +478,62 @@ check("turning Laplacian's Z off sends use_z alone", lines.count("\n") == 0 and 
 if m:
     check("and Blender has X and Y on, Z off", m.use_x and m.use_y and not m.use_z)
 lines, m = edit("MULTIRES_LEVEL")
-check("a Multires level edit sends the viewport level alone", lines.count("\n") == 0
-      and lines.endswith(".levels = 1"), lines)
+check("a Multires level edit sends the viewport level alone, behind the budget's price", lines.count("\n") == 0
+      and LAST_FULL[0].splitlines()[0] == "__import__('_blenderkit_budget').price_modifier(\"Multires\", {\"levels\": 1})"
+      and lines.endswith(".levels = 1"), LAST_FULL[0])
 if m:
     check("and Blender has 1 of 2, sculpt and render still 2",
           m.levels == 1 and m.total_levels == 2 and m.sculpt_levels == 2 and m.render_levels == 2)
+
+# The panel's Sculpt stepper from inside Sculpt Mode, on a base mesh past
+# Sculpt Mode's Multires budget (MULTIRES_BASE_BUDGET, 2,000 vertices) and
+# sculpted at level 0 (its base mesh, which is allowed). Round 3's review found
+# the stepper going round that budget: Blender then rebuilds the level from the
+# 8,066-vertex base after every stroke and Undo. The lines are the Swift's own
+# edit, made from Blender's record of the modifier.
+def heavy_in_sculpt():
+    bpy.ops.wm.read_homefile(use_empty=True)
+    bpy.ops.mesh.primitive_uv_sphere_add(segments=128, ring_count=64)
+    obj = bpy.context.object
+    obj.name = "Heavy"
+    obj.modifiers.new("Multires", 'MULTIRES')
+    bpy.ops.object.multires_subdivide(modifier="Multires", mode='CATMULL_CLARK')
+    obj.modifiers["Multires"].sculpt_levels = 0
+    bpy.ops.object.mode_set(mode='SCULPT')
+    sync.sync()
+    with tempfile.NamedTemporaryFile("w", suffix=".txt", delete=False) as f:
+        f.write(bridge.modifiers.get(obj.name, ""))
+    lines = subprocess.run([DUMP, "--edit", "MULTIRES_SCULPT_STEP", f.name], capture_output=True,
+                           text=True, check=True).stdout.strip()
+    return obj, lines
+
+
+obj, lines = heavy_in_sculpt()
+said = None
+try:
+    exec(compile(lines, "<edit MULTIRES_SCULPT_STEP>", "exec"), {"bpy": bpy})
+except RuntimeError as error:
+    said = str(error)
+m = obj.modifiers["Multires"]
+check("the Sculpt stepper's edit (%s) on an 8,066-vertex base in Sculpt Mode is refused in words, the level "
+      "left at 0" % lines.replace("\n", " / ")[:90],
+      said is not None and "2,000" in said and m.sculpt_levels == 0 and obj.mode == 'SCULPT', (said, m.sculpt_levels))
+bpy.ops.object.mode_set(mode='OBJECT')
+# The negative control: the same edit without its check line, as the stepper
+# sent it before, sets the level.
+obj, lines = heavy_in_sculpt()
+bare = "\n".join(l for l in lines.splitlines() if "_blenderkit_budget" not in l)
+exec(compile(bare, "<edit bare>", "exec"), {"bpy": bpy})
+check("negative control: without the price line the stepper's edit leaves the heavy base sculpted at level %d"
+      % obj.modifiers["Multires"].sculpt_levels, bare != lines and obj.modifiers["Multires"].sculpt_levels == 1,
+      (bare, obj.modifiers["Multires"].sculpt_levels))
+# The bare write is still waiting for Blender's evaluation, and since round 4's
+# fix round 2 the gate prices it there as the row's line would have
+# (_blenderkit_gate): put back before the next step, so the check goes on
+# from a scene that is not refused.
+obj.modifiers["Multires"].sculpt_levels = 0
+bpy.ops.object.mode_set(mode='OBJECT')
+
 lines, m = edit("LATTICE_PICK", lambda obj, m: cage())
 check("picking the cage sends the object alone", lines.count("\n") == 0
       and lines.endswith('.object = bpy.data.objects["Cage"]'), lines)
@@ -804,14 +871,17 @@ def two_levels(obj):
         bpy.ops.object.multires_subdivide(modifier="Multires", mode='CATMULL_CLARK')
 
 
-real_available = multires_module.available_memory
+# The memory figure is the budget's own (_blenderkit_budget.available_memory),
+# which every price reads since round 4's fix round.
+budget_module = sys.modules["_blenderkit_budget"]
+real_available = budget_module.available_memory
 check("desktop Blender reads no figure for the memory left, so only the budget applies here", real_available() is None
       or real_available() > 1e9, real_available())
-multires_module.available_memory = lambda: 400_000_000
+budget_module.available_memory = lambda: 400_000_000
 try:
     obj, lines, error = action("memory", multires, "subdivide", "Multires", prepare=two_levels, make=grid)
 finally:
-    multires_module.available_memory = real_available
+    budget_module.available_memory = real_available
 check("a Subdivide that would need more memory than is left is refused before it runs",
       isinstance(error, RuntimeError) and "641,601" in str(error) and "0.5 GB" in str(error)
       and "0.4 GB is free" in str(error) and obj.modifiers[0].total_levels == 2,
@@ -858,21 +928,21 @@ obj.modifiers[odd].show_viewport = True
 sync.sync()
 out.append("### ODD_NAME\n" + bridge.modifiers.get(obj.name, ""))
 
-# A row with no settings of its own opens Every Property at the modifier: the
+# A row with no settings of its own opens the Data API browser at the modifier: the
 # browser's own reader and writer (inspect_data, set_property) on the path the
 # Swift builds, as the app runs them.
 path = blocks["DATA_PATH_ODD"].strip()
 try:
     info = sync.inspect_data(path)
     ids = {p['id']: p for p in info['properties']}
-    check("Every Property opens on that Wireframe and lists its settings",
+    check("the Data API browser opens on that Wireframe and lists its settings",
           info['title'] == odd and ids.get('thickness', {}).get('editable') is True
           and 'use_even_offset' in ids, sorted(ids)[:8])
     sync.set_property(path, 'thickness', 0.25)
     check("and a setting set there lands on Blender's modifier",
           abs(obj.modifiers[odd].thickness - 0.25) < 1e-6, obj.modifiers[odd].thickness)
 except Exception as error:                         # noqa: BLE001 - the failure is the finding
-    check("Every Property opens on that Wireframe", False, "%s: %s" % (type(error).__name__, error))
+    check("the Data API browser opens on that Wireframe", False, "%s: %s" % (type(error).__name__, error))
 
 
 print("\nEvery modifier Blender can put on a mesh reaches the panel")

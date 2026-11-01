@@ -131,3 +131,148 @@ struct ObjectRelationItems: View {
         .disabled(!state.canConvert)
     }
 }
+
+/// Object menu rows that were reachable only by name in the Operator Search
+/// (round 3's review, toolkit items 11, 12 and 15), each where Blender's
+/// Object menu keeps it (VIEW3D_MT_object, 5.2.1): Transform's Randomize
+/// Transform and Align Objects, Mirror, Collection's Move to Collection (M)
+/// and Link to Collection (Shift+M), Relations ▸ Make Single User, Modifiers
+/// ▸ Copy Modifiers to Selected Objects, Constraints, and Link/Transfer Data
+/// (Ctrl+L). Each row is Blender's operator through `perform` (its redo
+/// panel) or `run` (Move and Link, whose panel Blender draws empty), and
+/// shows nothing of its own: what it did comes back through the mirror.
+/// Shared by the Mac menu bar and the 3D View's More menu.
+struct ObjectMenuMoreItems: View {
+    var state: ObjectRelationState
+    var collections: CollectionTree?
+    var perform: (LastOperator) -> Void
+    var run: (BlenderCommand) -> Void
+    /// Move or Link to New Collection inside `parent`: the name prompt
+    /// Blender's invoke shows ("Move to New Collection", Name, Create).
+    var askNewCollection: (_ parent: Int, _ link: Bool) -> Void
+
+    var body: some View {
+        Menu("Transform") {
+            Button("Randomize Transform") { perform(.randomizeTransform()) }
+                .disabled(!state.canDuplicate)
+            Button("Align Objects") { perform(.alignObjects()) }
+                .disabled(!state.canDuplicate)
+        }
+        .disabled(!state.available)
+        Menu("Mirror") {
+            // Blender's row waits for an axis key; these are those axes.
+            Button {} label: {
+                Text("Interactive Mirror")
+                Text("Waits for an axis key in Blender: the rows below are its axes")
+            }
+            .disabled(true)
+            Divider()
+            ForEach(Array(LastOperator.mirrorRows.enumerated()), id: \.offset) { i, row in
+                if i == 3 { Divider() }
+                Button(row.label) { perform(.mirror(axis: row.axis, local: row.local)) }
+                    .disabled(!state.canDuplicate)
+            }
+        }
+        .disabled(!state.available)
+        Menu("Collection") {
+            if let collections, let root = collections.sceneCollection {
+                Menu("Move to Collection") {
+                    CollectionPickMenu(tree: collections, entry: root, link: false, run: run,
+                                       askNewCollection: askNewCollection)
+                }
+                Menu("Link to Collection") {
+                    CollectionPickMenu(tree: collections, entry: root, link: true, run: run,
+                                       askNewCollection: askNewCollection)
+                }
+            } else {
+                Text("Blender sent no collections")
+            }
+        }
+        .disabled(!state.canDuplicate)
+        Menu("Relations") {
+            Menu("Make Single User") {
+                ForEach(LastOperator.SingleUser.allCases, id: \.self) { row in
+                    Button(row.label) { perform(.makeSingleUser(row)) }
+                }
+            }
+        }
+        .disabled(!state.canDuplicate)
+        Menu("Modifiers") {
+            Button("Copy Modifiers to Selected Objects") { perform(.copyModifiersToSelected()) }
+        }
+        .disabled(!state.canJoin)
+        Menu("Constraints") {
+            Menu("Add Constraint (with Targets)") {
+                ForEach(ConstraintMenu.groups, id: \.title) { group in
+                    Section(group.title) {
+                        ForEach(group.types, id: \.id) { type in
+                            Button(type.label) { perform(.addConstraintWithTargets(type.id)) }
+                        }
+                    }
+                }
+            }
+            .disabled(!state.hasActive)
+            Button("Copy Constraints to Selected Objects") { perform(.copyConstraintsToSelected()) }
+                .disabled(!state.canJoin)
+            Button("Clear Object Constraints") { perform(.clearObjectConstraints()) }
+                .disabled(!state.canDuplicate)
+        }
+        .disabled(!state.available)
+        Menu("Link/Transfer Data") {
+            ForEach(Array(LastOperator.makeLinksTypes.enumerated()), id: \.offset) { i, type in
+                // Blender's separators: after Link Fonts to Text, and after
+                // Copy Shadow Linking (before Copy UV Maps).
+                if i == 6 { Divider() }
+                Button(type.label) { perform(.makeLinksData(type.identifier)) }
+            }
+            Divider()
+            Button("Copy UV Maps") { perform(.copyUVMaps()) }
+        }
+        .disabled(!state.canJoin)
+    }
+}
+
+/// Blender's Move to Collection and Link to Collection menus
+/// (`move_to_collection_menu_draw`): New Collection, the collection itself,
+/// then its children — a child with children of its own as a submenu that
+/// starts the same way.
+struct CollectionPickMenu: View {
+    let tree: CollectionTree
+    let entry: CollectionTree.Entry
+    let link: Bool
+    let run: (BlenderCommand) -> Void
+    let askNewCollection: (_ parent: Int, _ link: Bool) -> Void
+
+    var body: some View {
+        Button("New Collection", systemImage: "plus") { askNewCollection(entry.uid, link) }
+        Divider()
+        Button(entry.name) { run(CollectionsBpy.move(to: entry.uid, link: link)) }
+        ForEach(tree.children(of: entry.uid)) { child in
+            if tree.children(of: child.uid).isEmpty {
+                Button(child.name) { run(CollectionsBpy.move(to: child.uid, link: link)) }
+            } else {
+                Menu(child.name) {
+                    AnyView(CollectionPickMenu(tree: tree, entry: child, link: link, run: run,
+                                               askNewCollection: askNewCollection))
+                }
+            }
+        }
+    }
+}
+
+/// View ▸ Local View (VIEW3D_MT_view_local): Toggle Local View, Blender's
+/// numpad /, and Remove from Local View.
+struct LocalViewItems: View {
+    var inLocalView: Bool
+    var canToggle: Bool
+    var run: (BlenderCommand) -> Void
+
+    var body: some View {
+        Menu("Local View") {
+            Button("Toggle Local View") { run(LocalViewBpy.toggle) }
+                .disabled(!canToggle)
+            Button("Remove from Local View") { run(LocalViewBpy.removeFrom) }
+                .disabled(!inLocalView)
+        }
+    }
+}

@@ -89,7 +89,16 @@ struct ConsoleTerminalView: UIViewRepresentable {
                                                    introspect: { session.introspect($0) })
             }
             editor.shellCompletions = { [weak self] line, caret in self?.shellCompletions(line, caret) }
-            editor.onHistoryChange = { UserDefaults.standard.set($0, forKey: Self.historyKey) }
+            editor.onHistoryChange = { history in
+                #if DEBUG
+                // The lines `-console64` types are a check's, not the user's:
+                // round 4's T6 run wrote them over the user's history, and 8
+                // entries had to be put back by hand. The same kind of defect
+                // as the `-eval64` hook writing the Scripting tab's draft.
+                if Self.launchKeysRequested { return }
+                #endif
+                UserDefaults.standard.set(history, forKey: Self.historyKey)
+            }
             editor.cursorScreenRow = { [weak self] in
                 self?.terminal?.getTerminal().getCursorLocation().y ?? 0
             }
@@ -334,6 +343,10 @@ struct ConsoleTerminalView: UIViewRepresentable {
         }
 
         #if DEBUG
+        /// Whether this launch types `-console64`'s keys: its history stays in
+        /// memory and the user's on disk is left as it was.
+        static var launchKeysRequested: Bool { ProcessInfo.processInfo.arguments.contains("-console64") }
+
         /// Debug builds accept `-console64 <base64>`: keys typed into the console
         /// once it is on screen, which is how the terminal gets exercised from the
         /// command line. The text splits on U+001F into separate writes, one per

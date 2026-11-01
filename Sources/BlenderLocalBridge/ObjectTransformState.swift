@@ -486,7 +486,37 @@ public struct TransformChannels: Equatable, Sendable {
     /// written to its shortest exact form. Nil when nothing changed, when a
     /// value is not a number Python can read, or when the mode changed under
     /// the edit.
+    ///
+    /// The first line is the vertex budget's price of every group it changes,
+    /// the whole vector as it will be (`_blenderkit_budget.price_all`): where
+    /// an object is is what an Array fitted to a length counts its copies by,
+    /// and a Hook's or an offset object's place what a Remesh or an Array
+    /// after it is given. Round 4's fix-round review: this field's line went
+    /// bare while the Data API row refused the same move — a cube with an
+    /// Array fitted to 40 m and its offset object 1 m away, the offset
+    /// object's X set to 0.0001, made 3,200,008 vertices in desktop 5.2.1.
+    /// The price names each changed field as its assignment does, and
+    /// Blender lays it over the vector it holds (`price_channels`), so the
+    /// line, like the assignments, depends on nothing but the fields written.
     public func python(writing edited: TransformChannels, to name: String) -> String? {
+        guard let assignments = assignments(writing: edited, to: name) else { return nil }
+        let target = "bpy.data.objects[\(Bpy.quote(name))]"
+        var priced: [String] = []
+        for group in Group.allCases {
+            let property = group == .rotation ? rotationMode.property : group == .location ? "location" : "scale"
+            for (axis, (old, new)) in zip(values(group), edited.values(group)).enumerated()
+            where old.bitPattern != new.bitPattern {
+                priced.append("(\(Bpy.quote(property)), \(axis), \(new))")
+            }
+        }
+        return "__import__('_blenderkit_budget').price_channels(\(target), [\(priced.joined(separator: ", "))])\n"
+            + assignments
+    }
+
+    /// The assignments alone, one per changed field, to that one component:
+    /// what Blender's preview of a constrained edit runs at every frame
+    /// (`TransformFieldEdit.previewPython`), which the commit prices once.
+    public func assignments(writing edited: TransformChannels, to name: String) -> String? {
         guard edited.rotationMode == rotationMode else { return nil }
         var lines: [String] = []
         let target = "bpy.data.objects[\(Bpy.quote(name))]"
@@ -639,8 +669,12 @@ public struct TransformFieldEdit {
         }
     }
 
-    /// The Python the commit sends; nil when nothing changed.
+    /// The Python the commit sends, its price first; nil when nothing changed.
     public var python: String? { start.python(writing: edited, to: object.name) }
+
+    /// What Blender's preview of a constrained edit runs at each frame: the
+    /// assignments alone, which the commit's `python` prices.
+    public var previewPython: String? { start.assignments(writing: edited, to: object.name) }
 
     /// Everything drawn back where the edit found it.
     public func rollBackDrawing() {

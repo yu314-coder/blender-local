@@ -315,10 +315,11 @@ check("Set Handle Type's five types, Blender's identifiers", PointsBpy.handleTyp
 check("Select All for a curve and a lattice", PointsBpy.selectAll("INVERT", lattice: false)
       == "bpy.ops.curve.select_all(action='INVERT')" && PointsBpy.selectAll("SELECT", lattice: true)
       == "bpy.ops.lattice.select_all(action='SELECT')")
-check("a Data tab field", PointsBpy.set("bevel_depth", to: "0.1", object: "Bé") ==
-      "bpy.data.objects[\"Bé\"].data.bevel_depth = 0.1", PointsBpy.set("bevel_depth", to: "0.1", object: "Bé"))
+check("a Data tab field, the vertex budget's price first", PointsBpy.set("bevel_depth", to: "0.1", object: "Bé") ==
+      "__import__('_blenderkit_budget').price(bpy.data.objects[\"Bé\"].data, \"bevel_depth\", 0.1)\n"
+      + "bpy.data.objects[\"Bé\"].data.bevel_depth = 0.1", PointsBpy.set("bevel_depth", to: "0.1", object: "Bé"))
 let add = LastOperator.add(.lattice, at: SIMD3(1, 2, 3))
-check("Add ▸ Lattice", add.name == "Add Lattice" && add.python.hasPrefix("bpy.ops.object.add(radius=1")
+check("Add ▸ Lattice", add.name == "Add Object" && add.python.hasPrefix("bpy.ops.object.add(radius=1")
       && add.python.contains("type='LATTICE'") && add.dataCollection == "lattices"
       && add.restoration == .removeCreated, add.python)
 check("the Add menu calls it Lattice", ObjectAddition.lattice.label == "Lattice")
@@ -347,7 +348,7 @@ check("no hold before a drag", !holdBridge.pointDragOpen && holdSession.gestureH
 check("a drag begins", holdBridge.beginPointDrag(object: "Curve", followers: [], undo: "Move")
       && holdBridge.pointDragOpen && holdSession.gestureHold == BpySession.pointDragOpenMessage)
 var sentBefore = recorder.sources.count
-let tab = holdBridge.run(Bpy.toggleEditMode, undo: "Toggle Edit Mode")
+let tab = holdBridge.run(Bpy.toggleEditMode, undo: "Edit Mode")
 check("Tab mid-drag is refused, in words, and reaches nothing", !tab.succeeded
       && tab.error == BpySession.pointDragOpenMessage && recorder.sources.count == sentBefore
       && holdBridge.report?.message == BpySession.pointDragOpenMessage, "\(tab)")
@@ -377,7 +378,7 @@ check("a drag begun over one whose end never came cancels it first",
       && recorder.sources.dropFirst(sentBefore).first?.contains("_bk_pts.cancel()") == true
       && holdBridge.pointDragOpen)
 holdBridge.cancelPointDrag()
-let after = holdBridge.run(Bpy.toggleEditMode, undo: "Toggle Edit Mode")
+let after = holdBridge.run(Bpy.toggleEditMode, undo: "Edit Mode")
 check("after the drag, commands run again", after.succeeded, "\(after)")
 
 // A curve emptied in Edit Mode has no points, and a tap on it is no mesh

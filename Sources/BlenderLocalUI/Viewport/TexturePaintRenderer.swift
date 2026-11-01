@@ -30,6 +30,10 @@ final class TexturePaintRenderer {
     private struct Buffers {
         let cornerUVs: MTLBuffer
         let cornerVertices: MTLBuffer
+        /// Blender's face or corner normals (`MeshData.shadingNormals`), nil
+        /// for a mesh it shades by its vertex normals.
+        let shading: MTLBuffer?
+        let domain: UInt32
         let slots: [SlotCorners]
         let surface: Int
         let mesh: Int
@@ -163,6 +167,10 @@ final class TexturePaintRenderer {
         encoder.setVertexBuffer(vertices, offset: 0, index: 0)
         encoder.setVertexBuffer(b.cornerUVs, offset: 0, index: 2)
         encoder.setVertexBuffer(b.cornerVertices, offset: 0, index: 3)
+        // Domain 0 never reads it; something is bound so the slot is never empty.
+        encoder.setVertexBuffer(b.shading ?? vertices, offset: 0, index: 5)
+        var domain = b.domain
+        encoder.setVertexBytes(&domain, length: MemoryLayout<UInt32>.stride, index: 7)
         encoder.setFragmentSamplerState(sampler, index: 0)
     }
 
@@ -192,8 +200,14 @@ final class TexturePaintRenderer {
                                                  options: .storageModeShared) else { return nil }
             return SlotCorners(slot: slot, buffer: buffer, count: list.count)
         }
+        let shading = mesh.shadingFits
+            ? device.makeBuffer(bytes: mesh.shadingNormals,
+                                length: MemoryLayout<Float>.stride * mesh.shadingNormals.count,
+                                options: .storageModeShared)
+            : nil
         if buffers.count > 32 { buffers.removeAll() }
-        let entry = Buffers(cornerUVs: uvs, cornerVertices: corners, slots: slots,
+        let entry = Buffers(cornerUVs: uvs, cornerVertices: corners, shading: shading,
+                            domain: shading == nil ? 0 : mesh.shadingDomain.rawValue, slots: slots,
                             surface: surface.version, mesh: obj.meshVersion)
         buffers[obj.id] = entry
         return entry

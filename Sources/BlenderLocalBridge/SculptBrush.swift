@@ -18,6 +18,8 @@ public enum SculptBrush: String, CaseIterable, Identifiable, Sendable {
 
     public var id: String { rawValue }
 
+    /// The brush's type, as Blender names a stroke's step after it ("Inflate
+    /// Brush": `brush.label + " Brush"`, the simulator's history).
     public var label: String {
         switch self {
         case .draw:    return "Draw"
@@ -26,6 +28,22 @@ public enum SculptBrush: String, CaseIterable, Identifiable, Sendable {
         case .flatten: return "Flatten"
         case .grab:    return "Grab"
         case .pinch:   return "Pinch"
+        }
+    }
+
+    /// The brush as the toolbar, the header and the drag's status show it:
+    /// the Essentials brush asset's name in 5.x (a brush is an asset there,
+    /// and the toolbar's one sculpt tool is Brush). The drag's status read
+    /// "Sculpt  Inflate" while the tool row said Inflate/Deflate (round 4's
+    /// review); ActiveTool's labels are these.
+    public var name: String {
+        switch self {
+        case .draw:    return "Draw"
+        case .inflate: return "Inflate/Deflate"
+        case .smooth:  return "Smooth"
+        case .flatten: return "Flatten/Contrast"
+        case .grab:    return "Grab"
+        case .pinch:   return "Pinch/Magnify"
         }
     }
 
@@ -162,10 +180,27 @@ public extension BKObject {
     /// ran the mirrored modifier stack over Blender's result on every dab. A
     /// cube with a Subdivision grew 54 → 150 → 486 → … → 1,579,014 vertices
     /// over 8 dabs (round 3's review, swiftc -O; tests/sculpt/main.swift
-    /// repeats it on the old install).
+    /// repeats it on the old install). The sentence named a Sculpting tab,
+    /// which the app does not have (round 4's review): its tabs are
+    /// Scripting and Layout, and Layout's 3D View is the one with the bridge.
     var standInSculptRefusal: String? {
         meshIsEvaluated
-            ? "This 3D View cannot reach Blender's sculpt brushes. Sculpt in the Sculpting tab."
+            ? "This 3D View cannot reach Blender's sculpt brushes. Sculpt in the Layout tab."
+            : nil
+    }
+
+    /// Why the simulator's stand-in Weight Paint or Vertex Paint brush
+    /// (`paintVertices`) may not paint this object in `mode`, or nil when it
+    /// may: the rule `standInSculptRefusal` keeps, for the same reason. On a
+    /// device every mesh on screen is Blender's evaluated mesh, and the only
+    /// brushes are Blender's own, streamed from a 3D View with the bridge
+    /// (`_blenderkit_vwpaint`). A drag in a 3D View without one — the
+    /// Scripting tab's Showcase, which keeps the mode — went on to the stand-in
+    /// and painted weights or colours Blender never held, on screen until the
+    /// next mirroring pass overwrote them (round 4's review).
+    func standInPaintRefusal(_ mode: InteractionMode) -> String? {
+        meshIsEvaluated
+            ? "This 3D View cannot reach Blender's \(mode.label) brushes. Paint in the Layout tab."
             : nil
     }
 

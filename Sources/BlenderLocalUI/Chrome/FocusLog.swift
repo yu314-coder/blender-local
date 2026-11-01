@@ -93,4 +93,96 @@ enum FocusLog {
         return nil
     }
 }
+
+/// The words on screen, as the app's own accessibility tree carries them:
+/// every element's label (and value, when it has one), in the windows'
+/// order. It is how the `-object-ops` hook's `ax` token (the only way in;
+/// there is no flag of its own) reads what the bar, the tabs, the redo panel
+/// and an open sheet say in the
+/// running app — the names the round-4 renames are about (docs/blender-names.md)
+/// — on a Mac whose screen is locked, where nothing can be clicked or seen.
+@MainActor
+enum AccessibilityDump {
+    static func labels() -> [String] {
+        var out: [String] = []
+        var seen = Set<ObjectIdentifier>()
+        func walk(_ element: NSObject, depth: Int) {
+            guard depth < 80, seen.insert(ObjectIdentifier(element)).inserted else { return }
+            if let view = element as? UIView, view.isHidden || view.alpha < 0.01 { return }
+            if element.isAccessibilityElement, let label = element.accessibilityLabel, !label.isEmpty {
+                let value = element.accessibilityValue ?? ""
+                let line = value.isEmpty ? label : label + " = " + value
+                if out.last != line { out.append(line) }
+            }
+            if let elements = element.accessibilityElements as? [NSObject] {
+                for child in elements { walk(child, depth: depth + 1) }
+            } else {
+                let count = element.accessibilityElementCount()
+                if count != NSNotFound, count > 0 {
+                    for i in 0..<count {
+                        if let child = element.accessibilityElement(at: i) as? NSObject {
+                            walk(child, depth: depth + 1)
+                        }
+                    }
+                }
+            }
+            if let view = element as? UIView {
+                for sub in view.subviews { walk(sub, depth: depth + 1) }
+            }
+        }
+        let windows = UIApplication.shared.connectedScenes
+            .compactMap { $0 as? UIWindowScene }.flatMap(\.windows)
+        for window in windows { walk(window, depth: 0) }
+        return out
+    }
+
+    /// Prints them on one line, separated by " | ".
+    static func print(_ tag: String) {
+        Swift.print("[bk] ax \(tag): " + labels().joined(separator: " | "))
+        fflush(stdout)
+    }
+
+    /// `-ui-audit <tag>`: every element with a label, one line each, with its
+    /// frame in the window's points, and two marks a finger cares about — OFF
+    /// when any of it lies outside the window (a row scrolled past its edge
+    /// counts: nothing on screen says it is there), SMALL when either side is
+    /// under Apple's 44 points. Read by eye from the simulator's console, for
+    /// the interface's walkthrough at an iPad's own sizes.
+    static func audit(_ tag: String) {
+        let windows = UIApplication.shared.connectedScenes
+            .compactMap { $0 as? UIWindowScene }.flatMap(\.windows)
+        guard let window = windows.first(where: \.isKeyWindow) ?? windows.first else { return }
+        let bounds = window.bounds
+        Swift.print("[bk] ui-audit \(tag): window \(Int(bounds.width)) x \(Int(bounds.height))")
+        var seen = Set<ObjectIdentifier>()
+        func walk(_ element: NSObject, depth: Int) {
+            guard depth < 80, seen.insert(ObjectIdentifier(element)).inserted else { return }
+            if let view = element as? UIView, view.isHidden || view.alpha < 0.01 { return }
+            if element.isAccessibilityElement, let label = element.accessibilityLabel, !label.isEmpty {
+                let f = window.convert(element.accessibilityFrame, from: nil)
+                var marks: [String] = []
+                if f.minX < bounds.minX - 1 || f.maxX > bounds.maxX + 1
+                    || f.minY < bounds.minY - 1 || f.maxY > bounds.maxY + 1 { marks.append("OFF") }
+                if f.width < 44 || f.height < 44 { marks.append("SMALL") }
+                Swift.print(String(format: "[bk] ui-audit %@ %5.0f %5.0f %4.0f x %3.0f %@ %@", tag,
+                                   f.minX, f.minY, f.width, f.height,
+                                   marks.joined(separator: ",").padding(toLength: 9, withPad: " ", startingAt: 0),
+                                   label))
+            }
+            if let elements = element.accessibilityElements as? [NSObject] {
+                for child in elements { walk(child, depth: depth + 1) }
+            } else {
+                let count = element.accessibilityElementCount()
+                if count != NSNotFound, count > 0 {
+                    for i in 0..<count {
+                        if let child = element.accessibilityElement(at: i) as? NSObject { walk(child, depth: depth + 1) }
+                    }
+                }
+            }
+            if let view = element as? UIView { for sub in view.subviews { walk(sub, depth: depth + 1) } }
+        }
+        for w in windows { walk(w, depth: 0) }
+        fflush(stdout)
+    }
+}
 #endif

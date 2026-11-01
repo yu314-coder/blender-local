@@ -40,6 +40,43 @@ def old_run_operator(path, values):
 
 run = ui.run_operator if variant == 'new' else old_run_operator
 
+# Local View's partitions run each row as the app sends it there: the app's
+# context guards installed (`_blenderkit_context.install`, which the app's
+# console prelude does) and the call inside `_blenderkit_localview.scope`,
+# which `_blenderkit_localview.run` enters for every command in Local View.
+local_view = None
+# The partitions from a file opened in a paint mode (`fixtures.OPENED`) run
+# with the app's guards installed too: what is measured there is what the app
+# meets at launch.
+if any(a.startswith('part=') and a.split(':')[-1] in fixtures.OPENED for a in sys.argv):
+    spec = importlib.util.spec_from_file_location('_blenderkit_context', root / 'Resources/python/site/_blenderkit_context.py')
+    module = importlib.util.module_from_spec(spec)
+    sys.modules['_blenderkit_context'] = module
+    spec.loader.exec_module(module)
+    module.install(bpy)
+if any(a.startswith('part=') and a.endswith(':LOCAL_VIEW') for a in sys.argv):
+    for name in ('_blenderkit_context', '_blenderkit_localview'):
+        spec = importlib.util.spec_from_file_location(name, root / 'Resources/python/site' / (name + '.py'))
+        module = importlib.util.module_from_spec(spec)
+        sys.modules[name] = module
+        spec.loader.exec_module(module)
+    sys.modules['_blenderkit_context'].install(bpy)
+    local_view = sys.modules['_blenderkit_localview']
+
+
+def run_in(mode, name, values):
+    if mode != 'LOCAL_VIEW':
+        return 'ran:' + ','.join(run(name, values))
+    with local_view.scope():
+        # Under the borrowed view, or the row is not measuring what the app runs.
+        area = bpy.context.area
+        if not local_view.in_scope() or area is None or area.type != 'VIEW_3D':
+            return 'noscope:the row ran outside Local View\'s scope'
+        outcome = 'ran:' + ','.join(run(name, values))
+    # The mirroring pass that follows every command (`_blenderkit_sync`).
+    local_view.state()
+    return outcome
+
 
 # Left out of the sweep: they act on this Mac rather than on Blender's scene
 # (open a URL or a folder, write the user's startup file or preferences).
@@ -126,6 +163,9 @@ def work():
         # outside Blender: a browser, Finder, the network, or the user's own
         # preferences and add-ons on this Mac.
         modules = [m for m in dir(bpy.ops) if m not in ('object', 'mesh', 'uv', 'extensions', 'preferences')]
+    elif mods == ['all']:
+        # Both halves: the opened partitions (`fixtures.OPENED`) run once.
+        modules = [m for m in dir(bpy.ops) if m not in ('extensions', 'preferences')]
     for module in modules:
         names += [module + '.' + n for n in dir(getattr(bpy.ops, module))]
     names = [n for n in names if not host_side_effect(n)]
@@ -156,7 +196,7 @@ for index, (fixture, mode, name, values) in enumerate(work()):
     label = name + (f"(modifier={values['modifier']})" if values else '')
     print(f"B|{index}|{fixture}|{mode}|{label}", flush=True)
     try:
-        outcome = 'ran:' + ','.join(run(name, dict(values)))
+        outcome = run_in(mode, name, dict(values))
     except Exception as error:
         outcome = 'refused:' + type(error).__name__ + ':' + str(error).replace('\n', ' ')[:160]
     active = bpy.context.view_layer.objects.active

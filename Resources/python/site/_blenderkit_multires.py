@@ -62,13 +62,48 @@ import re
 
 import bpy
 
-# The most vertices a Multires's top level may have, on any device: above a
-# UV sphere's level 6 (2,031,618) and a cube's level 9 (1,572,866), below the
-# cube's level 10 (6,291,458), and a quarter of the mirror's limit.
-BUDGET = 2_500_000
-# Memory a Subdivide needs at its peak, per vertex of the new level: the
-# measured 560 to 730 (above), rounded up.
-PEAK_BYTES_PER_VERTEX = 800
+# The vertex budget itself — the count, its model of every modifier and the one
+# entry point every path prices through — is _blenderkit_budget.py (round 4's
+# fix round). These names stay here for the modules and checks that call them.
+import sys
+import types
+
+try:
+    import _blenderkit_budget
+except ImportError:
+    # Loaded from its file, the site folder not on the path (the desktop checks).
+    import importlib.util
+    import os
+    _spec = importlib.util.spec_from_file_location(
+        '_blenderkit_budget', os.path.join(os.path.dirname(__file__), '_blenderkit_budget.py'))
+    _blenderkit_budget = importlib.util.module_from_spec(_spec)
+    sys.modules['_blenderkit_budget'] = _blenderkit_budget
+    _spec.loader.exec_module(_blenderkit_budget)
+from _blenderkit_budget import (GEOMETRY_TYPES, OCEAN_BYTES_PER_SAMPLE,  # noqa: F401,E402
+                                available_memory, refuse_count, level_vertices, _subdivided, curve_counts,
+                                base_counts, stack_vertices, skin_loops, refuse_slow_skin, ocean_samples,
+                                refuse_ocean, check_move, _geometry_object, _skin_refusal)
+
+# The budget's numbers live in one place. `_blenderkit_multires.BUDGET = n`,
+# which the desktop checks use to reach a refusal on a small mesh, sets the
+# budget's own.
+_FORWARDED = ('BUDGET', 'PEAK_BYTES_PER_VERTEX', 'SKIN_MAX_LOOPS')
+
+
+class _Module(types.ModuleType):
+    def __getattr__(self, name):
+        if name in _FORWARDED:
+            return getattr(_blenderkit_budget, name)
+        raise AttributeError(name)
+
+    def __setattr__(self, name, value):
+        if name in _FORWARDED:
+            setattr(_blenderkit_budget, name, value)
+            return
+        super().__setattr__(name, value)
+
+
+sys.modules[__name__].__class__ = _Module
 
 LABELS = {'subdivide': 'Subdivide', 'unsubdivide': 'Unsubdivide',
           'deleteHigher': 'Delete Higher', 'applyBase': 'Apply Base'}
@@ -93,117 +128,13 @@ def _on_main_thread():
     return _is_main_thread()
 
 
-def level_vertices(mesh, level):
-    """The vertices a Multires at `level` evaluates to on `mesh`.
-
-    Catmull-Clark, which Multires's grids follow: the first level puts a
-    vertex on every face and edge and turns each face corner into a quad, and
-    from then on each corner's quad grid doubles in each direction. With V, E,
-    F and C the base mesh's vertices, edges, faces and corners, and
-    s = 2**(level-1) - 1, that is C*s*s + (2E + C)*s + (V + E + F). Measured:
-    exact against `to_mesh()` at levels 0 to 9 on a cube (8, 26, 98 … 1,572,866),
-    0 to 6 on a 32x16 UV sphere (482, 1,986 … 2,031,618) and 0 to 7 on a
-    10x10 grid, whose boundary is open (121, 441 … 1,640,961).
-    """
-    v, f, c = len(mesh.vertices), len(mesh.polygons), len(mesh.loops)
-    edges = getattr(mesh, 'edges', None)
-    e = len(edges) if edges is not None else c // 2
-    if level <= 0:
-        return v
-    s = (1 << (level - 1)) - 1
-    return c * s * s + (2 * e + c) * s + (v + e + f)
-
-
-def _subdivided(counts, levels):
-    """(vertices, edges, faces, corners) after `levels` Catmull-Clark levels.
-
-    One level puts a vertex on every face and edge, splits each edge in two
-    and adds one from each face's centre to each of its edges, and turns every
-    corner into a quad. Iterated, this is `level_vertices` (the cube's 8, 26,
-    98 … 1,572,866), and unlike it can be applied to a mesh a Multires has
-    already subdivided, which is what a Subdivision Surface below one sees."""
-    v, e, f, c = counts
-    for _ in range(max(0, int(levels))):
-        v, e, f, c = v + e + f, 2 * e + c, c, 4 * c
-    return v, e, f, c
-
-
-def _copies(modifier):
-    """How many copies of the mesh `modifier` makes, at most: Mirror one per
-    axis combination, Array its fixed count, Solidify an inner shell. 1 for
-    every modifier that does not multiply the mesh, and for an Array fitted to
-    a length or a curve, whose count is not known before it runs."""
-    kind = modifier.type
-    if kind == 'MIRROR':
-        return 2 ** sum(1 for axis in modifier.use_axis if axis)
-    if kind == 'ARRAY' and modifier.fit_type == 'FIXED_COUNT':
-        return max(1, modifier.count)
-    if kind == 'SOLIDIFY':
-        return 2
-    return 1
-
-
-def stack_vertices(obj, levels=None, add=None, sculpt=None):
-    """The vertices Blender's viewport evaluates `obj` to: its mesh, then each
-    modifier shown in the viewport, in stack order.
-
-    The Multires level counted is the one Blender shows (the sculpt level in
-    Sculpt Mode, else the viewport level); a Subdivision Surface counts its
-    viewport level. `levels` maps a modifier's name to a level to count in
-    place of its own, which is how a change is priced before it is made, and
-    counts that modifier even while it is hidden. `add` is (kind, level) for a
-    Multires or Subdivision Surface not added yet: Blender puts a new Multires
-    first and a new Subdivision last.
-
-    Round 3's review measured why the Multires level alone is not enough: with
-    the cube's default Subdivision at level 1 below a Multires, levels 1 to 7
-    evaluated 98 to 393,218 vertices where the level alone counted 26 to
-    98,306, four times fewer; at Subdivision level 2, sixteen."""
-    levels = levels or {}
-    if sculpt is None:
-        sculpt = obj.mode == 'SCULPT'
-    mesh = obj.data
-    edges = getattr(mesh, 'edges', None)
-    corners = len(mesh.loops)
-    counts = (len(mesh.vertices), len(edges) if edges is not None else corners // 2,
-              len(mesh.polygons), corners)
-    if add is not None and add[0] == 'MULTIRES':
-        counts = _subdivided(counts, add[1])
-    for modifier in obj.modifiers:
-        if modifier.name not in levels and not modifier.show_viewport:
-            continue
-        if modifier.type == 'MULTIRES':
-            shown = modifier.sculpt_levels if sculpt else modifier.levels
-            counts = _subdivided(counts, levels.get(modifier.name, shown))
-        elif modifier.type == 'SUBSURF':
-            counts = _subdivided(counts, levels.get(modifier.name, modifier.levels))
-        else:
-            copies = levels.get(modifier.name, _copies(modifier)) if modifier.type == 'ARRAY' \
-                else _copies(modifier)
-            counts = tuple(n * copies for n in counts)
-    if add is not None and add[0] == 'SUBSURF':
-        counts = _subdivided(counts, add[1])
-    return counts[0]
-
-
-def refuse_count(obj, count, change, instead, note=""):
-    """Raises, in words, when `count` vertices would pass `BUDGET` or need
-    more memory than this process has left. `change` says what would make
-    them ("Level 4", "Subdivision level 5"), `instead` what to do, and `note`
-    follows the count."""
-    if count > BUDGET:
-        raise RuntimeError(
-            "%s would give %s %s vertices%s, and this app stops at %s so it does not run "
-            "out of memory. %s" % (change, obj.name, format(count, ','), note, format(BUDGET, ','),
-                                   instead))
-    free = available_memory()
-    need = count * PEAK_BYTES_PER_VERTEX
-    if free is not None and need > free:
-        raise RuntimeError(
-            "%s would give %s %s vertices%s, which needs about %.1f GB of memory, and %.1f GB "
-            "is free. Close other apps, or %s" % (change, obj.name, format(count, ','), note, need / 1e9,
-                                                  free / 1e9, instead[0].lower() + instead[1:]))
-    return count
+def check_add(kind, obj=None, settings=None):
+    """Refuses, in words, Add Modifier ▸ `kind` on an object whose result
+    would pass the budget or the memory left, before anything is added — and
+    Skin on more loops of edges than it finishes in reasonable time
+    (`_blenderkit_budget.price_add`). `settings` are what the row sets in the
+    same evaluation (Remesh's voxel floor)."""
+    _blenderkit_budget.price_add(kind, obj, settings)
 
 
 def refuse_subdivision_set(level=1, relative=False, ensure_modifier=True, **_):
@@ -215,7 +146,9 @@ def refuse_subdivision_set(level=1, relative=False, ensure_modifier=True, **_):
     Absolute on a Multires, it calls Subdivide once per missing level, each
     evaluating the new top level. The operator search reaches it with a Level
     field from -100 to 100, and with the budget only on Multires Subdivide it
-    went to 196 times the budget (round 3's review)."""
+    went to 196 times the budget (round 3's review). Blender's operator adds a
+    Subdivision Surface to a text, a curve or a surface as well, so those are
+    priced too."""
     active = bpy.context.view_layer.objects.active
     if active is not None and active.mode in ('SCULPT', 'VERTEX_PAINT', 'WEIGHT_PAINT', 'TEXTURE_PAINT'):
         objects = [active]
@@ -226,74 +159,55 @@ def refuse_subdivision_set(level=1, relative=False, ensure_modifier=True, **_):
     if not relative and level < 0:
         level = 0
     for obj in objects:
-        if obj.type != 'MESH':
+        obj = _geometry_object(obj)
+        if obj is None:
             continue
         sculpt = obj.mode == 'SCULPT'
+        base = base_counts(obj)
+        loops_now = skin_loops(obj, base=base)[0]
         target = next((m for m in obj.modifiers if m.type in ('MULTIRES', 'SUBSURF')), None)
+        levels, add = None, None
         if target is not None and target.type == 'MULTIRES':
             if relative:
                 new = (target.sculpt_levels if sculpt else target.levels) + level
                 if new > target.total_levels:
                     continue  # Blender leaves it as it is
-                count = stack_vertices(obj, {target.name: new}, sculpt=sculpt)
             else:
-                count = stack_vertices(obj, {target.name: max(level, target.total_levels)}, sculpt=sculpt)
-            change = "Multires level %d" % (new if relative else max(level, target.total_levels))
+                new = max(level, target.total_levels)
+            levels = {target.name: new}
+            change = "Multires level %d" % new
         elif target is not None:
             new = target.levels + level if relative else level
-            count = stack_vertices(obj, {target.name: new}, sculpt=sculpt)
+            levels = {target.name: new}
             change = "Subdivision level %d" % new
         elif ensure_modifier:
             kind = 'MULTIRES' if sculpt else 'SUBSURF'
-            count = stack_vertices(obj, add=(kind, level), sculpt=sculpt)
+            add = (kind, level)
             change = ("Multires" if sculpt else "Subdivision") + " level %d" % level
         else:
             continue
+        count = stack_vertices(obj, levels, add=add, sculpt=sculpt, base=base)
         refuse_count(obj, count, change, "Use a lower level, or start from a lighter mesh.")
-
-
-# The modifier settings that multiply the mesh, which `check_setting` prices.
-_LEVEL_KEYS = {'SUBSURF': ('levels', 'render_levels'),
-               'MULTIRES': ('levels', 'sculpt_levels', 'render_levels'),
-               'ARRAY': ('count',)}
+        refuse_slow_skin(obj, change, levels, add=add, base=base, before=loops_now)
 
 
 def check_setting(name, key, value, obj=None):
-    """Refuses, in words, a modifier setting whose mesh would pass the budget,
-    before it is set: the Subdivision row's Levels stepper, which had no size
-    check (round 3's review), and Every Property. Anything else passes.
-    A render level is priced as if shown, which is what a render evaluates."""
-    try:
-        if not _is_real_blender():
-            return
-    except AttributeError:
-        return  # a stand-in with no mode_set at all
+    """Refuses, in words, setting `key` of the modifier `name` to `value` when
+    what Blender would then evaluate passes the budget
+    (`_blenderkit_budget.price`). Any setting: the price no longer lists the
+    ones that matter (round 4's review found the Bevel's Segments, the Mirror's
+    axes and an Array's Fit Length off the list), it counts the stack again
+    with the value in place. A render setting is priced as rendered, a hidden
+    modifier's setting as if shown."""
+    if not _is_real_blender():
+        return
     obj = obj if obj is not None else bpy.context.object
-    if obj is None or obj.type != 'MESH':
+    if obj is None:
         return
     modifier = obj.modifiers.get(name)
-    if modifier is None or key not in _LEVEL_KEYS.get(modifier.type, ()):
+    if modifier is None:
         return
-    value = int(value)
-    if modifier.type == 'MULTIRES':
-        value = min(value, modifier.total_levels)
-    count = stack_vertices(obj, {name: value})
-    what = {'SUBSURF': 'Subdivision', 'MULTIRES': 'Multires', 'ARRAY': 'Array'}[modifier.type]
-    change = ("%s count %d" if key == 'count' else "%s level %d") % (what, value)
-    refuse_count(obj, count, change, "Use a lower value, or start from a lighter mesh.")
-
-
-def available_memory():
-    """What this process may still allocate before the system ends it
-    (`os_proc_available_memory`), or None where that cannot be read."""
-    try:
-        import ctypes
-        function = ctypes.CDLL(None).os_proc_available_memory
-    except (ImportError, OSError, AttributeError):
-        return None
-    function.restype = ctypes.c_size_t
-    function.argtypes = []
-    return function() or None
+    _blenderkit_budget.price(modifier, key, value)
 
 
 def refuse_over_budget(obj, total_levels, what):
@@ -317,9 +231,13 @@ def refuse_over_budget(obj, total_levels, what):
     else:
         count = stack_vertices(obj, add=('MULTIRES', level))
     count = max(count, alone)
-    return refuse_count(obj, count, "Level %d" % level,
-                        "Sculpt at level %d, or start from a lighter mesh." % total_levels,
-                        " once the modifiers below it are counted" if count > alone else "")
+    refuse_count(obj, count, "Level %d" % level,
+                 "Sculpt at level %d, or start from a lighter mesh." % total_levels,
+                 " once the modifiers below it are counted" if count > alone else "")
+    if existing is not None:
+        refuse_slow_skin(obj, "Level %d" % level, {existing.name: level},
+                         before=skin_loops(obj)[0])
+    return count
 
 
 def _leave_for_object_mode(obj, what):
@@ -362,6 +280,13 @@ def run(op, name):
     if op == 'subdivide':
         arguments['mode'] = 'CATMULL_CLARK'
 
+    if op == 'subdivide' and obj.mode == 'SCULPT' and _is_real_blender():
+        # From Sculpt Mode the new level is the sculpt level (Blender's
+        # `multires_set_tot_level`), which Sculpt Mode then evaluates after
+        # every stroke and Undo: held to the base mesh budget Sculpt Mode's
+        # way in keeps (`_blenderkit_sculpt.refuse_heavy_level`).
+        import _blenderkit_sculpt
+        _blenderkit_sculpt.refuse_heavy_level(obj, modifier.total_levels + 1, what)
     start = _leave_for_object_mode(obj, what)
     try:
         if not _is_real_blender():
@@ -400,4 +325,12 @@ def run(op, name):
         return modifier.total_levels
     finally:
         if start != 'OBJECT':
-            bpy.ops.object.mode_set(mode=start)
+            try:
+                bpy.ops.object.mode_set(mode=start)
+            except RuntimeError as error:
+                # Sculpt Mode's way back in refuses a level too heavy to
+                # sculpt (`_blenderkit_context.refuse_sculpt_entry`): an
+                # object opened in Sculpt Mode on one, whose Delete Higher
+                # leaves it heavy still. What was done is kept, in Object
+                # Mode, rather than reported as not done.
+                print('[Blender Local] %s left %s in Object Mode: %s' % (what, obj.name, error))

@@ -99,7 +99,7 @@ struct CompositingWorkspace: View {
             ImageEditor(title: "Viewer",
                         image: composited ?? scene.renderResult,
                         version: version &+ scene.renderVersion,
-                        emptyMessage: "No render to composite\nMake one with More ▸ Render.",
+                        emptyMessage: "No render to composite\nMake one with Render ▸ Render Image.",
                         headerContent: AnyView(
                             BButton("Composite", icon: "wand.and.rays") { runGraph() }
                                 .disabled(scene.renderResult == nil)))

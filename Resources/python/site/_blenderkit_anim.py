@@ -18,6 +18,7 @@ in Swift (Sources/BlenderLocalBridge/Animation.swift).
 from array import array
 import itertools
 import re
+import sys
 
 import bpy
 import _blenderkit
@@ -227,6 +228,29 @@ def report_keys(scene=None):
 # Changing the frame
 # ---------------------------------------------------------------------------
 
+def _budget():
+    """The vertex budget (_blenderkit_budget.py), imported or — where the site
+    folder is not on the path, as in the desktop checks — loaded from its file."""
+    import sys
+    module = sys.modules.get('_blenderkit_budget')
+    if module is None:
+        try:
+            import _blenderkit_budget as module
+        except ImportError:
+            import importlib.util
+            import os
+            spec = importlib.util.spec_from_file_location(
+                '_blenderkit_budget', os.path.join(os.path.dirname(__file__), '_blenderkit_budget.py'))
+            module = importlib.util.module_from_spec(spec)
+            sys.modules['_blenderkit_budget'] = module
+            try:
+                spec.loader.exec_module(module)
+            except BaseException:
+                sys.modules.pop('_blenderkit_budget', None)
+                raise
+    return module
+
+
 def frame_set(frame, subframe=0.0):
     """`scene.frame_set`, handing the interface only what the frame changed.
 
@@ -241,6 +265,9 @@ def frame_set(frame, subframe=0.0):
         # The shim evaluates its animation in Swift as the frame changes.
         scene.frame_set(int(frame))
         return
+    # What the frame's keys set, priced first by the vertex budget (round 4's
+    # fix-round review: a keyed Count or Levels reached Blender with no price).
+    _budget().price_frame(frame, subframe)
     changed = {}
 
     def collect(_scene, depsgraph):
@@ -261,13 +288,46 @@ def frame_set(frame, subframe=0.0):
                 changed[idblock.name] = (transform or update.is_updated_transform,
                                          geometry or update.is_updated_geometry)
 
+    def last(_scene, *_):
+        # After every other frame_change_pre handler: what one of them changed
+        # is evaluated in this frame, and no update after it says so, so the
+        # frame plan (`_blenderkit_budget.frame_plan`) is made again for the
+        # next one. A frame with nothing waiting costs one look at an empty
+        # list here.
+        if budget._pending():
+            budget.drop_plan()
+
+    budget = _budget()
+    # The app's own, named to the gate by identity before they go in: no
+    # checkpoint after them (`_blenderkit_gate._own`; a file name or a
+    # module is a script's to copy, the review of fix round 3 measured).
+    gate = sys.modules.get('_blenderkit_gate')
+    trust = getattr(gate, 'trust', None)
+    if trust is not None:
+        trust(last)
+        trust(collect)
+    before = bpy.app.handlers.frame_change_pre
+    before.append(last)
     handlers = bpy.app.handlers.frame_change_post
     handlers.append(collect)
     try:
         scene.frame_set(int(frame), subframe=float(subframe))
     finally:
-        handlers.remove(collect)
-    if push_frame(scene, changed):
+        # A user's frame handler may have cleared the list, `collect` with
+        # it: removed unconditionally, that raised ValueError and the frame
+        # never reached the timeline (round 3's review).
+        cleared = collect not in handlers
+        if not cleared:
+            handlers.remove(collect)
+        if last in before:
+            before.remove(last)
+        distrust = getattr(gate, 'distrust', None)
+        if distrust is not None:
+            distrust(last)
+            distrust(collect)
+    # Cleared before it ran, `collect` saw nothing of what the frame changed:
+    # the timeline still hears of the frame, and the whole scene is mirrored.
+    if push_frame(scene, changed) or cleared:
         print(FULL_MIRROR)
 
 
@@ -372,6 +432,10 @@ def push_mesh(obj, depsgraph):
             ntris = len(tris) // 3
         if ntris:
             _blenderkit.anim_mesh(obj.name, co.tobytes(), normals.tobytes(), tris.tobytes())
+            # And how Blender shades it, as the mirroring pass sends it: a
+            # deformed flat face turns its normal with it, and a sculpt
+            # stroke's chunk arrives here (`_blenderkit_sculpt._mirror`).
+            _blenderkit_sync()._push_shading(obj, mesh, editing)
             return
         # No faces: a wire circle, a curve, an edge-only mesh. Its edges are
         # what the viewport draws, as `sync` sends them. This returned early

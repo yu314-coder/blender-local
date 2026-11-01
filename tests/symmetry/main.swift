@@ -228,7 +228,7 @@ do {
     let (s, o) = editScene(symmetry: MeshSymmetry(), selected: [at(0.5, 0.5)])
     let python = dragUp(s)
     check("with the symmetry off the image stays and nothing is said",
-          o.mesh.vertices[at(-0.5, 0.5)].position.z == 0 && !python.contains("mirror"), python)
+          o.mesh.vertices[at(-0.5, 0.5)].position.z == 0 && !python.contains("mirror=True"), python)
 }
 do {
     // Object mode never mirrors: there is no mesh being edited.

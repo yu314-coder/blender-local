@@ -43,6 +43,40 @@ vertex MeshOut mesh_vertex(uint vid [[vertex_id]],
     return out;
 }
 
+// ------------------------------------------------- Blender's shading normals
+//
+// Blender's Solid view shades a flat face with its face's normal and a mesh
+// with sharp edges or custom normals with each face corner's
+// (`Mesh.normals_domain`, `corner_normals`); one normal per vertex cannot
+// say either, since a cube's corner is in three faces. The vertex buffer stays
+// one entry per Blender vertex — edit mode names vertices to Blender by that
+// index — so these draw corner by corner, as texpaint_vertex does:
+// `vertex_id` is an entry of the mesh's index buffer, bound at 6, and the
+// normal is the triangle's (domain 1) or the corner's (domain 2) from the
+// buffer at 5 (MeshData.shadingNormals).
+
+static inline float3 shading_normal(uint corner, const device packed_float3 *shading, uint domain)
+{
+    return float3(shading[domain == 1 ? corner / 3 : corner]);
+}
+
+vertex MeshOut mesh_shaded_vertex(uint corner [[vertex_id]],
+                                  const device MeshIn *verts [[buffer(0)]],
+                                  constant Uniforms &u [[buffer(1)]],
+                                  const device packed_float3 *shading [[buffer(5)]],
+                                  const device uint *corners [[buffer(6)]],
+                                  constant uint &domain [[buffer(7)]])
+{
+    MeshIn v = verts[corners[corner]];
+    float4 world = u.model * float4(v.position, 1.0);
+    MeshOut out;
+    out.position    = u.viewProjection * world;
+    out.worldNormal = normalize((u.normalMatrix * float4(shading_normal(corner, shading, domain), 0.0)).xyz);
+    out.worldPos    = world.xyz;
+    out.uv          = v.uv;
+    return out;
+}
+
 // ------------------------------------------------- vertex-attribute display
 //
 // Vertex Paint and Weight Paint colour the surface per vertex, not per object,
@@ -70,10 +104,41 @@ vertex AttributeOut attribute_vertex(uint vid [[vertex_id]],
     return out;
 }
 
+// The same, corner by corner, for a mesh Blender shades by its faces or
+// corners (see mesh_shaded_vertex): the colour is still the vertex's.
+vertex AttributeOut attribute_shaded_vertex(uint corner [[vertex_id]],
+                                            const device MeshIn *verts [[buffer(0)]],
+                                            constant Uniforms &u [[buffer(1)]],
+                                            const device float4 *attr [[buffer(2)]],
+                                            const device packed_float3 *shading [[buffer(5)]],
+                                            const device uint *corners [[buffer(6)]],
+                                            constant uint &domain [[buffer(7)]])
+{
+    uint vid = corners[corner];
+    MeshIn v = verts[vid];
+    AttributeOut out;
+    out.position    = u.viewProjection * (u.model * float4(v.position, 1.0));
+    out.worldNormal = normalize((u.normalMatrix * float4(shading_normal(corner, shading, domain), 0.0)).xyz);
+    out.colour      = attr[vid];
+    return out;
+}
+
+// Every surface pass draws both sides of a face, as Blender's 3D View does by
+// default (`show_backface_culling` is False on all five startup screens of
+// desktop 5.2.1), and lights a back face with its normal turned towards the
+// view, as Blender's workbench does (`workbench_normal_encode` flips the
+// normal when the fragment is not front facing).
+static float3 facing_normal(float3 worldNormal, bool front)
+{
+    float3 n = normalize(worldNormal);
+    return front ? n : -n;
+}
+
 fragment float4 attribute_fragment(AttributeOut in [[stage_in]],
+                                   bool front [[front_facing]],
                                    constant Uniforms &u [[buffer(1)]])
 {
-    float3 n = normalize(in.worldNormal);
+    float3 n = facing_normal(in.worldNormal, front);
     const float3 keyDir  = normalize(float3(-0.35,  0.55,  0.75));
     const float3 fillDir = normalize(float3( 0.70, -0.30,  0.35));
     float key  = saturate(dot(n, keyDir));
@@ -85,9 +150,10 @@ fragment float4 attribute_fragment(AttributeOut in [[stage_in]],
 }
 
 fragment float4 mesh_fragment(MeshOut in [[stage_in]],
+                              bool front [[front_facing]],
                               constant Uniforms &u [[buffer(1)]])
 {
-    float3 n = normalize(in.worldNormal);
+    float3 n = facing_normal(in.worldNormal, front);
 
     // Blender's default studiolight, reduced to the three dominant lobes:
     // a key from the upper front-left, a cool fill, and a rim from behind.
@@ -162,12 +228,31 @@ vertex MeshOut pbr_vertex(uint vid [[vertex_id]],
     return out;
 }
 
+// Material Preview corner by corner (see mesh_shaded_vertex).
+vertex MeshOut pbr_shaded_vertex(uint corner [[vertex_id]],
+                                 const device MeshIn *verts [[buffer(0)]],
+                                 constant PBRUniforms &u [[buffer(1)]],
+                                 const device packed_float3 *shading [[buffer(5)]],
+                                 const device uint *corners [[buffer(6)]],
+                                 constant uint &domain [[buffer(7)]])
+{
+    MeshIn v = verts[corners[corner]];
+    float4 world = u.model * float4(v.position, 1.0);
+    MeshOut out;
+    out.position    = u.viewProjection * world;
+    out.worldNormal = normalize((u.normalMatrix * float4(shading_normal(corner, shading, domain), 0.0)).xyz);
+    out.worldPos    = world.xyz;
+    out.uv          = v.uv;
+    return out;
+}
+
 fragment float4 pbr_fragment(MeshOut in [[stage_in]],
+                             bool front [[front_facing]],
                              constant PBRUniforms &u [[buffer(1)]],
                              texture2d<float> albedoMap [[texture(0)]],
                              sampler albedoSampler [[sampler(0)]])
 {
-    float3 n = normalize(in.worldNormal);
+    float3 n = facing_normal(in.worldNormal, front);
     float3 v = normalize(u.cameraPos.xyz - in.worldPos);
 
     float metallic  = clamp(u.params.x, 0.0, 1.0);

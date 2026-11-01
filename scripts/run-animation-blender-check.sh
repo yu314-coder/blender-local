@@ -34,7 +34,13 @@ swiftc -O -o "$BUILD/check" \
 "$BUILD/check" dump > "$BUILD/calls.txt"
 echo "  $(grep -c '^###' "$BUILD/calls.txt") strings from the Swift, put through Blender $("$BLENDER" --version | head -1 | cut -d' ' -f2)"
 status=0
-"$BLENDER" -b --factory-startup --python tests/animation/blender/verify.py -- \
+mkdir -p "$BUILD/home"
+# From the build folder, not the repo: what Blender writes into its working
+# folder stays out of the tree.
+ROOT="$(pwd)"
+cd "$BUILD"
+HOME="$BUILD/home" BLENDER_USER_RESOURCES="$BUILD/home/res" \
+  "$BLENDER" -b --factory-startup --python "$ROOT"/tests/animation/blender/verify.py -- \
   "$BUILD/calls.txt" "$BUILD/mirror.json" || status=1
 "$BUILD/check" replay "$BUILD/mirror.json" || status=1
 # A user's frame handler that deletes objects, each in a Blender of its own:
@@ -42,17 +48,43 @@ status=0
 # rest of verify.py with it. Each variant reuses the freed memory differently.
 echo
 echo "a frame handler deletes keyed objects, and the app changes the frame"
-mkdir -p "$BUILD/home"
 for variant in geometry cameras meshes; do
   code=0
   HOME="$BUILD/home" BLENDER_USER_RESOURCES="$BUILD/home/res" \
-    "$BLENDER" -b --factory-startup --python tests/animation/blender/handler_removes.py -- \
-    Resources/python/site/_blenderkit_anim.py "$variant" > "$BUILD/handler-$variant.txt" 2>&1 || code=$?
+    "$BLENDER" -b --factory-startup --python "$ROOT"/tests/animation/blender/handler_removes.py -- \
+    "$ROOT"/Resources/python/site/_blenderkit_anim.py "$variant" > "$BUILD/handler-$variant.txt" 2>&1 || code=$?
   grep -E '^  (PASS|FAIL|ALL|[0-9]+ FAILED|\()' "$BUILD/handler-$variant.txt" || true
   if [ "$code" -ne 0 ]; then
     status=1
     grep -q 'ALL PASS\|FAILED' "$BUILD/handler-$variant.txt" \
       || echo "  FAIL  Blender died with exit $code ($variant): the frame path read freed memory"
+  fi
+done
+# A handler that clears every frame handler, the app's collector with it.
+# Round 3's review: the collector's unconditional removal raised, and that
+# frame never reached the timeline. The negative control is the module with
+# that removal put back as it was.
+echo
+echo "a frame handler clears the handler list"
+sed -e 's/^        cleared = collect not in handlers$/        cleared = False/' \
+    -e 's/^        if not cleared:$/        if True:/' "$ROOT"/Resources/python/site/_blenderkit_anim.py > "$BUILD/anim_before.py"
+cmp -s "$ROOT"/Resources/python/site/_blenderkit_anim.py "$BUILD/anim_before.py" \
+  && { echo "  FAIL  the negative control's module is the tree's: the sed no longer matches"; status=1; }
+for module in "$ROOT"/Resources/python/site/_blenderkit_anim.py "$BUILD/anim_before.py"; do
+  code=0
+  HOME="$BUILD/home" BLENDER_USER_RESOURCES="$BUILD/home/res" \
+    "$BLENDER" -b --factory-startup --python "$ROOT"/tests/animation/blender/handler_removes.py -- \
+    "$module" clears > "$BUILD/handler-clears.txt" 2>&1 || code=$?
+  if [ "$module" = "$BUILD/anim_before.py" ]; then
+    if [ "$code" -ne 0 ] && grep -q 'FAIL  no frame change raised' "$BUILD/handler-clears.txt"; then
+      echo "  PASS  negative control: with the old removal the frame change raises ($(grep -o 'ValueError[^)]*' "$BUILD/handler-clears.txt" | head -1))"
+    else
+      echo "  FAIL  negative control: the old removal did not raise, so the check above cannot fail"
+      status=1
+    fi
+  else
+    grep -E '^  (PASS|FAIL|ALL|[0-9]+ FAILED|\()' "$BUILD/handler-clears.txt" || true
+    [ "$code" -eq 0 ] || status=1
   fi
 done
 exit $status

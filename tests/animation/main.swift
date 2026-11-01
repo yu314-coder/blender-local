@@ -365,7 +365,11 @@ do {
     check("Start past End: one command, and both fields show what Blender keeps",
           device.sources.count - sent == 1 && device.sources.last == BpyAnimation.setFrameStart(300)
             && rig.scene.frameStart == 300 && rig.scene.frameEnd == 300)
-    check("as an undo step named for the field", device.queries.contains { $0.contains("\"Start Frame\"") })
+    // The field's text, Start, as Blender's Timeline draws it — not the
+    // property's name, Start Frame, which no field shows (round 4's review).
+    check("as an undo step named for the field's text, Start",
+          device.queries.contains { $0.contains("\"Start\"") }
+            && !device.queries.contains { $0.contains("\"Start Frame\"") })
     rig.driver.setAutoKeying(true)
     check("the record button shows at once, and tells Blender quietly",
           rig.scene.animation.autoKey && device.queries.last == BpyAnimation.setAutoKeying(on: true))
@@ -465,7 +469,7 @@ do {
     check("the transform, then the follow-up",
           device.sources.last == translate + "\n" + BpyAnimation.afterTransform("TRANSLATE"),
           device.sources.last ?? "")
-    rig.bridge.run(Bpy.selectAll, undo: "Select All")
+    rig.bridge.run(Bpy.selectAll, undo: SelectMenu.selectAllUndo)
     check("nothing follows a command that is not a transform",
           !(device.sources.last ?? "").contains("after_transform"))
     rig.scene.animation.autoKey = false

@@ -270,5 +270,48 @@ do {
           "\(back.mesh.vertices.count) for \(evaluated.vertices.count)")
 }
 
+// The recovery file's record (the review of fix round 3, October 29): the
+// launch opens autosave.blend as the app's own only while it is as the app
+// wrote it. The keychain itself is not touched here (it is outside this
+// test's folder); the identity it keeps, and the verdict, are.
+do {
+    let folder = FileManager.default.temporaryDirectory.appendingPathComponent("bk-recovery-\(getpid())")
+    try? FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: folder) }
+    let file = folder.appendingPathComponent("autosave.blend").path
+    FileManager.default.createFile(atPath: file, contents: Data("written by the app".utf8))
+    let kept = RecoveryRecord.identity(of: file)
+    check("the recovery record: the file as written is as written",
+          kept != nil && RecoveryRecord.verdict(now: RecoveryRecord.identity(of: file), kept: kept) == .asWritten)
+    // Written over in place (the same inode) with the same bytes, then its
+    // modification time set back as `os.utime` would: device, inode, size and
+    // modification time all as kept; only the status-change time, which only
+    // the system sets, moved.
+    usleep(2_000)
+    if let handle = FileHandle(forWritingAtPath: file) {
+        handle.write(Data("written by the app".utf8))
+        try? handle.close()
+    }
+    if let kept {
+        var times = [timespec(tv_sec: Int(kept[3] / 1_000_000_000), tv_nsec: Int(kept[3] % 1_000_000_000)),
+                     timespec(tv_sec: Int(kept[3] / 1_000_000_000), tv_nsec: Int(kept[3] % 1_000_000_000))]
+        _ = utimensat(AT_FDCWD, file, &times, 0)
+    }
+    let touched = RecoveryRecord.identity(of: file)
+    check("…written over in place with the same bytes and its modification time set back: changed "
+          + "(only the status-change time differs)",
+          touched.map { Array($0.prefix(4)) } == kept.map { Array($0.prefix(4)) }
+            && RecoveryRecord.verdict(now: touched, kept: kept) == .changed,
+          "\(String(describing: kept)) \(String(describing: touched))")
+    // Replaced by another file (a rename over it): a new inode.
+    let other = folder.appendingPathComponent("other.blend").path
+    FileManager.default.createFile(atPath: other, contents: Data("written by the app".utf8))
+    _ = rename(other, file)
+    check("…replaced by a rename over it: changed",
+          RecoveryRecord.verdict(now: RecoveryRecord.identity(of: file), kept: kept) == .changed)
+    check("…no record kept: unknown (opened as before)", RecoveryRecord.verdict(now: kept, kept: nil) == .unknown)
+    check("…no file: changed", RecoveryRecord.verdict(now: nil, kept: kept) == .changed)
+}
+
 print(failures == 0 ? "\nALL PASS" : "\n\(failures) FAILED")
 exit(failures == 0 ? 0 : 1)

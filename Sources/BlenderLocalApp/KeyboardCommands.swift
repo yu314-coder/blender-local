@@ -43,16 +43,31 @@ struct ViewportKeyActions {
     var isRunning: Bool
     var hasActiveObject: Bool
     var editing: Bool
+    /// Editing a mesh, not a curve's or a lattice's points: what Ctrl+L's
+    /// Select Linked ▸ Linked (`mesh.select_linked`) acts on.
+    var editingMesh = false
     /// Vertex, edge or face, while editing.
     var selectMode: MeshSelectMode
     var canUndo: Bool
     var canRedo: Bool
     var setTool: (ActiveTool) -> Void
+    /// The Knife's Confirm (Return) and Cancel (Escape), Blender's keys for
+    /// them; nil while there is no path to confirm or cancel.
+    var knifeConfirm: (() -> Void)? = nil
+    var knifeCancel: (() -> Void)? = nil
+    /// The Measure tool's Ruler Remove (X), while a ruler is active; nil
+    /// otherwise. Delete reaches it through `deleteSelected`.
+    var rulerRemove: (() -> Void)? = nil
     var deleteSelected: () -> Void
     var duplicate: () -> Void
     var selectAll: () -> Void
     var deselectAll: () -> Void
     var invertSelection: () -> Void
+    /// Blender's L (false) and Shift+L (true): Select Linked under the
+    /// pointer, while a mesh is being edited; nil otherwise.
+    var selectLinkedPick: ((Bool) -> Void)? = nil
+    /// A row of the Select menu, as the menu sends it.
+    var selectRow: (SelectMenu.Command) -> Void = { _ in }
     var toggleEditing: () -> Void
     var setSelectMode: (MeshSelectMode) -> Void
     var mesh: (LastOperator.Mesh) -> Void
@@ -95,11 +110,24 @@ struct ViewportKeyActions {
     var undo: () -> Void
     var redo: () -> Void
     var showOutliner: () -> Void
-    /// Blender's N: the panel that shows the active object's numbers.
-    var showObjectDetails: () -> Void
-    /// What Tab edits — "Mesh", "Curve" or "Lattice" — for the menu's words,
-    /// which said Edit Mesh over a curve.
-    var editTarget = "Mesh"
+    /// The Properties editor (More ▸ Properties). N used to open it, in place
+    /// of the Sidebar nothing showed; N is the Sidebar's again.
+    var showProperties: () -> Void
+    /// View ▸ Sidebar, on Blender's N: whether it is out, and the toggle.
+    var sidebarShown: Bool = false
+    var toggleSidebar: () -> Void = {}
+    /// Blender's collection tree, for Object ▸ Collection's Move to and Link
+    /// to Collection menus; nil where Blender sent none.
+    var collections: CollectionTree? = nil
+    /// One command of the Object menu's that has no redo panel (Move and Link
+    /// to Collection, Local View).
+    var run: (BlenderCommand) -> Void = { _ in }
+    /// Move / Link to New Collection's name prompt, inside a collection.
+    var askNewCollection: (Int, Bool) -> Void = { _, _ in }
+    /// Blender's Local View: whether the 3D View is in it, and whether Toggle
+    /// Local View has something to do.
+    var inLocalView: Bool = false
+    var canToggleLocalView: Bool = false
 }
 
 private struct AppKeyActionsKey: FocusedValueKey { typealias Value = AppKeyActions }
@@ -164,6 +192,9 @@ struct BlenderCommands: Commands {
         }
         CommandGroup(after: .sidebar) { viewCommands }
         CommandMenu("Script") { scriptCommands }
+        // Blender's 3D View header reads View, Select, Add, Object: Select is
+        // a menu of its own here too, before Object.
+        CommandMenu("Select") { selectCommands }
         CommandMenu("Object") { objectCommands }
     }
 
@@ -171,10 +202,11 @@ struct BlenderCommands: Commands {
         Button("Scripting") { app?.showWorkspace(.scripting) }
             .keyboardShortcut("1")
             .disabled(app == nil)
-        Button("3D View") { app?.showWorkspace(.layout) }
+        Button(Workspace.layout.rawValue) { app?.showWorkspace(.layout) }
             .keyboardShortcut("2")
             .disabled(app == nil)
-        Button("Search Operators…") { app?.searchOperators() }
+        // Blender's Edit ▸ Operator Search: every operator, by name.
+        Button("Operator Search…") { app?.searchOperators() }
             .keyboardShortcut("p", modifiers: [.command, .shift])
             .disabled(app == nil)
         Divider()
@@ -200,8 +232,16 @@ struct BlenderCommands: Commands {
             // keyboard-trained hand zoomed out when it meant to zoom in.
             Button("Frame All") { v.frameAll() }
                 .keyboardShortcut(.home, modifiers: [])
-            Button("View Selected") { v.frameSelected() }
+            Button("Frame Selected") { v.frameSelected() }
                 .keyboardShortcut(".", modifiers: [])
+            // View ▸ Local View ▸ Toggle Local View, Blender's numpad /, and
+            // Remove from Local View (VIEW3D_MT_view_local), as rows of their
+            // own: a submenu cannot carry a key.
+            Button("Toggle Local View") { v.run(LocalViewBpy.toggle) }
+                .keyboardShortcut("/", modifiers: [])
+                .disabled(!v.canToggleLocalView)
+            Button("Remove from Local View") { v.run(LocalViewBpy.removeFrom) }
+                .disabled(!v.inLocalView || v.isRunning)
             // Blender's numpad views, on the number row: Blender's own
             // "emulate numpad" setting maps them the same way. While editing,
             // 1, 2 and 3 choose vertices, edges or faces instead — as they do
@@ -218,17 +258,19 @@ struct BlenderCommands: Commands {
             Button("Back") { v.view(.back) }.keyboardShortcut("1", modifiers: .control)
             Button("Left") { v.view(.left) }.keyboardShortcut("3", modifiers: .control)
             Button("Bottom") { v.view(.bottom) }.keyboardShortcut("7", modifiers: .control)
-            // Blender's numpad 0, and the Align Active Camera to View that
-            // usually follows it.
-            Button("Look Through Camera") { v.lookThroughCamera?() }
+            // Blender's numpad 0 — View ▸ Viewpoint ▸ Camera, beside the
+            // other viewpoints above — and the Align Active Camera to View
+            // that usually follows it.
+            Button("Camera") { v.lookThroughCamera?() }
                 .keyboardShortcut("0", modifiers: [])
                 .disabled(v.lookThroughCamera == nil)
-            Button("Aim Camera at This View") { v.aimCameraAtView?() }
+            Button("Align Active Camera to View") { v.aimCameraAtView?() }
                 .keyboardShortcut("0", modifiers: [.control, .option])
                 .disabled(v.aimCameraAtView == nil)
-            Button("Perspective / Orthographic") { v.togglePerspective() }
+            // View ▸ Perspective/Orthographic, and Shift+Z's operator.
+            Button("Perspective/Orthographic") { v.togglePerspective() }
                 .keyboardShortcut("5", modifiers: [])
-            Button("Wireframe / Solid") { v.toggleWireframe() }
+            Button("Toggle Shading Type") { v.toggleWireframe() }
                 .keyboardShortcut("z", modifiers: .shift)
             Button("Toggle X-Ray") { v.toggleXRay() }
                 .keyboardShortcut("z", modifiers: .option)
@@ -237,7 +279,11 @@ struct BlenderCommands: Commands {
 
     @ViewBuilder private var scriptCommands: some View {
         let s = script
-        Button("Run") { s?.run() }
+        // Blender's Text editor's names where it has the command: Run Script,
+        // Find & Replace, Jump To, Toggle Comments, Indent and Unindent. Stop,
+        // Next Error, folding, the text size and the console's are the
+        // Scripting tab's own (docs/blender-names.md).
+        Button("Run Script") { s?.run() }
             .keyboardShortcut("r")
             .disabled(s == nil || s?.isRunning == true)
         Button("Stop") { s?.stop() }
@@ -247,23 +293,23 @@ struct BlenderCommands: Commands {
         Button("Find…") { s?.editor("actions.find") }
             .keyboardShortcut("f")
             .disabled(s == nil)
-        Button("Find and Replace…") { s?.editor("editor.action.startFindReplaceAction") }
+        Button("Find & Replace…") { s?.editor("editor.action.startFindReplaceAction") }
             .keyboardShortcut("f", modifiers: [.command, .option])
             .disabled(s == nil)
-        Button("Go to Line…") { s?.editor("editor.action.gotoLine") }
+        Button("Jump To…") { s?.editor("editor.action.gotoLine") }
             .keyboardShortcut("l")
             .disabled(s == nil)
         Button("Next Error") { s?.editor("editor.action.marker.next") }
             .keyboardShortcut("'")
             .disabled(s == nil)
         Divider()
-        Button("Toggle Comment") { s?.editor("editor.action.commentLine") }
+        Button("Toggle Comments") { s?.editor("editor.action.commentLine") }
             .keyboardShortcut("/")
             .disabled(s == nil)
         Button("Indent") { s?.editor("editor.action.indentLines") }
             .keyboardShortcut("]")
             .disabled(s == nil)
-        Button("Outdent") { s?.editor("editor.action.outdentLines") }
+        Button("Unindent") { s?.editor("editor.action.outdentLines") }
             .keyboardShortcut("[")
             .disabled(s == nil)
         Button("Fold") { s?.editor("editor.fold") }
@@ -285,49 +331,113 @@ struct BlenderCommands: Commands {
         Toggle("Run Scripts Off the Main Thread", isOn: $scriptsOffMainThread)
     }
 
+    /// Blender's Select menu's first three rows, A, Alt+A and Ctrl+I.
+    @ViewBuilder private var selectCommands: some View {
+        if let v = view3D {
+            Button("All") { v.selectAll() }
+                .keyboardShortcut("a", modifiers: [])
+            Button("None") { v.deselectAll() }
+                .keyboardShortcut("a", modifiers: .option)
+            Button("Invert") { v.invertSelection() }
+                .keyboardShortcut("i", modifiers: .command)
+            if v.editing {
+                // Blender's L and Shift+L pick what is linked to the element
+                // under the pointer (`mesh.select_linked_pick`, Deselect on
+                // with Shift); its Ctrl+L is Select ▸ Select Linked ▸ Linked.
+                Divider()
+                Button("Select Linked") { v.selectLinkedPick?(false) }
+                    .keyboardShortcut("l", modifiers: [])
+                    .disabled(v.selectLinkedPick == nil || v.isRunning)
+                Button("Select Linked (Deselect)") { v.selectLinkedPick?(true) }
+                    .keyboardShortcut("l", modifiers: .shift)
+                    .disabled(v.selectLinkedPick == nil || v.isRunning)
+                // A mesh's: while a curve or a lattice is edited it was
+                // offered and then refused in words (round 4's review).
+                Button("Linked") { v.selectRow(.mesh(.linked)) }
+                    .keyboardShortcut("l", modifiers: .control)
+                    .disabled(!v.editingMesh || v.isRunning)
+            }
+        } else {
+            Button(Workspace.layout.rawValue) { app?.showWorkspace(.layout) }
+                .disabled(app == nil)
+        }
+    }
+
     @ViewBuilder private var objectCommands: some View {
         if let v = view3D {
-            Button("Select All") { v.selectAll() }
-                .keyboardShortcut("a", modifiers: [])
-            Button("Deselect All") { v.deselectAll() }
-                .keyboardShortcut("a", modifiers: .option)
-            Button("Invert Selection") { v.invertSelection() }
-                .keyboardShortcut("i", modifiers: .command)
-            Divider()
-            Button("Select Tool") { v.setTool(.select) }
-                .keyboardShortcut("w", modifiers: [])
-            Button("Box Select Tool") { v.setTool(.boxSelect) }
-                .keyboardShortcut("b", modifiers: [])
-            // Blender's C is Circle Select; the lasso has no key of its own
-            // there either (it is a Ctrl-drag), so it is in the menu only.
-            Button("Circle Select Tool") { v.setTool(.circleSelect) }
-                .keyboardShortcut("c", modifiers: [])
-            Button("Lasso Select Tool") { v.setTool(.lassoSelect) }
-            Button("Move Tool") { v.setTool(.move) }
-                .keyboardShortcut("g", modifiers: [])
-            Button("Rotate Tool") { v.setTool(.rotate) }
-                .keyboardShortcut("r", modifiers: [])
-            Button("Scale Tool") { v.setTool(.scale) }
-                .keyboardShortcut("s", modifiers: [])
+            // The toolbar's tools, by Blender's toolbar names (5.2.1,
+            // tests/names/reference). W cycles the select tools in Blender;
+            // here it is Tweak.
+            Section("Toolbar") {
+                Button(ActiveTool.select.label) { v.setTool(.select) }
+                    .keyboardShortcut("w", modifiers: [])
+                Button(ActiveTool.boxSelect.label) { v.setTool(.boxSelect) }
+                    .keyboardShortcut("b", modifiers: [])
+                // Blender's C is Circle Select; the lasso has no key of its
+                // own there either (it is a Ctrl-drag), so it is in the menu
+                // only.
+                Button(ActiveTool.circleSelect.label) { v.setTool(.circleSelect) }
+                    .keyboardShortcut("c", modifiers: [])
+                Button(ActiveTool.lassoSelect.label) { v.setTool(.lassoSelect) }
+                Button(ActiveTool.move.label) { v.setTool(.move) }
+                    .keyboardShortcut("g", modifiers: [])
+                Button(ActiveTool.rotate.label) { v.setTool(.rotate) }
+                    .keyboardShortcut("r", modifiers: [])
+                Button(ActiveTool.scale.label) { v.setTool(.scale) }
+                    .keyboardShortcut("s", modifiers: [])
+                // Blender's Cursor and Measure, which have no key of their own.
+                Button(ActiveTool.cursor.label) { v.setTool(.cursor) }
+                Button(ActiveTool.measure.label) { v.setTool(.measure) }
+                // Blender's Ctrl+R and K, in a mesh's Edit Mode.
+                if v.editing {
+                    Button(ActiveTool.loopCut.label) { v.setTool(.loopCut) }
+                        .keyboardShortcut("r", modifiers: .control)
+                    Button(ActiveTool.knife.label) { v.setTool(.knife) }
+                        .keyboardShortcut("k", modifiers: [])
+                }
+            }
+            if let remove = v.rulerRemove {
+                Section(RulerTool.label) {
+                    Button(RulerTool.removeLabel) { remove() }
+                        .keyboardShortcut("x", modifiers: [])
+                }
+            }
+            if let confirm = v.knifeConfirm, let cancel = v.knifeCancel {
+                Section(ActiveTool.knife.label) {
+                    Button("Confirm") { confirm() }
+                        .keyboardShortcut(.return, modifiers: [])
+                    Button("Cancel") { cancel() }
+                        .keyboardShortcut(.escape, modifiers: [])
+                }
+            }
             Divider()
             Menu("Add") {
                 ForEach(PrimitiveKind.allCases) { kind in
                     Button(kind.displayName) { v.add(kind) }
                 }
-                if let objectAdd { ObjectAddItems(add: objectAdd.add) }
+                if let objectAdd { ObjectAddItems(add: objectAdd.add, addImage: objectAdd.addImage) }
             }
             .disabled(v.editing || v.isRunning)
-            // In Edit Mode, the selected elements (`duplicateSelected`).
-            Button("Duplicate") { v.duplicate() }
+            // In Edit Mode, the selected elements (`duplicateSelected`):
+            // Blender's Mesh ▸ Duplicate; its Object ▸ Duplicate Objects
+            // otherwise.
+            Button(v.editing ? "Duplicate" : "Duplicate Objects") { v.duplicate() }
                 .keyboardShortcut("d", modifiers: .shift)
                 .disabled(!v.hasActiveObject || v.isRunning)
             // Blender's Duplicate Linked (Alt+D) and Join (Ctrl+J) follow
             // Duplicate Objects; Parent and Convert, further down its menu,
             // come with them here.
             ObjectRelationItems(state: v.objectRelations, withKeys: true, perform: v.perform)
+            // Transform's Randomize and Align, Mirror, Collection, Relations,
+            // Modifiers, Constraints and Link/Transfer Data, where Blender's
+            // Object menu has them.
+            ObjectMenuMoreItems(state: v.objectRelations, collections: v.collections,
+                                perform: v.perform, run: v.run, askNewCollection: v.askNewCollection)
+            // With the Measure tool and an active ruler, Delete is Ruler
+            // Remove (`deleteSelected`), which needs no active object.
             Button("Delete") { v.deleteSelected() }
                 .keyboardShortcut(.delete, modifiers: [])
-                .disabled(!v.hasActiveObject || v.isRunning)
+                .disabled(!(v.hasActiveObject || v.rulerRemove != nil) || v.isRunning)
             Divider()
             // Where Blender's Object menu has them, below the add/duplicate/
             // delete group. Neither takes a key: Blender's Ctrl+A opens a
@@ -361,17 +471,21 @@ struct BlenderCommands: Commands {
                     .disabled(v.isRunning)
             }
             Divider()
-            Button(v.editing ? "Finish Editing \(v.editTarget)" : "Edit \(v.editTarget)") { v.toggleEditing() }
+            // Tab: `object.editmode_toggle`, which 5.2.1 names "Edit Mode",
+            // ticked while Blender is in it.
+            Toggle(InteractionMode.edit.label, isOn: Binding(get: { v.editing }, set: { _ in v.toggleEditing() }))
                 .keyboardShortcut(.tab, modifiers: [])
                 .disabled(!v.hasActiveObject || v.isRunning)
             if v.editing {
-                // Blender's 1, 2 and 3 in edit mode.
-                ForEach(MeshSelectMode.allCases) { mode in
-                    Button((v.selectMode == mode ? "✓ " : "") + "\(mode.label) Select") {
-                        v.setSelectMode(mode)
+                // Blender's 1, 2 and 3 in edit mode, its Mesh Select Mode
+                // menu's rows.
+                Section("Mesh Select Mode") {
+                    ForEach(MeshSelectMode.allCases) { mode in
+                        Toggle(mode.label, isOn: Binding(get: { v.selectMode == mode },
+                                                        set: { _ in v.setSelectMode(mode) }))
+                            .keyboardShortcut(KeyEquivalent(Character(mode.shortcut)), modifiers: [])
+                            .disabled(v.isRunning)
                     }
-                    .keyboardShortcut(KeyEquivalent(Character(mode.shortcut)), modifiers: [])
-                    .disabled(v.isRunning)
                 }
             }
             Button("Bevel") { v.mesh(.bevel) }
@@ -383,12 +497,14 @@ struct BlenderCommands: Commands {
             Button("Subdivide") { v.mesh(.subdivide) }
                 .disabled(!v.editing || v.isRunning)
             Divider()
-            Button("Object Details") { v.showObjectDetails() }
-                .keyboardShortcut("n", modifiers: [])   // Blender's sidebar key
+            // View ▸ Sidebar, ticked while it is out, on Blender's N.
+            Toggle("Sidebar", isOn: Binding(get: { v.sidebarShown }, set: { _ in v.toggleSidebar() }))
+                .keyboardShortcut("n", modifiers: [])
+            Button("Properties") { v.showProperties() }
             Button("Outliner") { v.showOutliner() }
                 .keyboardShortcut("o", modifiers: [.command, .shift])
         } else {
-            Button("Open the 3D View") { app?.showWorkspace(.layout) }
+            Button(Workspace.layout.rawValue) { app?.showWorkspace(.layout) }
                 .disabled(app == nil)
         }
     }

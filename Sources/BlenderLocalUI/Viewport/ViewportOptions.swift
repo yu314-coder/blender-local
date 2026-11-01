@@ -19,7 +19,11 @@ struct ViewportOptions {
     /// there and has no equivalent on `scene.tool_settings`. Whether it is
     /// used at all is Blender's — `scene.tools.snapsDrag`.
     var snapIncrement: Float = 0.25
-    var orientation: TransformOrientation = .global
+    /// Viewport Overlays ▸ Statistics and Mesh Edit Mode ▸ Measurement (Edge
+    /// Length, Edge Angle, Face Area, Face Angle): the 3D View's own switches,
+    /// kept on its SpaceView3D in Blender as X-Ray is; what they draw is read
+    /// from Blender (EditMeasure.swift). Off, as Blender's start.
+    var measure = MeasureOverlays()
 
     // Snapping, the pivot point and proportional editing used to live here as
     // well, as five separate @State copies that never reached Blender and
@@ -28,13 +32,11 @@ struct ViewportOptions {
     // `double_threshold` (0.001). They are Blender's — `scene.tools`,
     // mirrored from `bpy.context.scene.tool_settings` (TransformTools.swift).
 
-    /// Blender's transform orientation dropdown. Normal, Gimbal, View, Cursor
-    /// and Parent need an edit mode or a 3D cursor, neither of which exists
-    /// here, so they are listed but disabled.
-    enum TransformOrientation: String, CaseIterable, Identifiable {
-        case global, local, normal, gimbal, view, cursor, parent
-        var id: String { rawValue }
-        var label: String { rawValue.capitalized }
-        var isImplemented: Bool { self == .global || self == .local }
-    }
+    // The transform orientation used to be here too, as a copy that never
+    // reached Blender, with Normal, Gimbal, View, Cursor and Parent greyed on
+    // the grounds that the app had no Edit Mode and no 3D cursor — both of
+    // which it has had since round 1. It is Blender's now:
+    // `scene.transform_orientation_slots[0].type`, picked from the header's
+    // Orientation menu (LayoutWorkspace) and read back with its matrix into
+    // `scene.orientation` (TransformOrientation.swift, `_blenderkit_orient`).
 }

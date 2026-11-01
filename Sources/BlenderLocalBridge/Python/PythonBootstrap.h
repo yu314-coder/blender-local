@@ -102,6 +102,11 @@ int  bk_sync_points(const char *name, const char *record, const float *positions
 /// `kind=head;…|kind=group;…|kind=key;…` record (`MeshGroups`): during a pass
 /// onto the object the pass pushed, with `during_pass` 0 onto the one on screen.
 int  bk_sync_groups(const char *name, const char *record, int during_pass);
+/// `bk_sync_record` hands over one record the interface reads whole: kind
+/// "collections" (the view layer's collection tree), "localview" (the
+/// borrowed 3D View's Local View) or "constraints" (the stack of the object
+/// `name` the pass just pushed). 0 when taken.
+int  bk_sync_record(const char *kind, const char *name, const char *record);
 /// `bk_sync_edges` hands over the edges of the mesh just pushed — two vertex
 /// indices each, `count` indices in all — for a mesh with no faces to draw.
 int  bk_sync_edges(const char *name, const unsigned int *edges, int count);
@@ -112,6 +117,14 @@ int  bk_sync_uvs(const char *name, const char *map_name,
                  const unsigned int *loops, int loop_count,
                  const float *uvs, int uv_count,
                  const unsigned int *seams, int seam_count);
+/// `bk_sync_shading` hands over the normals Blender's Solid view shades the
+/// mesh just pushed with: `domain` 0 (vertex normals, both buffers empty), 1
+/// (a face's normal) or 2 (each corner's), the loop behind each triangle
+/// corner and three floats per loop of Blender's `corner_normals`. During a
+/// pass onto the object the pass pushed, outside one onto the one on screen.
+int  bk_sync_shading(const char *name, int domain,
+                     const unsigned int *loops, int loop_count,
+                     const float *normals, int normal_count);
 /// `bk_sync_uv_layout` hands over the UV map Blender's UV Editor draws for the
 /// mesh just pushed when that is not the map the pushed (evaluated) mesh
 /// carries: the object's own mesh, before its modifiers — three floats per
@@ -166,7 +179,9 @@ void bk_sync_end(void);
 /// the meshes: select-mode bits (1 vertex, 2 edge, 4 face), a flag per vertex,
 /// the polygon behind each triangle, a flag per polygon, two vertex indices per
 /// edge, and a flag per edge. Empty buffers mean the viewport's mesh does not
-/// line up with Blender's.
+/// line up with Blender's. `history` is Blender's selection order, two ints
+/// per entry (kind, index), `history_count` ints in all
+/// (`_blenderkit_select.history_bytes`).
 int  bk_sync_edit_selection(const char *name, int select_mode,
                             const unsigned char *vertex_selected, int vertex_count,
                             const unsigned int *triangle_polygons, int triangle_count,
@@ -174,7 +189,8 @@ int  bk_sync_edit_selection(const char *name, int select_mode,
                             const unsigned int *edge_vertices, int edge_vertex_count,
                             const unsigned char *edge_selected, int edge_count,
                             const unsigned char *vertex_hidden, int hidden_count,
-                            const float *vertex_coordinates, int coordinate_count);
+                            const float *vertex_coordinates, int coordinate_count,
+                            const int *history, int history_count);
 // Serves the shim's own mesh back to Python, so the same extraction code runs
 // against the shim in the simulator as against Blender on device.
 int  bk_scene_set_mode(const char *mode);
@@ -230,6 +246,9 @@ void bk_anim_notice(const char *text);
 /// Blender's sculpt mask on one object, one float per vertex of the mesh the
 /// viewport draws; `count` 0 for none. Returns 0, or -1 with no such object.
 int  bk_sculpt_set_mask(const char *name, const float *values, int count);
+/// Weight Paint's weights (kind 0, one float per vertex) or Vertex Paint's
+/// colours (kind 1, four floats per vertex) for one object, from Blender.
+int  bk_paint_set_values(const char *name, int kind, const float *values, int count);
 /// The shim's keyed channels on one object as "path:frame,frame" lines. With
 /// no buffer, returns the length needed; -1 when there is no such object.
 int  bk_anim_channels(const char *name, char *out, int cap);

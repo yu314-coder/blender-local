@@ -15,7 +15,14 @@ public final class OperatorCatalogue {
     public struct Entry: Identifiable, Hashable {
         /// `mesh.bevel`
         public let path: String
-        /// `Bevel` — the last component, spaced and capitalised.
+        /// The operator's own name, `get_rna_type().name` — what Blender's
+        /// Operator Search lists, its redo panel shows and its undo history
+        /// records: `action.clickselect` is "Select Keyframes",
+        /// `mesh.remove_doubles` "Merge by Distance". Before round 4 this was
+        /// the identifier spaced and capitalised ("Clickselect", "Remove
+        /// Doubles"), which is no name Blender shows. That spelling is kept
+        /// only for an operator Blender gives none (9 of 2,498 in desktop
+        /// 5.2.1, whose `get_rna_type` raises).
         public let label: String
         /// `mesh`
         public var category: String { String(path.split(separator: ".").first ?? "") }
@@ -23,12 +30,16 @@ public final class OperatorCatalogue {
 
         public var call: String { "bpy.ops.\(path)()" }
 
-        init(path: String) {
+        init(path: String, name: String? = nil) {
             self.path = path
-            let name = String(path.split(separator: ".").last ?? "")
-            label = name.split(separator: "_")
-                .map { $0.prefix(1).uppercased() + $0.dropFirst() }
-                .joined(separator: " ")
+            if let name, !name.isEmpty {
+                label = name
+            } else {
+                let tail = String(path.split(separator: ".").last ?? "")
+                label = tail.split(separator: "_")
+                    .map { $0.prefix(1).uppercased() + $0.dropFirst() }
+                    .joined(separator: " ")
+            }
         }
     }
 
@@ -46,8 +57,11 @@ public final class OperatorCatalogue {
     /// Asks the backend what it can do. Must run after the interpreter is up.
     public func load(using bridge: BpyBridge) {
         guard !loaded else { return }
-        // dir() on each submodule, filtered to callables. Written in Python
-        // because only Python can see what the module actually exposes.
+        // dir() on each submodule, filtered to callables, each with its
+        // name. Written in Python because only Python can see what the module
+        // actually exposes. `get_rna_type` only looks the type up — measured
+        // in desktop 5.2.1 (background, gpu.init), all 2,498 in 41 ms, 9
+        // raising (kept by their identifier).
         let probe = """
         import bpy as _bpy_probe
         _found = []
@@ -60,21 +74,45 @@ public final class OperatorCatalogue {
             for _n in dir(_mod):
                 if _n.startswith("_"):
                     continue
-                if callable(getattr(_mod, _n, None)):
-                    _found.append(_m + "." + _n)
+                _op = getattr(_mod, _n, None)
+                if not callable(_op):
+                    continue
+                try:
+                    _name = _op.get_rna_type().name
+                except Exception:
+                    _name = ""
+                _found.append(_m + "." + _n + "\\t" + _name.replace("\\n", " "))
         print("\\n".join(sorted(set(_found))))
         """
         guard let text = bridge.capture(probe) else { return }
-        entries = text.split(separator: "\n")
-            .map { $0.trimmingCharacters(in: .whitespaces) }
-            .filter { $0.contains(".") && !$0.contains(" ") }
-            .map(Entry.init(path:))
+        entries = Self.entries(fromProbe: text)
         loaded = !entries.isEmpty
+    }
+
+    /// The probe's lines, `path<TAB>name`, as entries; a line with no name
+    /// (or a backend that prints paths alone) is labelled by its identifier.
+    public static func entries(fromProbe text: String) -> [Entry] {
+        text.split(separator: "\n").compactMap { line in
+            let parts = line.split(separator: "\t", maxSplits: 1, omittingEmptySubsequences: false)
+            let path = parts[0].trimmingCharacters(in: .whitespaces)
+            guard path.contains("."), !path.contains(" ") else { return nil }
+            let name = parts.count > 1 ? parts[1].trimmingCharacters(in: .whitespaces) : ""
+            return Entry(path: path, name: name)
+        }
+    }
+
+    /// What the search's Run sends, through `bridge.run` as every command
+    /// goes: `run_operator`, which puts the operator in the mode it needs,
+    /// refuses what is measured to crash, and puts the mode back. Here rather
+    /// than in the form so the checks that compile only this module run the
+    /// very string (tests/relations/blender runs it in Local View).
+    public static func runCommand(path: String, json: String) -> String {
+        "import _blenderkit_sync as _bkui; import json; _bkui.run_operator(\(Bpy.quote(path)), json.loads(\(Bpy.quote(json))))"
     }
 
     /// Fills the catalogue directly, for tests that have no backend to ask.
     public func injectForTesting(_ paths: [String]) {
-        entries = paths.map(Entry.init(path:))
+        entries = paths.map { Entry(path: $0) }
         loaded = true
     }
 

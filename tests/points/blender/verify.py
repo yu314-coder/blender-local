@@ -93,6 +93,9 @@ for sibling in ("_blenderkit_texpaint", "_blenderkit_anim", "_blenderkit_tools")
 sync = load("_blenderkit_sync")
 points = load("_blenderkit_points")
 undo = load("_blenderkit_undo")
+# The vertex budget the Data tab's lines price through first
+# (`__import__('_blenderkit_budget')`, on the app's path).
+load("_blenderkit_budget")
 fixtures = load("fixtures", "tests/points/blender")
 
 
@@ -220,8 +223,10 @@ bpy.ops.object.text_add(location=(0, 6, 0))
 text = bpy.context.object
 activate(text)
 error = run("ENTER_EDIT")
-check("a text object is refused in a sentence",
-      error == "Edit Mode works on meshes, curves and lattices here, and Text is a text object.", error)
+# Since round 4's group 8 the sentence says where a text's text is typed: its
+# Body Text field, which Tab on a text opens in the app.
+check("a text object is refused in a sentence that says where its text is typed",
+      error is not None and error.startswith("Text's text is typed into its Body Text field"), error)
 check("and left in Object Mode", text.mode == 'OBJECT')
 activate(bpy.data.objects["Light"])
 error = run("TOGGLE_EDIT")
@@ -258,7 +263,7 @@ mine = [p for p in bridge.points if p['name'] == 'Circle']
 check("in Edit Mode the circle's 12 points go with the pass",
       len(mine) == 1 and len(mine[0]['flags']) == 12 and mine[0]['during_pass'] == 1)
 remember("entering Edit Mode", circle)
-bpy.ops.ed.undo_push(message="Toggle Edit Mode")
+bpy.ops.ed.undo_push(message="Edit Mode")
 
 # ---------------------------------------------------------------------------
 print("Taps and a box")
@@ -439,7 +444,7 @@ def cube_top():
 
 top_start = cube_top()
 fixtures.edit(lattice)
-bpy.ops.ed.undo_push(message="Toggle Edit Mode")
+bpy.ops.ed.undo_push(message="Edit Mode")
 bridge.points.clear()
 ran("the box", "LATTICE_BOX")
 check("Blender holds the top layer the Swift boxed", selected(lattice) == expect("LATTICE_BOX_EXPECT"),
@@ -684,7 +689,7 @@ place = circle.matrix_world.copy()
 ran("a drag begins", "DRAG_BEGIN")
 ran("a frame", "DRAG_FRAME_0")
 bpy.ops.object.mode_set(mode='OBJECT')
-bpy.ops.ed.undo_push(message="Toggle Edit Mode")
+bpy.ops.ed.undo_push(message="Edit Mode")
 error = run("DRAG_FRAME_1")
 check("the curve left Edit Mode (Tab): the next frame is refused, in words",
       error is not None and "left Edit Mode" in error, error)

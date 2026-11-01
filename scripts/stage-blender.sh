@@ -83,18 +83,20 @@ else:
 PATCH
 done
 
-# Blender's Essentials sculpt brushes (CC0, from Blender 5.2.1; see
-# Resources/BlenderAssets/README.md). The bpy above has no datafiles/assets,
-# so Sculpt Mode had no brush to stroke with: brush.asset_activate and the
-# default brush both load from this file. The rsync above removes it on every
-# build, so it is copied on every build.
+# Blender's Essentials brushes for Sculpt Mode, Vertex Paint and Weight Paint
+# (CC0, from Blender 5.2.1; see Resources/BlenderAssets/README.md). The bpy
+# above has no datafiles/assets, so those modes had no brush to stroke with:
+# brush.asset_activate and the default brushes all load from these files. The
+# rsync above removes them on every build, so they are copied on every build.
 ESSENTIALS_SRC="$SRCROOT/Resources/BlenderAssets"
 for version in "$SITE"/bpy/[0-9]*.[0-9]*; do
     [ -d "$version/datafiles" ] || continue
     mkdir -p "$version/datafiles/assets/brushes"
-    cp -f "$ESSENTIALS_SRC/brushes/essentials_brushes-mesh_sculpt.blend" "$version/datafiles/assets/brushes/"
+    for kind in sculpt vertex weight; do
+        cp -f "$ESSENTIALS_SRC/brushes/essentials_brushes-mesh_$kind.blend" "$version/datafiles/assets/brushes/"
+    done
     cp -f "$ESSENTIALS_SRC/blender_assets.cats.txt" "$ESSENTIALS_SRC/LICENSE" "$version/datafiles/assets/"
-    echo "  Essentials sculpt brushes staged into $(basename "$version")/datafiles/assets"
+    echo "  Essentials sculpt, vertex and weight brushes staged into $(basename "$version")/datafiles/assets"
 done
 
 # numpy travels with bpy.

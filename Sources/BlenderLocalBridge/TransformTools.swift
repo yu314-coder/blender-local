@@ -438,9 +438,23 @@ public enum SnapAction: String, CaseIterable, Identifiable, Sendable {
         return true
     }
 
-    /// The undo step's name. Blender names one after the operator.
+    /// The undo step's name: the operator's, `view3d.snap_*`'s
+    /// `get_rna_type().name` in 5.2.1 — what Blender's undo history calls a
+    /// step its operators push (docs/blender-names.md). The two cursor rows
+    /// Blender itself records no step for (measured: Cursor to World Origin
+    /// and Cursor to Selected pushed none); the app's history keeps one for
+    /// every row, named the same way.
     public var undoName: String {
-        movesCursor ? "Snap Cursor" : "Snap Selection"
+        switch self {
+        case .selectionToGrid:                return "Snap Selection to Grid"
+        case .selectionToCursor,
+             .selectionToCursorKeepingOffset: return "Snap Selection to Cursor"
+        case .selectionToActive:              return "Snap Selection to Active"
+        case .cursorToSelection:              return "Snap Cursor to Selected"
+        case .cursorToCenter:                 return "Snap Cursor to World Origin"
+        case .cursorToGrid:                   return "Snap Cursor to Grid"
+        case .cursorToActive:                 return "Snap Cursor to Active"
+        }
     }
 }
 

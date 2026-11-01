@@ -61,7 +61,7 @@ struct TexturePaintHeader: View {
             }), supportsOpacity: false)
             .labelsHidden()
             .frame(width: 34, height: 28)
-            .accessibilityLabel("Brush Color")
+            .accessibilityLabel("Color")
     }
 
     /// Blender's pen icon beside a slider: whether Apple Pencil pressure

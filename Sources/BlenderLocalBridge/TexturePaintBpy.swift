@@ -5,8 +5,9 @@ import Foundation
 /// it, kept here so tests/texpaint/blender runs exactly what the app sends.
 public enum TexturePaintBpy {
 
-    /// Blender's name for a kept stroke's undo step.
-    public static let undoName = "Texture Paint"
+    /// Blender's name for a kept stroke's undo step: `paint.image_paint`'s,
+    /// the operator Blender's own texture paint stroke records itself as.
+    public static let undoName = "Image Paint"
 
     /// Entering Texture Paint on `name`: what Blender's texture paint offers
     /// when it finds something missing, done rather than offered — Add Simple

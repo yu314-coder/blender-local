@@ -124,7 +124,8 @@ struct SculptHeader: View {
                 .clipShape(RoundedRectangle(cornerRadius: 8))
                 .contentShape(Rectangle())
         }
-        .accessibilityLabel("Invert stroke")
+        // `brush_stroke`'s Invert mode, Blender's Ctrl.
+        .accessibilityLabel("Invert")
     }
 
     // MARK: Mask and Face Sets
@@ -137,7 +138,8 @@ struct SculptHeader: View {
             if brushes.contains("Mask") {
                 Divider()
                 Button { run(SculptBpy.activate("Mask")) } label: {
-                    checkRow("Mask Brush", checked: state?.brush == "Mask")
+                    // The brush's own name, as Blender's brush picker shows it.
+                    checkRow("Mask", checked: state?.brush == "Mask")
                 }
             }
             if state?.multires != nil, state?.masked == nil {
@@ -179,7 +181,7 @@ struct SculptHeader: View {
             if brushes.contains("Face Set Paint") {
                 Divider()
                 Button { run(SculptBpy.activate("Face Set Paint")) } label: {
-                    checkRow("Face Set Paint Brush", checked: state?.brush == "Face Set Paint")
+                    checkRow("Face Set Paint", checked: state?.brush == "Face Set Paint")
                 }
             }
         } label: {
@@ -205,7 +207,7 @@ struct SculptHeader: View {
                 .font(BTheme.Font.ui(12))
                 .disabled(state?.multires != nil)
             if let detail = state?.detailValue {
-                BNumberField("Detail (\(state?.detailType?.capitalized ?? ""))",
+                BNumberField(state?.detailLabel ?? "Detail Size",
                              value: Binding(get: { detailDraft ?? Float(detail) },
                                             set: { detailDraft = max(0.1, $0) }),
                              step: 0.1,
@@ -237,7 +239,10 @@ struct SculptHeader: View {
                         .fixedSize(horizontal: false, vertical: true)
                 }
             }
-            Button("Voxel Remesh") { run(SculptBpy.voxelRemesh, undo: SculptBpy.voxelRemeshUndo) }
+            // Blender's Remesh popover names this button Remesh
+            // (VIEW3D_PT_sculpt_voxel_remesh, 5.2.1); its step is the
+            // operator's name, Voxel Remesh.
+            Button("Remesh") { run(SculptBpy.voxelRemesh, undo: SculptBpy.voxelRemeshUndo) }
                 .disabled(state?.dyntopo == true || state?.multires != nil)
             Divider()
             Text("Multiresolution").font(BTheme.Font.ui(12, weight: .semibold))

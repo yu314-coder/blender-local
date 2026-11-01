@@ -1,6 +1,6 @@
 import SwiftUI
 
-/// Blender's F3 operator search.
+/// Blender's Edit ▸ Operator Search: every operator, by its name.
 ///
 /// This is what lets the rest of the interface stay small. A menu tree can only
 /// offer what somebody wrote a menu item for; this offers whatever the module
@@ -27,13 +27,15 @@ struct OperatorSearch: View {
             field
             HStack {
                 Picker("Category", selection: $category) {
-                    Text("All Tools").tag("All")
+                    // Each category is a `bpy.ops` module; the list is of
+                    // operators, as Blender's Operator Search calls them.
+                    Text("All Operators").tag("All")
                     ForEach(Array(Set(catalogue.entries.map(\.category))).sorted(), id: \.self) { name in
                         Text(name.capitalized).tag(name)
                     }
                 }
                 Spacer()
-                Text("\(catalogue.entries.count) tools").font(.caption).foregroundStyle(.secondary)
+                Text("\(catalogue.entries.count) operators").font(.caption).foregroundStyle(.secondary)
             }.padding(.horizontal, 12)
             Divider().overlay(BTheme.outline)
             list
@@ -156,7 +158,11 @@ struct BlenderRNAInfo: Decodable {
     let mode: String?
     let currentMode: String?
     /// Why the search will not run this operator at all: one measured to
-    /// crash or hang Blender in the app's context (`_UNSAFE_OPERATORS`).
+    /// crash or hang Blender in the app's context (`_blenderkit_context.
+    /// UNSAFE_OPERATORS`, the table script lines are refused by too), or
+    /// one that works at the mouse pointer in a 3D View, whose poll fails in
+    /// the search's context — the sentence names the Mesh menu row that does
+    /// the same toward the 3D cursor where there is one (`_POINTER_OPERATORS`).
     let refused: String?
 
     static func read(_ call: String, bridge: BpyBridge?) -> Self? {
@@ -284,10 +290,9 @@ struct BlenderOperatorForm: View {
         info = BlenderRNAInfo.read(Self.infoCall(path: entry.path), bridge: bridge)
     }
 
-    /// What Run sends: `run_operator`, which puts the operator in the mode it
-    /// needs, refuses what is measured to crash, and puts the mode back.
+    /// What Run sends (`OperatorCatalogue.runCommand`).
     static func command(path: String, json: String) -> String {
-        "import _blenderkit_sync as _bkui; import json; _bkui.run_operator(\(Bpy.quote(path)), json.loads(\(Bpy.quote(json))))"
+        OperatorCatalogue.runCommand(path: path, json: json)
     }
 
     /// What the form reads to draw itself.
@@ -380,6 +385,14 @@ struct BlenderDataBrowser: View {
     private func navigate(_ target: String) {
         stack.append(path); path = target; search = ""; refresh()
     }
+
+    /// What a row's edit sends: `_blenderkit_sync.set_property`, which prices
+    /// the change with the vertex budget first, whatever the struct and the
+    /// property (round 4's fix round), then sets it. The DEBUG hook
+    /// `-data-api` sends the same string.
+    static func setCommand(path: String, property: String, json: String) -> String {
+        "import _blenderkit_sync as _bkui; import json; _bkui.set_property(\(Bpy.quote(path)), \(Bpy.quote(property)), json.loads(\(Bpy.quote(json))))"
+    }
     private func refresh() {
         info = BlenderRNAInfo.read("_bkui.inspect_data(\(Bpy.quote(path)))", bridge: bridge)
         values = [:]
@@ -388,8 +401,42 @@ struct BlenderDataBrowser: View {
         guard (try? JSONSerialization.jsonObject(with: Data(value.utf8), options: [.fragmentsAllowed])) != nil else {
             message = "Enter a valid JSON value, for example 0.5 or [1, 2, 3]."; return
         }
-        let result = bridge?.run("import _blenderkit_sync as _bkui; import json; _bkui.set_property(\(Bpy.quote(path)), \(Bpy.quote(prop.id)), json.loads(\(Bpy.quote(value))))", undo: "Set \(prop.name)")
+        let result = bridge?.run(Self.setCommand(path: path, property: prop.id, json: value),
+                                 // Named as Blender names an edit made in a
+                                 // field: after the property ("Location").
+                                 undo: prop.name)
         message = result?.succeeded == true ? "Updated \(prop.name)" : (result?.error ?? "Backend unavailable")
         refresh()
     }
 }
+
+#if DEBUG
+/// What the DEBUG hooks print after a priced step (`-data-api`,
+/// `-modifier-steps`, `-points-ops data:`, `-textimage-ops text:`): the active
+/// object's count as the vertex budget makes it (`stack_vertices`, the count
+/// every price judges) beside the mesh Blender has evaluated, so a run shows
+/// the budget following Blender (round 4's fix round).
+public enum BudgetProbe {
+    /// The count for the active object, or for `object` when it is named.
+    public static func python(object: String? = nil) -> String {
+        let pick = object.map { "bpy.data.objects.get(\(Bpy.quote($0)))" } ?? "bpy.context.view_layer.objects.active"
+        return """
+        import _blenderkit_multires as _bk_m
+        _bk_o = \(pick)
+        if _bk_o is None or _bk_o.type not in ('MESH', 'CURVE', 'SURFACE', 'FONT'):
+            print('no geometry object is active')
+        else:
+            _bk_e = _bk_o.evaluated_get(bpy.context.evaluated_depsgraph_get())
+            _bk_mesh = _bk_e.to_mesh()
+            _bk_n = len(_bk_mesh.vertices) if _bk_mesh is not None else 0
+            _bk_e.to_mesh_clear()
+            print('%s: the budget counts %d, Blender evaluates %d' % (_bk_o.name, _bk_m.stack_vertices(_bk_o), _bk_n))
+        """
+    }
+
+    public static func report(_ bridge: BpyBridge?, object: String? = nil) -> String {
+        bridge?.capture(python(object: object))?.trimmingCharacters(in: .whitespacesAndNewlines)
+            ?? "no count (Blender busy)"
+    }
+}
+#endif

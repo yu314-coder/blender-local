@@ -57,6 +57,19 @@ public struct LastOperator: Sendable, Equatable {
             /// `key` stays unique per axis, because it is the row's identity
             /// in the panel and in `subscript(key:)`.
             case component(keyword: String, heading: String, axis: Int)
+            /// One item of an argument Blender takes as a set of flags (an
+            /// enum flag, `delimit={'SEAM', 'SHARP'}`), shown as a toggle of
+            /// its own under the heading Blender's panel draws over the row
+            /// ('Delimit'), as Blender draws a toggle button per item, and
+            /// composed with its siblings into the one keyword: the set of
+            /// the items that are on, or `set()`. `value` is 0 or 1.
+            case flag(keyword: String, heading: String, identifier: String)
+            /// One axis of an argument Blender takes as a vector of booleans,
+            /// `constraint_axis=(True, False, False)`, drawn as a toggle of its
+            /// own under the heading Blender's panel draws ('Constraint Axis')
+            /// and composed with its siblings into the one keyword, as a
+            /// `component` is. `value` is 0 or 1.
+            case toggle(keyword: String, heading: String, axis: Int)
         }
 
         public let key: String       // the bpy keyword: "vertices"
@@ -87,10 +100,46 @@ public struct LastOperator: Sendable, Equatable {
         public struct Condition: Sendable, Equatable {
             public let key: String
             public let value: Double
+            /// Active while the other row does *not* hold `value`. (Loop Cut
+            /// and Slide's Falloff used it at Smoothness 0, where it changes
+            /// nothing; Blender's panel greys it there all the same, so it no
+            /// longer does: round 4's review of Loop Cut.)
+            public var negated = false
             public init(_ key: String, is value: Double) { self.key = key; self.value = value }
+            public init(_ key: String, isNot value: Double) {
+                self.key = key; self.value = value; self.negated = true
+            }
         }
 
         public var id: String { key }
+
+        /// The macro sub-operator this argument belongs to, when the call
+        /// takes it inside that sub-operator's dictionary:
+        /// `MESH_OT_loopcut={"number_cuts": 2, "smoothness": 0, ...}`. Every
+        /// argument of one sub-operator becomes one keyword between them, as
+        /// a vector's components do (`LastOperator.python`); one per argument
+        /// would give Python `MESH_OT_loopcut=` twice, which it refuses. Nil
+        /// for an argument of the operator itself.
+        public var member: String?
+
+        /// How many places the call carries the number to, and whether it
+        /// keeps trailing zeros. Four, trimmed, for most operators, as
+        /// Blender's Info log writes them. A gizmo's Move keeps six while it
+        /// can snap to geometry (`TransformGizmo.places`), and Proportional
+        /// Size five: what the preview ran is what the call says, digit for
+        /// digit, and four places put a snapped vertex up to 5e-5 beside its
+        /// target. The gizmo's values keep their zeros, as its log always has
+        /// (`value=(0.5000, 0.0000, 0.0000)`).
+        public var places = 4
+        public var keepsZeros = false
+
+        /// The row this one is drawn only beside: while the other row does
+        /// not hold the value, Blender's panel leaves this one out, rather
+        /// than greying it (`activeWhen`). Blender's transform operators hide
+        /// Proportional Falloff, Size, Connected and Projected (2D) while
+        /// Proportional Editing is off (`transform_poll_property`,
+        /// transform_ops.cc). The argument is still sent.
+        public var shownWhen: Condition?
 
         public init(key: String, label: String, kind: Kind, value: Double,
                     softMin: Double, softMax: Double, step: Double) {
@@ -117,16 +166,18 @@ public struct LastOperator: Sendable, Equatable {
             let clamped = min(max(value, softMin), softMax)
             switch kind {
             case .float:  return clamped
-            case .integer, .choice, .literal: return (clamped).rounded()
+            case .integer, .choice, .literal, .flag, .toggle: return (clamped).rounded()
             case .nested, .component: return clamped
             }
         }
 
-        /// This argument as it appears inside the call.
+        /// This argument as it appears inside the call — inside its
+        /// sub-operator's dictionary, `"number_cuts": 2`, for a `member`.
         public var python: String {
+            if member != nil { return "\"\(key)\": \(literal)" }
             switch kind {
             case .float:
-                return "\(key)=\(LastOperator.number(settled))"
+                return "\(key)=\(formatted)"
             case .integer:
                 return "\(key)=\(Int(settled))"
             case .choice(let options):
@@ -140,8 +191,41 @@ public struct LastOperator: Sendable, Equatable {
             case .component:
                 // Its share of the tuple, not an argument: `LastOperator.python`
                 // places it inside the one keyword its group becomes.
-                return LastOperator.number(settled)
+                return formatted
+            case .flag(_, _, let identifier):
+                // Its share of the set, the same way.
+                return settled != 0 ? "'\(identifier)'" : ""
+            case .toggle:
+                // Its share of the tuple, as a component's.
+                return settled != 0 ? "True" : "False"
             }
+        }
+
+        /// The value alone, as the call carries it: `2`, `0.5`, `'LINEAR'`,
+        /// `True`. What a lead's `@arg:<key>@` is replaced with.
+        public var literal: String {
+            switch kind {
+            case .float, .component:
+                return formatted
+            case .integer:
+                return String(Int(settled))
+            case .choice(let options):
+                let i = min(max(Int(settled), 0), options.count - 1)
+                return "'\(options[i].identifier)'"
+            case .literal(let options):
+                let i = min(max(Int(settled), 0), options.count - 1)
+                return options[i].identifier
+            case .nested(let inner):
+                return "{\"\(inner)\": \(LastOperator.number(settled))}"
+            case .flag, .toggle:
+                return settled != 0 ? "True" : "False"
+            }
+        }
+
+        /// The number as the call carries it, at this row's precision.
+        var formatted: String {
+            keepsZeros ? LastOperator.fixed(settled, places: places)
+                       : LastOperator.number(settled, places: places)
         }
 
         /// What the field shows. Counts and factors are bare; lengths carry
@@ -153,6 +237,41 @@ public struct LastOperator: Sendable, Equatable {
             case .choice(let options), .literal(let options):
                 let i = min(max(Int(settled), 0), options.count - 1)
                 return options[i].label
+            case .flag, .toggle: return settled != 0 ? "On" : "Off"
+            }
+        }
+
+        /// The items of an enum-flag argument, one toggle each, keyed
+        /// `keyword.IDENTIFIER` and labelled as Blender labels the item; those
+        /// in `on` start on (Blender's default set).
+        public static func flags(_ keyword: String, _ heading: String,
+                                 _ items: [(identifier: String, label: String)],
+                                 on: Set<String>) -> [Parameter] {
+            items.map { item in
+                Parameter(key: "\(keyword).\(item.identifier)", label: item.label,
+                          kind: .flag(keyword: keyword, heading: heading, identifier: item.identifier),
+                          value: on.contains(item.identifier) ? 1 : 0, softMin: 0, softMax: 1, step: 0.02)
+            }
+        }
+
+        /// The keyword this row is one axis of, for a vector of numbers
+        /// (`component`) or of booleans (`toggle`); nil otherwise.
+        public var vectorKeyword: String? {
+            switch kind {
+            case .component(let keyword, _, _), .toggle(let keyword, _, _): return keyword
+            default: return nil
+            }
+        }
+
+        /// A vector of booleans as the three toggles Blender's panel draws
+        /// for it — Mirror's Constraint Axis — keyed `keyword.x`, `.y`, `.z`
+        /// and labelled X, Y, Z.
+        public static func toggles(_ keyword: String, _ heading: String, _ on: [Bool]) -> [Parameter] {
+            ["X", "Y", "Z"].enumerated().map { axis, label in
+                Parameter(key: "\(keyword).\(label.lowercased())", label: label,
+                          kind: .toggle(keyword: keyword, heading: heading, axis: axis),
+                          value: on.indices.contains(axis) && on[axis] ? 1 : 0,
+                          softMin: 0, softMax: 1, step: 0.02)
             }
         }
 
@@ -167,11 +286,12 @@ public struct LastOperator: Sendable, Equatable {
         /// keyed `keyword.x`, `.y`, `.z` and labelled X, Y, Z.
         public static func vector(_ keyword: String, _ heading: String, _ value: SIMD3<Double>,
                                   softMin: Double, softMax: Double,
-                                  step: Double) -> [Parameter] {
+                                  step: Double, unit: NumberFieldUnit = .meters) -> [Parameter] {
             ["X", "Y", "Z"].enumerated().map { axis, label in
                 Parameter(key: "\(keyword).\(label.lowercased())", label: label,
                           kind: .component(keyword: keyword, heading: heading, axis: axis),
-                          value: value[axis], softMin: softMin, softMax: softMax, step: step)
+                          value: value[axis], softMin: softMin, softMax: softMax, step: step,
+                          unit: unit)
             }
         }
     }
@@ -238,6 +358,10 @@ public struct LastOperator: Sendable, Equatable {
     /// reached a screen. Spin's axis and centre have since become parameters.
     public var fixedArguments: [String] = []
 
+    /// Positional arguments, written before every keyword: the kind of
+    /// transform `_blenderkit_tools.transform_individual('ROTATE', …)` runs.
+    public var leadingArguments: [String] = []
+
     /// Statements run before the call, such as selecting what it acts on.
     /// Part of what is re-run and logged, because the call means nothing
     /// without them.
@@ -277,6 +401,35 @@ public struct LastOperator: Sendable, Equatable {
     /// step for nothing, and open a panel whose slider moves nothing.
     public var refusal: String?
 
+    /// What to say when Blender returns FINISHED having changed nothing — no
+    /// vertex, edge or face added, removed or moved in the mesh being edited
+    /// (`_blenderkit_loopcut.edit_state`) — raised in its place. Like
+    /// `refusal`, kept out of the Info log's line.
+    public var unchanged: String?
+
+    /// What to say when Blender returns FINISHED having changed no selection
+    /// flag and not the selection order on the meshes being edited
+    /// (`_blenderkit_select.refuse_unchanged_selection`), raised in its place.
+    /// Select Next Element and Select Previous Element answer FINISHED with
+    /// nothing to walk from, their "Selection pair not found" a report a bpy
+    /// module cannot read (measured in 5.2.1). Kept out of the Info log's
+    /// line, like `refusal`.
+    public var unchangedSelection: String?
+
+    /// A statement of the app's own run after the call and kept out of the
+    /// Info log's line, like `refusal`: auto keying's word on what it could
+    /// not key after a gizmo transform (`Bpy.autoKeying`), which `bridge.run`
+    /// used to add the same way. Re-run with the call by the redo panel.
+    public var afterward: String?
+
+    /// A context manager of `_blenderkit_select` the call runs inside that
+    /// is the app's guard and not part of the action — the Object Mode
+    /// Select rows' `object_select`, which refuses first what needs an active
+    /// object and puts back what a CANCELLED changed on the way. Kept out of
+    /// the Info log's line, like `refusal`: the log reads
+    /// `bpy.ops.object.select_linked(extend=False, type='MATERIAL')`.
+    public var guardWithin: String?
+
     /// Whether the operator changes every selected object, not the active
     /// one alone. The mesh backup (`preamble`) copies the active object's
     /// mesh only, so on that path such an operator does not become adjustable
@@ -289,6 +442,12 @@ public struct LastOperator: Sendable, Equatable {
     /// Blender's own undo, where it keeps the history, puts every object
     /// back, so there the panel stays.
     public var actsOnSelection = false
+
+    /// Arguments of a macro's sub-operator the panel does not offer, written
+    /// into that sub-operator's dictionary after the panel's own (`Parameter.member`):
+    /// Loop Cut and Slide's `"edge_index"` and `"object_index"`, which name
+    /// the edge that was picked and are hidden in Blender's panel too.
+    public var memberArguments: [String: [String]] = [:]
 
     public init(name: String, call: String, parameters: [Parameter],
                 location: SIMD3<Double>? = nil,
@@ -316,16 +475,31 @@ public struct LastOperator: Sendable, Equatable {
         // the call reads in the order the panel does. Skipped explicitly, not
         // filtered out afterwards by what they print, so a future kind that
         // prints nothing is not silently swallowed with them.
-        var args: [String] = []
+        var args: [String] = leadingArguments
         var composed = Set<String>()
         for parameter in parameters {
-            guard case .component(let keyword, _, _) = parameter.kind else {
+            if let member = parameter.member {
+                // Once per sub-operator, like a vector's components.
+                guard composed.insert("member:" + member).inserted else { continue }
+                args.append(memberArgument(member))
+                continue
+            }
+            if case .flag(let keyword, _, _) = parameter.kind {
+                guard composed.insert("flag:" + keyword).inserted else { continue }
+                args.append(flagArgument(keyword))
+                continue
+            }
+            guard let keyword = parameter.vectorKeyword else {
                 args.append(parameter.python)
                 continue
             }
             // Once per group: Python refuses `center=` given twice.
             guard composed.insert(keyword).inserted else { continue }
             args.append(vectorArgument(keyword))
+        }
+        // A sub-operator whose every argument is fixed.
+        for member in memberArguments.keys.sorted() where !composed.contains("member:" + member) {
+            args.append(memberArgument(member))
         }
         args += fixedArguments
         if let location {
@@ -336,6 +510,21 @@ public struct LastOperator: Sendable, Equatable {
         if refusing, let refusal {
             line = "if 'CANCELLED' in \(line):\n    raise RuntimeError(\(Bpy.quote(refusal)))"
         }
+        if refusing, let unchanged {
+            // Counts, positions and edges (`edit_state`): a row may move
+            // vertices or turn edges and add none.
+            line = "import _blenderkit_loopcut as _bk_lc\n_bk_counts = _bk_lc.edit_state()\n" + line
+                + "\nif _bk_lc.edit_state() == _bk_counts:\n    raise RuntimeError(\(Bpy.quote(unchanged)))"
+        }
+        if refusing, let guardWithin {
+            line = "import _blenderkit_select\nwith _blenderkit_select.\(guardWithin):\n"
+                + line.split(separator: "\n").map { "    " + $0 }.joined(separator: "\n")
+        }
+        if refusing, let unchangedSelection {
+            line = "with _bk_select.refuse_unchanged_selection(\(Bpy.quote(unchangedSelection))):\n"
+                + line.split(separator: "\n").map { "    " + $0 }.joined(separator: "\n")
+            line = "import _blenderkit_select as _bk_select\n" + line
+        }
         if let within {
             // Every line of the call goes inside the block, not only the
             // first: with a refusal the call is two.
@@ -343,6 +532,7 @@ public struct LastOperator: Sendable, Equatable {
                 + line.split(separator: "\n").map { "    " + $0 }.joined(separator: "\n")
         }
         if let lead { line = filled(lead) + "\n" + line }
+        if refusing, let afterward { line += "\n" + afterward }
         guard let followUp else { return line }
         return line + "\n" + followUp
     }
@@ -359,7 +549,8 @@ public struct LastOperator: Sendable, Equatable {
             let token = "@arg:\(parameter.key)@"
             guard out.contains(token) else { continue }
             let python = parameter.python
-            let value = python.hasPrefix(parameter.key + "=")
+            let value = parameter.member != nil ? parameter.literal
+                : python.hasPrefix(parameter.key + "=")
                 ? String(python.dropFirst(parameter.key.count + 1)) : python
             out = out.replacingOccurrences(of: token, with: value)
         }
@@ -565,17 +756,66 @@ public struct LastOperator: Sendable, Equatable {
         }
     }
 
+    /// Every argument of the macro sub-operator `member`, as the one
+    /// dictionary it takes: the panel's rows in their order, then
+    /// `memberArguments`.
+    private func memberArgument(_ member: String) -> String {
+        // A vector of a sub-operator — Extrude Manifold's and Extend
+        // Vertices' Move, `TRANSFORM_OT_translate={"value": (0, 0, 0.2)}` —
+        // is one entry of the dictionary, as a vector of the operator itself
+        // is one keyword (`vectorArgument`).
+        var entries: [String] = []
+        var composed = Set<String>()
+        for parameter in parameters where parameter.member == member {
+            guard let keyword = parameter.vectorKeyword else {
+                entries.append(parameter.python)
+                continue
+            }
+            guard composed.insert(keyword).inserted else { continue }
+            entries.append("\"\(keyword)\": \(vectorTuple(keyword, member: member))")
+        }
+        entries += memberArguments[member] ?? []
+        return "\(member)={\(entries.joined(separator: ", "))}"
+    }
+
+    /// Every item of the enum flag `keyword` that is on, as the one set they
+    /// make — `set()` when none is, which is how Python writes an empty set.
+    private func flagArgument(_ keyword: String) -> String {
+        let on = parameters.compactMap { parameter -> String? in
+            guard case .flag(let k, _, _) = parameter.kind, k == keyword else { return nil }
+            let item = parameter.python
+            return item.isEmpty ? nil : item
+        }
+        return on.isEmpty ? "\(keyword)=set()" : "\(keyword)={\(on.joined(separator: ", "))}"
+    }
+
     /// Every component of `keyword`, as the one argument they make. An axis
     /// nothing supplies reads 0; `Parameter.vector` always makes all three.
     private func vectorArgument(_ keyword: String) -> String {
-        var slots = ["0", "0", "0"]
-        for parameter in parameters {
+        "\(keyword)=\(vectorTuple(keyword, member: nil))"
+    }
+
+    /// The components of `keyword` belonging to `member` (nil: the operator's
+    /// own), as the tuple they make. An axis no row supplies is 0: Extrude
+    /// Manifold's Move is constrained to its normal's Z and offers that one.
+    private func vectorTuple(_ keyword: String, member: String?) -> String {
+        // A vector of booleans (`.toggle`) reads False where no row supplies it.
+        let switches = parameters.contains {
+            if case .toggle(let k, _, _) = $0.kind { return k == keyword && $0.member == member }
+            return false
+        }
+        var slots = Array(repeating: switches ? "False" : "0", count: 3)
+        for parameter in parameters where parameter.member == member {
             if case .component(let k, _, let axis) = parameter.kind, k == keyword,
                slots.indices.contains(axis) {
-                slots[axis] = parameter.python
+                slots[axis] = parameter.formatted
+            }
+            if case .toggle(let k, _, let axis) = parameter.kind, k == keyword,
+               slots.indices.contains(axis) {
+                slots[axis] = parameter.literal
             }
         }
-        return "\(keyword)=(\(slots.joined(separator: ", ")))"
+        return "(\(slots.joined(separator: ", ")))"
     }
 
     /// A parameter by key, for tests and for the panel's bindings.
@@ -583,7 +823,14 @@ public struct LastOperator: Sendable, Equatable {
     /// greys it in the panel. See `Parameter.activeWhen`.
     public func isActive(_ parameter: Parameter) -> Bool {
         guard let condition = parameter.activeWhen else { return true }
-        return self[condition.key] == condition.value
+        return (self[condition.key] == condition.value) != condition.negated
+    }
+
+    /// Whether Blender's panel draws the row given the others' values. See
+    /// `Parameter.shownWhen`.
+    public func isShown(_ parameter: Parameter) -> Bool {
+        guard let condition = parameter.shownWhen else { return true }
+        return (self[condition.key] == condition.value) != condition.negated
     }
 
     public subscript(key: String) -> Double? {
@@ -600,14 +847,23 @@ public struct LastOperator: Sendable, Equatable {
     /// A value just below zero formats as `-0.0000`, and stripping the zeros
     /// off that leaves `-0` — valid Python, but it reads as a mistake in a log
     /// someone is meant to trust.
-    static func number(_ v: Double) -> String {
-        if abs(v) < 0.00005 { return "0" }
-        let s = String(format: "%.4f", v)
+    static func number(_ v: Double, places: Int = 4) -> String {
+        if abs(v) < 0.5 * pow(10, -Double(places)) { return "0" }
+        let s = String(format: "%.\(places)f", v)
         guard s.contains(".") else { return s }
         var t = s
         while t.hasSuffix("0") { t.removeLast() }
         if t.hasSuffix(".") { t.removeLast() }
         return t.isEmpty || t == "-" ? "0" : t
+    }
+}
+
+public extension LastOperator {
+    /// `%.<places>f`, zeros kept, and never `-0.0000`: what the gizmo's
+    /// calls have always printed.
+    static func fixed(_ v: Double, places: Int) -> String {
+        let s = String(format: "%.\(places)f", v)
+        return s.hasPrefix("-") && Double(s) == 0 ? String(s.dropFirst()) : s
     }
 }
 
@@ -712,12 +968,14 @@ public extension LastOperator {
     /// width before seeing the bevel; you find out that two segments is too few
     /// by looking at two segments.
     ///
-    /// Not every operator belongs here. `loopcut_slide` and `knife_tool` are
-    /// modal — their arguments come from where the finger went, so there is
-    /// nothing to re-run them with — and `extrude_region_move` carries a
-    /// translation rather than a shape.
+    /// Not every operator belongs here. Loop Cut and Slide and the Knife are
+    /// tools: their arguments come from where the pointer went — the edge,
+    /// the path — so they are made where the picking is
+    /// (`LastOperator.loopCutAndSlide`, `.knife`, CutTools.swift) and their
+    /// panels re-run them on that same edge or path. `extrude_region_move`
+    /// carries a translation rather than a shape.
     enum Mesh: String, CaseIterable, Sendable {
-        case bevel, inset, subdivide, loopCut, smooth, mergeByDistance, randomize
+        case bevel, inset, subdivide, subdivideEdgeRing, smooth, mergeByDistance, randomize
         case spin, solidify, wireframe, symmetrize, poke
         case shrinkFatten, pushPull, toSphere
         // The ones a modelling course teaches on day one, and which were
@@ -726,8 +984,8 @@ public extension LastOperator {
         // clean-up half of the job — dissolving what a cut left behind,
         // closing a hole, getting the normals facing out.
         case extrude, bisect
-        // Blender's Extrude menu has it after Extrude Faces Along Normals;
-        // declared here so the Add Geometry group lists it beside Extrude.
+        // Blender's Extrude menu has it after Extrude Faces Along Normals
+        // (`Group.rows` holds each menu's order).
         case extrudeIndividual
         case dissolveVerts, dissolveEdges, dissolveFaces
         case mergeAtCenter, bridgeEdgeLoops, gridFill, fillFace
@@ -742,21 +1000,52 @@ public extension LastOperator {
         case edgeSlide, offsetEdgeSlide, bevelWeight, edgeCrease
         case markSeam, clearSeam, markSharp, clearSharp
         // Round 3: the rows Blender's menus have that were reachable only by
-        // name through All Blender Tools. Each measured working headless in
+        // name through the Operator Search. Each measured working headless in
         // 5.2.1 with the app's context (docs/blender-local.md, 2026-09-22,
         // "Join, Parent, Convert and the clean-up rows").
         case bevelVertices
         case splitSelection, edgeSplitEdges, edgeSplitVertices
         case unsubdivide, beautifyFaces
         case limitedDissolve, deleteLoose, fillHoles
+        // Round 4, group 6: the rest of the rows round 3's review found only
+        // the Operator Search reached (critic section 4, items 9 and 14),
+        // each measured in desktop 5.2.1 with the app's context
+        // (docs/blender-local.md, 2026-10-19). Merge's other four types.
+        case mergeAtCursor, mergeCollapse, mergeAtFirst, mergeAtLast
+        // Delete's: `mesh.delete` by type, then Collapse Edges & Faces and
+        // Edge Loops.
+        case deleteVertices, deleteEdges, deleteFaces, deleteEdgesFaces, deleteOnlyFaces
+        case collapseEdgesFaces, deleteEdgeLoops
+        // Vertex: Connect Vertex Pairs, Rip Vertices and Extend (from the 3D
+        // cursor, `MeshPointer`), Smooth Vertices (Laplacian).
+        case connectVertexPairs, ripVerticesExtend, smoothLaplacian
+        // Edge: Rotate Edge CW and CCW.
+        case rotateEdgeCW, rotateEdgeCCW
+        // Face: Intersect (Knife), Intersect (Boolean), Weld Edges into Faces.
+        case intersectKnife, intersectBoolean, weldEdgesIntoFaces
+        // The Mesh menu's own rows: Convex Hull, Snap to Symmetry.
+        case convexHull, symmetrySnap
+        // Normals: Recalculate Inside, Set from Faces, Point to Target…,
+        // Average ▸ (its three types), Smooth Vectors.
+        case recalculateInside, setNormalsFromFaces, pointNormals
+        case averageCustomNormal, averageFaceArea, averageCornerAngle, smoothNormals
+        // Extrude: Extrude Manifold.
+        case extrudeManifold
 
+        /// The operator's own name — `get_rna_type().name` in 5.2.1 — which is
+        /// what Blender's Adjust Last Operation panel is titled and what its
+        /// undo history calls the step (measured: an operator called with its
+        /// undo on pushes a step of exactly this name; docs/blender-names.md).
+        /// A macro is named as a macro: Extrude is Blender's "Extrude Region
+        /// and Shrink/Fatten", and Clear Seam is `mark_seam(clear=True)`, so
+        /// its step is "Mark Seam", as in Blender.
         public var displayName: String {
             switch self {
             case .bevel:           return "Bevel"
             case .inset:           return "Inset Faces"
             case .subdivide:       return "Subdivide"
-            case .loopCut:         return "Loop Cut"
-            case .smooth:          return "Smooth"
+            case .subdivideEdgeRing: return "Subdivide Edge-Ring"
+            case .smooth:          return "Smooth Vertices"
             case .mergeByDistance: return "Merge by Distance"
             case .randomize:       return "Randomize"
             case .spin:            return "Spin"
@@ -767,39 +1056,33 @@ public extension LastOperator {
             case .shrinkFatten:    return "Shrink/Fatten"
             case .pushPull:        return "Push/Pull"
             case .toSphere:        return "To Sphere"
-            case .extrude:            return "Extrude"
+            case .extrude:            return "Extrude Region and Shrink/Fatten"
             case .bisect:             return "Bisect"
             case .dissolveVerts:      return "Dissolve Vertices"
             case .dissolveEdges:      return "Dissolve Edges"
             case .dissolveFaces:      return "Dissolve Faces"
-            case .mergeAtCenter:      return "Merge at Center"
+            case .mergeAtCenter:      return "Merge"
             case .bridgeEdgeLoops:    return "Bridge Edge Loops"
             case .gridFill:           return "Grid Fill"
-            case .fillFace:           return "New Face from Edges"
+            case .fillFace:           return "Make Edge/Face"
             case .recalculateNormals: return "Recalculate Normals"
             case .flipNormals:        return "Flip Normals"
             case .triangulate:        return "Triangulate Faces"
-            case .quadify:            return "Tris to Quads"
-            // Blender's menu labels, except the two selections: the label is
-            // also the undo step and the panel's title, and "Edge Loops" alone
-            // reads as a thing rather than something that was done.
-            case .selectEdgeLoops:    return "Select Edge Loops"
-            case .selectEdgeRings:    return "Select Edge Rings"
-            case .connectVertexPath:  return "Connect Vertex Path"
-            case .slideVertices:      return "Slide Vertices"
+            case .quadify:            return "Triangles to Quads"
+            case .selectEdgeLoops:    return "Multi Select Edge Loops"
+            case .selectEdgeRings:    return "Multi Select Edge Rings"
+            case .connectVertexPath:  return "Vertex Connect Path"
+            case .slideVertices:      return "Vertex Slide"
             case .edgeSlide:          return "Edge Slide"
             case .offsetEdgeSlide:    return "Offset Edge Slide"
             case .bevelWeight:        return "Edge Bevel Weight"
             case .edgeCrease:         return "Edge Crease"
-            case .markSeam:           return "Mark Seam"
-            case .clearSeam:          return "Clear Seam"
-            case .markSharp:          return "Mark Sharp"
-            case .clearSharp:         return "Clear Sharp"
-            // The operator's own name, which is the undo step and the panel's
-            // title: Bevel Vertices is `mesh.bevel`, and Blender's panel over
-            // it reads "Bevel", with Affect set to Vertices.
+            case .markSeam, .clearSeam:   return "Mark Seam"
+            case .markSharp, .clearSharp: return "Mark Sharp"
+            // Bevel Vertices is `mesh.bevel`, and Blender's panel over it
+            // reads "Bevel", with Affect set to Vertices.
             case .bevelVertices:      return "Bevel"
-            case .extrudeIndividual:  return "Extrude Individual Faces"
+            case .extrudeIndividual:  return "Extrude Individual Faces and Move"
             case .splitSelection:     return "Split"
             case .edgeSplitEdges, .edgeSplitVertices: return "Edge Split"
             case .unsubdivide:        return "Un-Subdivide"
@@ -807,40 +1090,179 @@ public extension LastOperator {
             case .limitedDissolve:    return "Limited Dissolve"
             case .deleteLoose:        return "Delete Loose"
             case .fillHoles:          return "Fill Holes"
+            // `get_rna_type().name` in 5.2.1 (and in the 5.3 source the app's
+            // bpy is built from): one Merge for its five types, one Delete for
+            // its five, and the macros by their own names.
+            case .mergeAtCursor, .mergeCollapse, .mergeAtFirst, .mergeAtLast: return "Merge"
+            case .deleteVertices, .deleteEdges, .deleteFaces, .deleteEdgesFaces, .deleteOnlyFaces:
+                return "Delete"
+            case .collapseEdgesFaces: return "Collapse Edges & Faces"
+            case .deleteEdgeLoops:    return "Delete Edge Loop"
+            case .connectVertexPairs: return "Vertex Connect"
+            case .ripVerticesExtend:  return "Extend Vertices"
+            case .smoothLaplacian:    return "Laplacian Smooth Vertices"
+            case .rotateEdgeCW, .rotateEdgeCCW: return "Rotate Selected Edge"
+            case .intersectKnife:     return "Intersect (Knife)"
+            case .intersectBoolean:   return "Intersect (Boolean)"
+            case .weldEdgesIntoFaces: return "Weld Edges into Faces"
+            case .convexHull:         return "Convex Hull"
+            case .symmetrySnap:       return "Snap to Symmetry"
+            case .recalculateInside:  return "Recalculate Normals"
+            case .setNormalsFromFaces: return "Set Normals from Faces"
+            case .pointNormals:       return "Point Normals to Target"
+            case .averageCustomNormal, .averageFaceArea, .averageCornerAngle: return "Average Normals"
+            case .smoothNormals:      return "Smooth Normals Vectors"
+            case .extrudeManifold:    return "Extrude Manifold"
             }
         }
 
-        /// What the Mesh menu's row says, where that is not the operator's
-        /// name: Blender's own labels, `VIEW3D_MT_edit_mesh_vertices`'s "Bevel
-        /// Vertices" and `VIEW3D_MT_edit_mesh_split`'s "Selection" and its
-        /// `edge_split` types (space_view3d.py, 5.2.1).
+        /// What the row says in the menu: the label Blender's own menu gives
+        /// it (space_view3d.py, 5.2.1; tests/names/reference), which is often
+        /// not the operator's name — Bevel Edges and Bevel Vertices are both
+        /// `mesh.bevel`, and Select ▸ Select Loops ▸ Edge Loops is
+        /// `select_edge_loop_multi`.
         public var menuLabel: String {
             switch self {
+            case .bevel:              return "Bevel Edges"
+            case .mergeByDistance:    return "By Distance"
+            case .solidify:           return "Solidify Faces"
+            case .extrude:            return "Extrude Faces Along Normals"
+            case .mergeAtCenter:      return "At Center"
+            case .fillFace:           return "New Edge/Face from Vertices"
+            case .recalculateNormals: return "Recalculate Outside"
+            case .flipNormals:        return "Flip"
+            case .selectEdgeLoops:    return "Edge Loops"
+            case .selectEdgeRings:    return "Edge Rings"
+            case .connectVertexPath:  return "Connect Vertex Path"
+            case .slideVertices:      return "Slide Vertices"
+            case .clearSeam:          return "Clear Seam"
+            case .clearSharp:         return "Clear Sharp"
             case .bevelVertices:      return "Bevel Vertices"
+            case .extrudeIndividual:  return "Extrude Individual Faces"
             case .splitSelection:     return "Selection"
             case .edgeSplitEdges:     return "Faces by Edges"
             case .edgeSplitVertices:  return "Faces & Edges by Vertices"
+            case .mergeAtCursor:      return "At Cursor"
+            case .mergeCollapse:      return "Collapse"
+            case .mergeAtFirst:       return "At First"
+            case .mergeAtLast:        return "At Last"
+            case .deleteVertices:     return "Vertices"
+            case .deleteEdges:        return "Edges"
+            case .deleteFaces:        return "Faces"
+            case .deleteEdgesFaces:   return "Only Edges & Faces"
+            case .deleteOnlyFaces:    return "Only Faces"
+            case .deleteEdgeLoops:    return "Edge Loops"
+            case .connectVertexPairs: return "Connect Vertex Pairs"
+            case .ripVerticesExtend:  return "Rip Vertices and Extend"
+            case .smoothLaplacian:    return "Smooth Vertices (Laplacian)"
+            case .rotateEdgeCW:       return "Rotate Edge CW"
+            case .rotateEdgeCCW:      return "Rotate Edge CCW"
+            case .recalculateInside:  return "Recalculate Inside"
+            case .setNormalsFromFaces: return "Set from Faces"
+            // Blender draws "...", the platform "…" (docs/blender-names.md).
+            case .pointNormals:       return "Point to Target…"
+            case .averageCustomNormal: return "Custom Normal"
+            case .averageFaceArea:    return "Face Area"
+            case .averageCornerAngle: return "Corner Angle"
+            case .smoothNormals:      return "Smooth Vectors"
             default:                  return displayName
             }
         }
 
-        /// Blender's Mesh menu is nested, and for the same reason: a flat
-        /// list of forty-odd operators is a list nobody reads. The groups are
-        /// Blender's own headings — Select Loops is its Select menu's, Vertex
-        /// and Edge are the menus beside Mesh in its header — in the order its
-        /// header reads left to right.
+        /// The row as a sentence names it: its menu label, with the menu in
+        /// front where the label alone says too little ("Split ▸ Selection",
+        /// "Select Loops ▸ Edge Loops").
+        public var rowName: String {
+            switch self {
+            case .selectEdgeLoops, .selectEdgeRings, .splitSelection, .edgeSplitEdges,
+                 .edgeSplitVertices, .mergeAtCenter, .mergeByDistance, .flipNormals, .recalculateNormals,
+                 .mergeAtCursor, .mergeCollapse, .mergeAtFirst, .mergeAtLast,
+                 .deleteVertices, .deleteEdges, .deleteFaces, .deleteEdgesFaces, .deleteOnlyFaces,
+                 .deleteEdgeLoops, .recalculateInside, .setNormalsFromFaces, .smoothNormals,
+                 .averageCustomNormal, .averageFaceArea, .averageCornerAngle:
+                return group.rawValue + " ▸ " + menuLabel
+            default:
+                return menuLabel
+            }
+        }
+
+        /// The 3D View bar's buttons for the four operations a mesh edit is
+        /// mostly made of: Blender's toolbar names where its toolbar has the
+        /// tool (Extrude Along Normals, Bevel, Inset Faces), the menu's
+        /// otherwise.
+        public var toolLabel: String {
+            switch self {
+            case .extrude: return "Extrude Along Normals"
+            case .bevel:   return "Bevel"
+            default:       return menuLabel
+            }
+        }
+
+        /// The app's Mesh menu, made of Blender's own menus: its Mesh menu's
+        /// submenus (Transform, Extrude, Merge, Split, Normals, Clean Up,
+        /// Delete) and rows (Bisect, Knife Project, Symmetrize), its Select ▸
+        /// Select Loops, and the Vertex, Edge and Face menus Blender keeps
+        /// beside Mesh in its header — named as Blender names them, each row
+        /// where Blender has it. Before round 4 these were the app's own
+        /// headings (Add Geometry, Cut and Divide, Fill, Deform), which a
+        /// reader who knows Blender's menus could not find their way in.
         public enum Group: String, CaseIterable, Sendable {
             case selectLoops = "Select Loops"
-            case build = "Add Geometry"
-            // Blender's Mesh ▸ Split: Selection, then `edge_split`'s two types.
+            case transform = "Transform"
+            case extrude = "Extrude"
+            case merge = "Merge"
             case split = "Split"
-            case cut = "Cut and Divide"
+            /// Rows of Blender's Mesh menu itself, drawn in place rather than
+            /// as a submenu.
+            case mesh = "Mesh"
+            case normals = "Normals"
+            /// Normals ▸ Average, a submenu of Normals in Blender
+            /// (VIEW3D_MT_edit_mesh_normals_average), drawn inside it after
+            /// Point to Target… (`parent`, `after`).
+            case average = "Average"
+            case cleanUp = "Clean Up"
+            case delete = "Delete"
             case vertex = "Vertex"
             case edge = "Edge"
-            case cleanUp = "Clean Up"
-            case fill = "Fill"
-            case normals = "Normals"
-            case deform = "Deform"
+            case face = "Face"
+
+            /// Whether its rows sit in the Mesh menu itself.
+            public var isInline: Bool { self == .mesh }
+
+            /// The group whose menu this one is a submenu of, drawn there
+            /// after the row `after` rather than in the Mesh menu itself.
+            public var parent: Group? { self == .average ? .normals : nil }
+            public var after: Mesh? { self == .average ? .pointNormals : nil }
+
+            /// Its rows in Blender's order (space_view3d.py, 5.2.1). Limited
+            /// Dissolve is in two, as in Blender: Clean Up and Delete.
+            public var rows: [Mesh] {
+                switch self {
+                case .selectLoops: return [.selectEdgeLoops, .selectEdgeRings]
+                case .transform:   return [.toSphere, .pushPull, .shrinkFatten, .randomize]
+                case .extrude:     return [.extrude, .extrudeIndividual, .extrudeManifold, .spin]
+                case .merge:       return [.mergeAtCenter, .mergeAtCursor, .mergeCollapse, .mergeAtFirst,
+                                           .mergeAtLast, .mergeByDistance]
+                case .split:       return [.splitSelection, .edgeSplitEdges, .edgeSplitVertices]
+                case .mesh:        return [.bisect, .convexHull, .symmetrize, .symmetrySnap]
+                case .normals:     return [.flipNormals, .recalculateNormals, .recalculateInside,
+                                           .setNormalsFromFaces, .pointNormals, .smoothNormals]
+                case .average:     return [.averageCustomNormal, .averageFaceArea, .averageCornerAngle]
+                case .cleanUp:     return [.deleteLoose, .limitedDissolve, .fillHoles]
+                case .delete:      return [.deleteVertices, .deleteEdges, .deleteFaces, .deleteEdgesFaces,
+                                           .deleteOnlyFaces, .dissolveVerts, .dissolveEdges, .dissolveFaces,
+                                           .limitedDissolve, .collapseEdgesFaces, .deleteEdgeLoops]
+                case .vertex:      return [.bevelVertices, .fillFace, .connectVertexPath, .connectVertexPairs,
+                                           .ripVerticesExtend, .slideVertices, .smooth, .smoothLaplacian]
+                case .edge:        return [.bevel, .bridgeEdgeLoops, .subdivide, .subdivideEdgeRing, .unsubdivide,
+                                           .rotateEdgeCW, .rotateEdgeCCW,
+                                           .edgeSlide, .offsetEdgeSlide, .bevelWeight, .edgeCrease,
+                                           .markSeam, .clearSeam, .markSharp, .clearSharp]
+                case .face:        return [.inset, .poke, .triangulate, .quadify, .solidify, .wireframe,
+                                           .gridFill, .beautifyFaces, .intersectKnife, .intersectBoolean,
+                                           .weldEdgesIntoFaces]
+                }
+            }
         }
 
         /// Whether the Mesh menu offers it only in Edit Mode.
@@ -854,35 +1276,37 @@ public extension LastOperator {
         /// 12 of 12 edges and Edge Crease at 0.5 creased all 12, with nothing
         /// on screen to say so. They are Edit Mode menu items in Blender too
         /// (Select ▸ Select Loops, and the Edge menu).
+        ///
+        /// Round 4's rows (group 6) are Edit Mode rows too, as Blender's menus
+        /// offer them: each acts on a selection Object Mode does not draw,
+        /// and run there on the stored one — every element of a new
+        /// primitive — Delete ▸ Vertices or Merge would take the whole mesh,
+        /// and Intersect (Boolean) with nothing unselected empties it
+        /// (measured in 5.2.1: a whole cube selected, 8/12/6 → 0/0/0).
         public var editModeOnly: Bool {
             switch self {
             case .selectEdgeLoops, .selectEdgeRings, .markSeam, .clearSeam,
                  .markSharp, .clearSharp, .edgeCrease, .bevelWeight:
                 return true
             default:
-                return false
+                return Self.roundFourRows.contains(self)
             }
         }
 
+        /// The rows round 4's group 6 added (docs/blender-local.md, 2026-10-19),
+        /// but Recalculate Inside, which is Recalculate Outside's operator and
+        /// runs from Object Mode as that row always has.
+        static let roundFourRows: Set<Mesh> = [
+            .mergeAtCursor, .mergeCollapse, .mergeAtFirst, .mergeAtLast,
+            .deleteVertices, .deleteEdges, .deleteFaces, .deleteEdgesFaces, .deleteOnlyFaces,
+            .collapseEdgesFaces, .deleteEdgeLoops, .connectVertexPairs, .ripVerticesExtend, .smoothLaplacian,
+            .rotateEdgeCW, .rotateEdgeCCW, .intersectKnife, .intersectBoolean, .weldEdgesIntoFaces,
+            .convexHull, .symmetrySnap, .setNormalsFromFaces, .pointNormals,
+            .averageCustomNormal, .averageFaceArea, .averageCornerAngle, .smoothNormals, .extrudeManifold]
+
+        /// The menu it is in: the one group whose `rows` hold it.
         public var group: Group {
-            switch self {
-            case .selectEdgeLoops, .selectEdgeRings:                     return .selectLoops
-            case .extrude, .extrudeIndividual, .inset, .bevel, .spin,
-                 .solidify, .wireframe:                                  return .build
-            case .splitSelection, .edgeSplitEdges, .edgeSplitVertices:   return .split
-            case .subdivide, .loopCut, .bisect, .poke:                   return .cut
-            case .connectVertexPath, .slideVertices, .bevelVertices:     return .vertex
-            case .edgeSlide, .offsetEdgeSlide, .bevelWeight, .edgeCrease,
-                 .markSeam, .clearSeam, .markSharp, .clearSharp,
-                 .unsubdivide:                                           return .edge
-            case .mergeAtCenter, .mergeByDistance, .dissolveVerts,
-                 .dissolveEdges, .dissolveFaces, .triangulate, .quadify,
-                 .limitedDissolve, .deleteLoose, .fillHoles:             return .cleanUp
-            case .fillFace, .gridFill, .bridgeEdgeLoops, .beautifyFaces: return .fill
-            case .recalculateNormals, .flipNormals:                      return .normals
-            case .smooth, .randomize, .shrinkFatten, .pushPull,
-                 .toSphere, .symmetrize:                                 return .deform
-            }
+            Group.allCases.first { $0.rows.contains(self) } ?? .mesh
         }
 
         var call: String {
@@ -890,7 +1314,7 @@ public extension LastOperator {
             case .bevel:           return "bpy.ops.mesh.bevel"
             case .inset:           return "bpy.ops.mesh.inset"
             case .subdivide:       return "bpy.ops.mesh.subdivide"
-            case .loopCut:         return "bpy.ops.mesh.subdivide_edgering"
+            case .subdivideEdgeRing: return "bpy.ops.mesh.subdivide_edgering"
             case .smooth:          return "bpy.ops.mesh.vertices_smooth"
             case .mergeByDistance: return "bpy.ops.mesh.remove_doubles"
             case .randomize:       return "bpy.ops.transform.vertex_random"
@@ -944,6 +1368,35 @@ public extension LastOperator {
             case .limitedDissolve:    return "bpy.ops.mesh.dissolve_limited"
             case .deleteLoose:        return "bpy.ops.mesh.delete_loose"
             case .fillHoles:          return "bpy.ops.mesh.fill_holes"
+            case .mergeAtCursor, .mergeCollapse, .mergeAtFirst, .mergeAtLast: return "bpy.ops.mesh.merge"
+            case .deleteVertices, .deleteEdges, .deleteFaces, .deleteEdgesFaces, .deleteOnlyFaces:
+                return "bpy.ops.mesh.delete"
+            case .collapseEdgesFaces: return "bpy.ops.mesh.edge_collapse"
+            case .deleteEdgeLoops:    return "bpy.ops.mesh.delete_edgeloop"
+            case .connectVertexPairs: return "bpy.ops.mesh.vert_connect"
+            // A macro: Extend Vertices, then a Move of what it made, which a
+            // pointer drags in Blender and the redo panel's Move sets here.
+            case .ripVerticesExtend:  return "bpy.ops.mesh.rip_edge_move"
+            case .smoothLaplacian:    return "bpy.ops.mesh.vertices_smooth_laplacian"
+            case .rotateEdgeCW, .rotateEdgeCCW: return "bpy.ops.mesh.edge_rotate"
+            case .intersectKnife:     return "bpy.ops.mesh.intersect"
+            case .intersectBoolean:   return "bpy.ops.mesh.intersect_boolean"
+            case .weldEdgesIntoFaces: return "bpy.ops.mesh.face_split_by_edges"
+            case .convexHull:         return "bpy.ops.mesh.convex_hull"
+            case .symmetrySnap:       return "bpy.ops.mesh.symmetry_snap"
+            case .recalculateInside:  return "bpy.ops.mesh.normals_make_consistent"
+            case .setNormalsFromFaces: return "bpy.ops.mesh.set_normals_from_faces"
+            case .pointNormals:       return "bpy.ops.mesh.point_normals"
+            case .averageCustomNormal, .averageFaceArea, .averageCornerAngle: return "bpy.ops.mesh.average_normals"
+            case .smoothNormals:      return "bpy.ops.mesh.smooth_normals"
+            // A macro: Extrude Region with Dissolve Orthogonal Edges, then a
+            // Move along the normal that merges and splits where it crosses
+            // the mesh (mesh_ops.cc; what Blender's Extrude Manifold tool and
+            // `view3d.edit_mesh_extrude_manifold_normal` call). Measured in
+            // 5.2.1: a cube's top face at +0.5 left 8/12/6, the cube 0.5
+            // taller — the side faces dissolved into the old ones, as in
+            // Blender — and at -0.5 0.5 shorter.
+            case .extrudeManifold:    return "bpy.ops.mesh.extrude_manifold"
             }
         }
 
@@ -975,7 +1428,81 @@ public extension LastOperator {
             switch self {
             case .markSeam, .markSharp:   return ["clear=False"]
             case .clearSeam, .clearSharp: return ["clear=True"]
+            // Delete's type is hidden in its redo panel (5.2.1's RNA:
+            // PROP_HIDDEN), so it is not a field here either.
+            case .deleteVertices:   return ["type='VERT'"]
+            case .deleteEdges:      return ["type='EDGE'"]
+            case .deleteFaces:      return ["type='FACE'"]
+            case .deleteEdgesFaces: return ["type='EDGE_FACE'"]
+            case .deleteOnlyFaces:  return ["type='ONLY_FACE'"]
             default:                      return []
+            }
+        }
+
+        /// What a macro row's sub-operators are given that its panel does
+        /// not offer (`LastOperator.memberArguments`).
+        var memberArguments: [String: [String]] {
+            switch self {
+            // As `view3d.edit_mesh_extrude_manifold_normal` (the Extrude
+            // menu's row) calls it: Dissolve Orthogonal Edges, and the Move
+            // in the Normal orientation constrained to its Z. The macro's
+            // own definition (mesh_ops.cc) sets the rest — no mirroring, no
+            // proportional editing, Auto Merge & Split — so they are not sent.
+            case .extrudeManifold:
+                return ["MESH_OT_extrude_region": ["\"use_normal_flip\": False", "\"use_dissolve_ortho_edges\": True"],
+                        "TRANSFORM_OT_translate": ["\"orient_type\": 'NORMAL'",
+                                                   "\"constraint_axis\": (False, False, True)"]]
+            default:
+                return [:]
+            }
+        }
+
+        /// The words for an operator that returns FINISHED having changed
+        /// nothing (`LastOperator.unchanged`).
+        var unchanged: String? {
+            switch self {
+            case .subdivideEdgeRing:
+                return "Subdivide Edge-Ring found no quads between the selected edges to cut across: "
+                    + "select edges of one edge ring (Select ▸ Select Loops ▸ Edge Rings), or use the Loop Cut tool"
+            // Each of these returns FINISHED having changed nothing when the
+            // selection is not one it acts on (measured in 5.2.1 on a cube:
+            // Collapse with one vertex or two unjoined ones, Edge Loops with
+            // nothing selected, Connect Vertex Pairs with a whole cube or an
+            // edge's two ends, Weld with no loose edge across a face, Extend
+            // with a whole cube — every vertex with three selected edges).
+            // No field of theirs changes whether they act, so nothing is lost
+            // by having no panel then.
+            case .collapseEdgesFaces:
+                return "Collapse Edges & Faces merges each selected edge, or face, into one vertex, and nothing "
+                    + "selected is an edge or a face: select an edge first"
+            case .deleteEdgeLoops:
+                return "Delete ▸ Edge Loops removes the selected edge loops, and found none to remove: "
+                    + "select a loop of edges (Select ▸ Select Loops ▸ Edge Loops)"
+            case .connectVertexPairs:
+                return "Connect Vertex Pairs joins selected vertices that share a face and are not joined yet, "
+                    + "and found no such pair: select vertices across a face"
+            case .weldEdgesIntoFaces:
+                return "Weld Edges into Faces splits the selected faces along the selected loose edges lying "
+                    + "on them, and none of the selected edges is loose on a selected face"
+            case .ripVerticesExtend:
+                return "Rip Vertices and Extend extends each selected vertex along one of its edges, and could "
+                    + "extend none: a vertex with two or more of its edges selected is left as it is"
+            // Measured in 5.2.1 with the rows' calls on a cube: FINISHED and
+            // nothing changed for Collapse on two corners no edge joins (the
+            // other types merge them), and for At Cursor only when the one
+            // vertex is at the cursor already; `check_merge` refuses fewer
+            // than two otherwise. The panel's Type can change, so the words
+            // cover both.
+            case .mergeAtCenter, .mergeAtCursor, .mergeCollapse, .mergeAtFirst, .mergeAtLast:
+                return "Merge changed nothing: Collapse merges selected vertices that selected edges join, and "
+                    + "none of these are joined; At Cursor moves a vertex that is at the 3D cursor already"
+            // FINISHED and nothing moved on one cube corner, and on a whole
+            // cube (measured in 5.2.1, the row's call).
+            case .smoothLaplacian:
+                return "Smooth Vertices (Laplacian) moved no vertex: with these settings Blender found nothing "
+                    + "to smooth in the selection (one vertex, or a shape as even as a cube)"
+            default:
+                return nil
             }
         }
 
@@ -988,7 +1515,7 @@ public extension LastOperator {
             switch self {
             case .edgeSlide:
                 return "Edge Slide cannot slide this selection: select an edge, "
-                    + "or a loop of edges (Select Loops > Select Edge Loops)"
+                    + "or a loop of edges (Select ▸ Select Loops ▸ Edge Loops)"
             case .offsetEdgeSlide:
                 return "Offset Edge Slide adds loops beside the selected edges: select an edge first"
             case .slideVertices:
@@ -1002,6 +1529,31 @@ public extension LastOperator {
             case .bevel, .bevelVertices:
                 return "Bevel bevels the selected edges, or the selected vertices with Affect set "
                     + "to Vertices: select some first"
+            // Measured in 5.2.1 on a cube: CANCELLED, raising nothing, for
+            // each type with nothing of its kind selected — Vertices with
+            // none, Edges, Only Edges & Faces with no edge (one vertex, or two
+            // unjoined), Faces and Only Faces with no face.
+            case .deleteVertices:
+                return "Delete ▸ Vertices removes the selected vertices and what uses them: select a vertex first"
+            case .deleteEdges:
+                return "Delete ▸ Edges removes the selected edges and the faces using them: select an edge first"
+            case .deleteFaces:
+                return "Delete ▸ Faces removes the selected faces: select a face first"
+            case .deleteEdgesFaces:
+                return "Delete ▸ Only Edges & Faces removes the selected edges and faces and keeps their vertices: "
+                    + "select an edge first"
+            case .deleteOnlyFaces:
+                return "Delete ▸ Only Faces removes the selected faces and keeps their edges: select a face first"
+            // CANCELLED with nothing selected, or one vertex (measured).
+            case .connectVertexPairs:
+                return "Connect Vertex Pairs joins selected vertices that share a face: select two or more"
+            case .smoothLaplacian:
+                return "Smooth Vertices (Laplacian) smooths the selected vertices: select some first"
+            case .symmetrySnap:
+                return "Snap to Symmetry moves the selected vertices onto their mirror images: select some first"
+            case .pointNormals:
+                return "Point to Target… points the custom normals of the selected vertices at the Target: "
+                    + "select some first"
             default:
                 return nil
             }
@@ -1017,18 +1569,28 @@ public extension LastOperator {
                       if _bk_o is not None and _bk_o.type == 'MESH']
         """
 
-        /// Blender's Loop Cut and Slide is modal: the cut goes through the
-        /// edge under the pointer, and without a window `loopcut_slide`
-        /// returns CANCELLED and `loopcut` crashes (Blender 5.2.1, measured).
-        /// The same cut without a pointer: the ring through the selected edges,
-        /// subdivided. A cube with one edge selected goes from 8 vertices to 12.
+        /// Blender's Subdivide Edge-Ring (Edge menu) cuts across the quads
+        /// between the selected edges of an edge ring, and nothing else: this
+        /// row used to be called Loop Cut and selected the whole ring first,
+        /// which no row of Blender's does. Measured in 5.2.1 on a cube: one
+        /// edge selected, or two that share a corner, FINISHED with nothing
+        /// changed; two edges across a face, at one cut 8/12/6 → 10/15/7, at
+        /// Blender's default of ten 28/42/16 (scripts/run-cuttools-blender-check.sh).
+        /// With fewer than two edges selected it is refused first, the cuts
+        /// are priced against the vertex budget
+        /// (`_blenderkit_loopcut.check_edgering`), and a run that changed
+        /// nothing is said (`unchanged`). Blender's Loop Cut is the toolbar's
+        /// tool now (CutTools.swift).
         var lead: String? {
             switch self {
-            case .loopCut:
+            case .subdivideEdgeRing:
                 return """
-                bpy.ops.mesh.select_edge_ring_multi()
-                if bpy.context.object.data.total_edge_sel == 0:
-                    raise RuntimeError('Loop Cut cuts across the selected edges: select an edge first')
+                if bpy.context.object.data.total_edge_sel < 2:
+                    raise RuntimeError('Subdivide Edge-Ring cuts across the quads between the selected edges of '
+                                       'an edge ring: select two or more (Select ▸ Select Loops ▸ Edge Rings '
+                                       'selects a whole ring), or use the Loop Cut tool')
+                import _blenderkit_loopcut
+                _blenderkit_loopcut.check_edgering(@arg:number_cuts@)
                 """
             // These return FINISHED having done nothing when nothing they act
             // on is selected (measured in 5.2.1), so the refusal has to come
@@ -1045,7 +1607,7 @@ public extension LastOperator {
                 }
                 return """
                 if bpy.context.object.data.total_edge_sel == 0:
-                    raise RuntimeError('\(displayName) \(verb): select an edge first')
+                    raise RuntimeError('\(rowName) \(verb): select an edge first')
                 """
             // Two vertices are joined whatever order they were picked in; any
             // other number needs Blender's selection history, and Blender
@@ -1087,7 +1649,7 @@ public extension LastOperator {
                 return Self.editMeshes + """
 
                 if not any(_bk_me.total_vert_sel for _bk_me in _bk_meshes):
-                    raise RuntimeError('\(displayName) \(what): select something first')
+                    raise RuntimeError('\(rowName) \(what): select something first')
                 """
             // Faces & Edges by Vertices splits at the selected vertices, and
             // needs no edge: measured in 5.2.1 on a 7 × 7 grid with one inner
@@ -1099,15 +1661,15 @@ public extension LastOperator {
 
                 if @arg:type@ == 'VERT':
                     if not any(_bk_me.total_vert_sel for _bk_me in _bk_meshes):
-                        raise RuntimeError('\(displayName) splits the mesh at the selected vertices: select a vertex first')
+                        raise RuntimeError('\(rowName) splits the mesh at the selected vertices: select a vertex first')
                 elif not any(_bk_me.total_edge_sel for _bk_me in _bk_meshes):
-                    raise RuntimeError('\(displayName) splits the mesh along the selected edges: select an edge first')
+                    raise RuntimeError('\(rowName) splits the mesh along the selected edges: select an edge first')
                 """
             case .fillHoles:
                 return Self.editMeshes + """
 
                 if not any(_bk_me.total_edge_sel for _bk_me in _bk_meshes):
-                    raise RuntimeError('\(displayName) fills the holes the selected edges go round: select an edge first')
+                    raise RuntimeError('\(rowName) fills the holes the selected edges go round: select an edge first')
                 """
             case .beautifyFaces, .extrudeIndividual:
                 let what = self == .beautifyFaces
@@ -1116,7 +1678,7 @@ public extension LastOperator {
                 return Self.editMeshes + """
 
                 if not any(_bk_me.total_face_sel for _bk_me in _bk_meshes):
-                    raise RuntimeError('\(displayName) \(what): select a face first')
+                    raise RuntimeError('\(rowName) \(what): select a face first')
                 """
             // Delete Loose with nothing it removes in the selection still
             // returns FINISHED, and deselects everything on the way
@@ -1156,6 +1718,103 @@ public extension LastOperator {
                                        'edges in no face, faces on their own, as its switches say): '
                                        'nothing selected is loose')
                 """
+            // Merge with the panel's Type (`@arg:type@`): At First and At
+            // Last need Blender's selection order, and every type but At
+            // Cursor needs two vertices to do anything
+            // (`_blenderkit_meshmenu.check_merge` has the measurements).
+            case .mergeAtCenter, .mergeAtCursor, .mergeCollapse, .mergeAtFirst, .mergeAtLast:
+                return "import _blenderkit_meshmenu\n_blenderkit_meshmenu.check_merge(@arg:type@)"
+            // These return FINISHED having changed nothing with nothing they
+            // act on selected (measured in 5.2.1 on a cube with nothing
+            // selected, and with a vertex or an edge where they want faces).
+            // Only the empty selection is refused: what else they find to do
+            // depends on fields their panel has — Intersect (Knife)'s Source,
+            // Intersect (Boolean)'s Self Intersection, Convex Hull's switches.
+            case .collapseEdgesFaces, .deleteEdgeLoops, .ripVerticesExtend, .convexHull,
+                 .intersectKnife, .intersectBoolean, .weldEdgesIntoFaces, .setNormalsFromFaces,
+                 .averageCustomNormal, .averageFaceArea, .averageCornerAngle, .smoothNormals, .extrudeManifold:
+                let need: (verts: Int, edges: Int, faces: Int, sentence: String)
+                switch self {
+                case .collapseEdgesFaces:
+                    need = (0, 1, 0, "Collapse Edges & Faces merges each selected edge, or face, into one vertex: "
+                                + "select an edge first")
+                case .deleteEdgeLoops:
+                    need = (0, 1, 0, "Delete ▸ Edge Loops removes the selected edge loops: select a loop of edges "
+                                + "(Select ▸ Select Loops ▸ Edge Loops)")
+                // What `edbm_rip_edge_exec` does (editmesh_rip_edge.cc): each
+                // selected vertex's edge that points most toward the pointer's
+                // line — here through the 3D cursor — is split at the vertex,
+                // so the new vertex starts on the old one; the macro's Move
+                // (the panel's) then moves it. Measured in desktop 5.2.1 with
+                // this call on a cube's corner (1, -1, 1), the cursor at (2,
+                // -1, 2.5): 8 → 9 vertices, the new one at (1, -1, 1) on the
+                // edge toward (1, 1, 1); nothing moved toward the cursor, which
+                // these words used to promise (round 4's review).
+                case .ripVerticesExtend:
+                    need = (1, 0, 0, "Rip Vertices and Extend splits a new vertex off each selected vertex, on its "
+                                + "edge pointing most toward the 3D cursor, to be moved by the panel's Move: "
+                                + "select a vertex first")
+                case .convexHull:
+                    // Three points make the smallest hull, a triangle.
+                    need = (3, 0, 0, "Convex Hull wraps the selected vertices in a hull: select at least three")
+                case .intersectKnife:
+                    need = (0, 0, 1, "Intersect (Knife) cuts where the selected faces cross the others, or each "
+                                + "other: select faces first")
+                case .intersectBoolean:
+                    need = (0, 0, 1, "Intersect (Boolean) cuts the unselected faces with the selected ones: "
+                                + "select the faces to cut with first")
+                // It splits only selected faces, along selected loose edges
+                // (`edbm_face_split_by_edges_exec` skips a mesh with no face
+                // or no edge selected): measured in 5.2.1, a loose diagonal
+                // alone selected changed nothing; with the faces, it split.
+                case .weldEdgesIntoFaces:
+                    need = (0, 1, 1, "Weld Edges into Faces splits the selected faces along the selected loose "
+                                + "edges lying on them: select the faces and the edges")
+                case .setNormalsFromFaces:
+                    need = (0, 0, 1, "Set from Faces sets the custom normals of the selected faces to the faces' "
+                                + "own: select a face first")
+                case .smoothNormals:
+                    need = (1, 0, 0, "Smooth Vectors smooths the custom normals of the selected vertices: "
+                                + "select some first")
+                // It acts on what is selected, faces or not: measured in 5.2.1
+                // with this row's call on a cube, one edge 8/12/6 → 10/15/7
+                // and one vertex → 9/13/6 (round 4's review).
+                case .extrudeManifold:
+                    need = (1, 0, 0, "Extrude Manifold extrudes the selected faces, edges or vertices: "
+                                + "select some first")
+                default:
+                    need = (1, 0, 0, "Average ▸ \(menuLabel) averages the custom normals of the selected "
+                                + "vertices: select some first")
+                }
+                let required = "import _blenderkit_meshmenu\n_blenderkit_meshmenu.require(\(Bpy.quote(displayName)), "
+                    + "verts=\(need.verts), edges=\(need.edges), faces=\(need.faces), "
+                    + "sentence=\(Bpy.quote(need.sentence)))"
+                // Cutting the unselected faces with the selected ones needs
+                // an unselected face. Measured in 5.2.1 with these rows' calls
+                // on a whole cube selected: Intersect (Knife) answered
+                // FINISHED with nothing changed, and Intersect (Boolean)
+                // emptied the mesh, 8/12/6 → 0/0/0 (round 4's review; Blender
+                // does the same). Not with Self Intersect, or Boolean's Self
+                // Intersection, which cut the selection with itself (a Self
+                // Union of two whole cubes is a use of it; Difference there
+                // empties the mesh in Blender too, 16/24/12 → 0/0/0, so the
+                // refusal does not point at it).
+                switch self {
+                case .intersectKnife:
+                    return required + "\nif @arg:mode@ == 'SELECT_UNSELECT':\n"
+                        + "    _blenderkit_meshmenu.require_unselected_faces(\(Bpy.quote(displayName)), "
+                        + Bpy.quote("Intersect (Knife) with Source Selected/Unselected cuts the unselected faces "
+                                    + "where the selected ones cross them, and every face is selected: deselect "
+                                    + "the faces to cut, or set Source to Self Intersect") + ")"
+                case .intersectBoolean:
+                    return required + "\nif not @arg:use_self@:\n"
+                        + "    _blenderkit_meshmenu.require_unselected_faces(\(Bpy.quote(displayName)), "
+                        + Bpy.quote("Intersect (Boolean) cuts the unselected faces with the selected ones, and "
+                                    + "every face is selected, which Blender would leave as no mesh at all: "
+                                    + "deselect the faces to cut") + ")"
+                default:
+                    return required
+                }
             default:
                 return nil
             }
@@ -1208,17 +1867,34 @@ public extension LastOperator {
                               value: 1, softMin: 1, softMax: 10, step: 0.03),
                     Parameter(key: "smoothness", label: "Smoothness", kind: .float,
                               value: 0, softMin: 0, softMax: 1, step: 0.004)]
-            case .loopCut:
+            // Blender's own panel, read from 5.2.1's RNA: its five rows in
+            // its order and its defaults — 10 cuts (soft 1 to 64), Blend
+            // Path, Smoothness 1 (a bare number, soft 0 to 2), Profile
+            // Factor 0 (soft -2 to 2), Profile Shape Smooth. Round 4's review
+            // found the row sending the old Loop Cut row's 1 cut, Linear and
+            // Smoothness 0 under Subdivide Edge-Ring's name. Ten cuts are
+            // priced against the vertex budget first (`lead`).
+            case .subdivideEdgeRing:
                 return [
                     Parameter(key: "number_cuts", label: "Number of Cuts", kind: .integer,
-                              value: 1, softMin: 1, softMax: 64, step: 0.05),
-                    Parameter(key: "smoothness", label: "Smoothness", kind: .float,
-                              value: 0, softMin: 0, softMax: 2, step: 0.004),
+                              value: 10, softMin: 1, softMax: 64, step: 0.05),
                     Parameter(key: "interpolation", label: "Interpolation",
                               kind: .choice([Parameter.Option("LINEAR", "Linear"),
                                              Parameter.Option("PATH", "Blend Path"),
                                              Parameter.Option("SURFACE", "Blend Surface")]),
-                              value: 0, softMin: 0, softMax: 2, step: 0.02)]
+                              value: 1, softMin: 0, softMax: 2, step: 0.02),
+                    Parameter(key: "smoothness", label: "Smoothness", kind: .float,
+                              value: 1, softMin: 0, softMax: 2, step: 0.004, unit: .none),
+                    Parameter(key: "profile_shape_factor", label: "Profile Factor", kind: .float,
+                              value: 0, softMin: -2, softMax: 2, step: 0.004, unit: .none),
+                    Parameter(key: "profile_shape", label: "Profile Shape",
+                              kind: .choice([Parameter.Option("SMOOTH", "Smooth"),
+                                             Parameter.Option("SPHERE", "Sphere"),
+                                             Parameter.Option("ROOT", "Root"),
+                                             Parameter.Option("INVERSE_SQUARE", "Inverse Square"),
+                                             Parameter.Option("SHARP", "Sharp"),
+                                             Parameter.Option("LINEAR", "Linear")]),
+                              value: 0, softMin: 0, softMax: 5, step: 0.02)]
             case .smooth:
                 return [
                     Parameter(key: "factor", label: "Smoothing", kind: .float,
@@ -1295,7 +1971,9 @@ public extension LastOperator {
                               value: 0.2, softMin: -10, softMax: 10, step: 0.004)]
             case .bisect:
                 return [
-                    Parameter(key: "plane_no", label: "Axis",
+                    // Blender's Plane Normal (`plane_no`), a vector; the row
+                    // offers its three axes.
+                    Parameter(key: "plane_no", label: "Plane Normal",
                               kind: .literal([Parameter.Option("(1.0, 0.0, 0.0)", "X"),
                                               Parameter.Option("(0.0, 1.0, 0.0)", "Y"),
                                               Parameter.Option("(0.0, 0.0, 1.0)", "Z")]),
@@ -1309,11 +1987,21 @@ public extension LastOperator {
                                               Parameter.Option("True", "On")]),
                               value: 0, softMin: 0, softMax: 1, step: 0.02)]
             case .mergeAtCenter:
+                // Type, in its enum's order, and UVs (5.2.1's RNA; it was
+                // labelled Merge here, with two of the five types). Blender's
+                // panel offers At First and At Last only when the selection
+                // order allows them (`merge_type_itemf`); here they are always
+                // offered and refused in words when it does not
+                // (`_blenderkit_meshmenu.check_merge`).
                 return [
-                    Parameter(key: "type", label: "Merge",
+                    Parameter(key: "type", label: "Type",
                               kind: .choice([Parameter.Option("CENTER", "At Center"),
-                                             Parameter.Option("COLLAPSE", "Collapse")]),
-                              value: 0, softMin: 0, softMax: 1, step: 0.02)]
+                                             Parameter.Option("CURSOR", "At Cursor"),
+                                             Parameter.Option("COLLAPSE", "Collapse"),
+                                             Parameter.Option("FIRST", "At First"),
+                                             Parameter.Option("LAST", "At Last")]),
+                              value: 0, softMin: 0, softMax: 4, step: 0.02),
+                    Self.toggle("uvs", "UVs", false)]
             case .bridgeEdgeLoops:
                 return [
                     Parameter(key: "number_cuts", label: "Number of Cuts", kind: .integer,
@@ -1327,11 +2015,9 @@ public extension LastOperator {
                     Parameter(key: "offset", label: "Offset", kind: .integer,
                               value: 0, softMin: -100, softMax: 100, step: 0.05)]
             case .recalculateNormals:
-                return [
-                    Parameter(key: "inside", label: "Facing",
-                              kind: .literal([Parameter.Option("False", "Outside"),
-                                              Parameter.Option("True", "Inside")]),
-                              value: 0, softMin: 0, softMax: 1, step: 0.02)]
+                // Blender's checkbox, Inside (5.2.1's RNA); Recalculate
+                // Outside and Recalculate Inside are its two rows.
+                return [Self.toggle("inside", "Inside", false)]
             case .quadify:
                 return [
                     Parameter(key: "face_threshold", label: "Max Face Angle", kind: .float,
@@ -1409,7 +2095,9 @@ public extension LastOperator {
                 let key = self == .selectEdgeLoops ? "delimit_edge_loop" : "delimit_edge_ring"
                 let base = self == .selectEdgeLoops ? "'NGONS', 'OUTER_CORNERS'" : "'NGONS'"
                 return [
-                    Parameter(key: key, label: "Delimit",
+                    // The properties' names: Delimit and Edge Ring Delimit
+                    // (desktop 5.2.1's RNA).
+                    Parameter(key: key, label: self == .selectEdgeLoops ? "Delimit" : "Edge Ring Delimit",
                               kind: .literal([Parameter.Option("{\(base)}", "Default"),
                                               Parameter.Option("{\(base), 'SEAM'}", "Seam"),
                                               Parameter.Option("{\(base), 'SHARP'}", "Sharp"),
@@ -1430,17 +2118,19 @@ public extension LastOperator {
                     // does nothing without Even. Measured in 5.2.1 on a grid
                     // whose next row is tilted: Flipped alone gave exactly the
                     // default result at +0.5 and -0.5, and changed it at both
-                    // once Even was on. Its row is greyed until then.
+                    // once Even was on. Its row is live all the same, as in
+                    // Blender's panel: TRANSFORM_OT_edge_slide has no `ui`
+                    // callback and `transform_poll_property` no rule for
+                    // `flipped` (transform_ops.cc), the rule Loop Cut's panel
+                    // follows (CutTools.swift).
                     Parameter(key: "use_even", label: "Even",
                               kind: .literal([Parameter.Option("False", "Off"),
                                               Parameter.Option("True", "On")]),
                               value: 0, softMin: 0, softMax: 1, step: 0.02),
-                    Parameter.dependent(
-                        Parameter(key: "flipped", label: "Flipped",
-                                  kind: .literal([Parameter.Option("False", "Off"),
-                                                  Parameter.Option("True", "On")]),
-                                  value: 0, softMin: 0, softMax: 1, step: 0.02),
-                        on: .init("use_even", is: 1))]
+                    Parameter(key: "flipped", label: "Flipped",
+                              kind: .literal([Parameter.Option("False", "Off"),
+                                              Parameter.Option("True", "On")]),
+                              value: 0, softMin: 0, softMax: 1, step: 0.02)]
             case .slideVertices:
                 return [
                     // 0 to 1, not Blender's soft -1 to 1: with Clamp on, its
@@ -1455,7 +2145,8 @@ public extension LastOperator {
                     // (0, 1, 0) slid +Y and (-1, 0, 0) slid -X; with the grid
                     // turned 90° about Z, (0, 1, 0) slid along its local +X —
                     // world +Y. Not given at all, it took an edge of its own.
-                    Parameter(key: "direction", label: "Direction",
+                    // Named as its property is: Slide Direction.
+                    Parameter(key: "direction", label: "Slide Direction",
                               kind: .literal([Parameter.Option("(1.0, 0.0, 0.0)", "+X"),
                                               Parameter.Option("(-1.0, 0.0, 0.0)", "-X"),
                                               Parameter.Option("(0.0, 1.0, 0.0)", "+Y"),
@@ -1535,7 +2226,194 @@ public extension LastOperator {
                 return [
                     Parameter(key: "sides", label: "Sides", kind: .integer,
                               value: 4, softMin: 0, softMax: 100, step: 0.05)]
+
+            // Round 4, group 6. Every label, default and soft range below is
+            // 5.2.1's RNA (`get_rna_type()`), each property also in the 5.3
+            // source the app's bpy is built from; the rows each panel hides
+            // are the ones its `ui` callback hides (named per row).
+            case .mergeAtCursor, .mergeCollapse, .mergeAtFirst, .mergeAtLast:
+                return Self.mergeAtCenter.parameters.map { p in
+                    guard p.key == "type" else { return p }
+                    var q = p
+                    q.value = Double([Mesh.mergeAtCursor, .mergeCollapse, .mergeAtFirst, .mergeAtLast]
+                        .firstIndex(of: self)! + 1)
+                    return q
+                }
+            case .deleteVertices, .deleteEdges, .deleteFaces, .deleteEdgesFaces, .deleteOnlyFaces,
+                 .collapseEdgesFaces, .connectVertexPairs, .weldEdgesIntoFaces:
+                // No properties, or only the hidden Type.
+                return []
+            case .deleteEdgeLoops:
+                return [Self.toggle("use_face_split", "Face Split", true)]
+            case .ripVerticesExtend:
+                // The Move the macro's translate makes, which a pointer drags
+                // in Blender; 0 is a click that does not drag, and leaves the
+                // new vertex on the old one.
+                return Parameter.vector("value", "Move", .zero, softMin: -100, softMax: 100, step: 0.01)
+                    .map { var p = $0; p.member = "TRANSFORM_OT_translate"; return p }
+            case .smoothLaplacian:
+                return [
+                    Parameter(key: "repeat", label: "Number of iterations to smooth the mesh", kind: .integer,
+                              value: 1, softMin: 1, softMax: 200, step: 0.05),
+                    // Seven places: Blender's border factor is 5e-5, which
+                    // four places would send as 0.0001.
+                    {
+                        var p = Parameter(key: "lambda_factor", label: "Lambda factor", kind: .float,
+                                          value: 1, softMin: 1e-7, softMax: 1000, step: 0.01, unit: .none)
+                        p.places = 7
+                        return p
+                    }(),
+                    {
+                        var p = Parameter(key: "lambda_border", label: "Lambda factor in border", kind: .float,
+                                          value: 5e-5, softMin: 1e-7, softMax: 1000, step: 0.001, unit: .none)
+                        p.places = 7
+                        return p
+                    }(),
+                    Self.toggle("use_x", "Smooth X Axis", true),
+                    Self.toggle("use_y", "Smooth Y Axis", true),
+                    Self.toggle("use_z", "Smooth Z Axis", true),
+                    Self.toggle("preserve_volume", "Preserve Volume", true)]
+            case .rotateEdgeCW, .rotateEdgeCCW:
+                return [Self.toggle("use_ccw", "Counter Clockwise", self == .rotateEdgeCCW)]
+            case .intersectKnife:
+                // `edbm_intersect_ui`: Source, Separate Mode, Solver, and the
+                // Merge Threshold only for the Float solver.
+                return [
+                    Parameter(key: "mode", label: "Source",
+                              kind: .choice([Parameter.Option("SELECT", "Self Intersect"),
+                                             Parameter.Option("SELECT_UNSELECT", "Selected/Unselected")]),
+                              value: 1, softMin: 0, softMax: 1, step: 0.02),
+                    Parameter(key: "separate_mode", label: "Separate Mode",
+                              kind: .choice([Parameter.Option("ALL", "All"), Parameter.Option("CUT", "Cut"),
+                                             Parameter.Option("NONE", "Merge")]),
+                              value: 1, softMin: 0, softMax: 2, step: 0.02),
+                    Self.solver,
+                    Self.mergeThreshold]
+            case .intersectBoolean:
+                // `edbm_intersect_boolean_ui`: Boolean Operation, Solver,
+                // Swap, Self Intersection, and the Merge Threshold for Float.
+                return [
+                    Parameter(key: "operation", label: "Boolean Operation",
+                              kind: .choice([Parameter.Option("INTERSECT", "Intersect"),
+                                             Parameter.Option("UNION", "Union"),
+                                             Parameter.Option("DIFFERENCE", "Difference")]),
+                              value: 2, softMin: 0, softMax: 2, step: 0.02),
+                    Self.solver,
+                    Self.toggle("use_swap", "Swap", false),
+                    Self.toggle("use_self", "Self Intersection", false),
+                    Self.mergeThreshold]
+            case .convexHull:
+                // No `ui` callback: Blender's panel draws every property.
+                return [
+                    Self.toggle("delete_unused", "Delete Unused", true),
+                    Self.toggle("use_existing_faces", "Use Existing Faces", true),
+                    Self.toggle("make_holes", "Make Holes", false),
+                    Self.toggle("join_triangles", "Join Triangles", true),
+                    Parameter(key: "face_threshold", label: "Max Face Angle", kind: .float,
+                              value: 40 * .pi / 180, softMin: 0, softMax: .pi, step: 0.005, unit: .degrees),
+                    Parameter(key: "shape_threshold", label: "Max Shape Angle", kind: .float,
+                              value: 40 * .pi / 180, softMin: 0, softMax: .pi, step: 0.005, unit: .degrees),
+                    Parameter(key: "topology_influence", label: "Topology Influence", kind: .float,
+                              value: 0, softMin: 0, softMax: 2, step: 0.004, unit: .none),
+                    Self.toggle("uvs", "Compare UVs", false),
+                    Self.toggle("vcols", "Compare Color Attributes", false),
+                    Self.toggle("seam", "Compare Seam", false),
+                    Self.toggle("sharp", "Compare Sharp", false),
+                    Self.toggle("materials", "Compare Materials", false),
+                    Self.toggle("deselect_joined", "Deselect Joined", false)]
+            case .symmetrySnap:
+                return [
+                    Self.symmetryDirection,
+                    Parameter(key: "threshold", label: "Threshold", kind: .float,
+                              value: 0.05, softMin: 0.0001, softMax: 1, step: 0.002),
+                    Parameter(key: "factor", label: "Factor", kind: .float,
+                              value: 0.5, softMin: 0, softMax: 1, step: 0.004, unit: .none),
+                    Self.toggle("use_center", "Center", true),
+                    Self.toggle("use_topology", "Topology Mirror", false)]
+            case .setNormalsFromFaces:
+                return [Self.toggle("keep_sharp", "Keep Sharp Edges", false)]
+            case .pointNormals:
+                // `edbm_point_normals_ui`: every property but the hidden Mode
+                // (the exec ignores it), Spherize Strength only with Spherize.
+                // Target starts at the 3D cursor (`mesh(_:…)`), where Blender's
+                // modal tool's "Use 3D Cursor" puts it.
+                return [Self.toggle("invert", "Invert", false), Self.toggle("align", "Align", false)]
+                    + Parameter.vector("target_location", "Target", .zero, softMin: -1000, softMax: 1000, step: 0.01)
+                    + [Self.toggle("spherize", "Spherize", false),
+                       {
+                           var p = Parameter(key: "spherize_strength", label: "Spherize Strength", kind: .float,
+                                             value: 0.1, softMin: 0, softMax: 1, step: 0.004, unit: .none)
+                           p.shownWhen = .init("spherize", is: 1)
+                           return p
+                       }()]
+            case .averageCustomNormal, .averageFaceArea, .averageCornerAngle:
+                // `average_normals_draw_check_prop`: Weight and Threshold
+                // only for Face Area and Corner Angle.
+                let type = [Mesh.averageCustomNormal, .averageFaceArea, .averageCornerAngle].firstIndex(of: self)!
+                var weight = Parameter(key: "weight", label: "Weight", kind: .integer,
+                                       value: 50, softMin: 1, softMax: 100, step: 0.2)
+                var threshold = Parameter(key: "threshold", label: "Threshold", kind: .float,
+                                          value: 0.01, softMin: 0, softMax: 5, step: 0.002, unit: .none)
+                weight.shownWhen = .init("average_type", isNot: 0)
+                threshold.shownWhen = .init("average_type", isNot: 0)
+                return [
+                    Parameter(key: "average_type", label: "Type",
+                              kind: .choice([Parameter.Option("CUSTOM_NORMAL", "Custom Normal"),
+                                             Parameter.Option("FACE_AREA", "Face Area"),
+                                             Parameter.Option("CORNER_ANGLE", "Corner Angle")]),
+                              value: Double(type), softMin: 0, softMax: 2, step: 0.02),
+                    weight, threshold]
+            case .smoothNormals:
+                return [Parameter(key: "factor", label: "Factor", kind: .float,
+                                  value: 0.5, softMin: 0, softMax: 1, step: 0.004, unit: .none)]
+            case .recalculateInside:
+                return Self.recalculateNormals.parameters.map { var p = $0; p.value = 1; return p }
+            case .extrudeManifold:
+                // The Move along the normal, constrained to its Z (the menu's
+                // call), so Z is the one field that moves anything; it starts
+                // where the result shows, as Extrude Faces Along Normals' does.
+                var z = Parameter(key: "value.z", label: "Z",
+                                  kind: .component(keyword: "value", heading: "Move", axis: 2),
+                                  value: 0.2, softMin: -10, softMax: 10, step: 0.004)
+                z.member = "TRANSFORM_OT_translate"
+                return [z]
             }
+        }
+
+        /// An on/off argument, as Blender's panel draws a checkbox.
+        static func toggle(_ key: String, _ label: String, _ on: Bool) -> Parameter {
+            Parameter(key: key, label: label,
+                      kind: .literal([Parameter.Option("False", "Off"), Parameter.Option("True", "On")]),
+                      value: on ? 1 : 0, softMin: 0, softMax: 1, step: 0.02)
+        }
+
+        /// The Intersect operators' Solver, Exact by default.
+        static var solver: Parameter {
+            Parameter(key: "solver", label: "Solver",
+                      kind: .choice([Parameter.Option("FLOAT", "Float"), Parameter.Option("EXACT", "Exact")]),
+                      value: 1, softMin: 0, softMax: 1, step: 0.02)
+        }
+
+        /// Their Merge Threshold, which their panels draw for the Float
+        /// solver only (`if (!use_exact)`).
+        static var mergeThreshold: Parameter {
+            var p = Parameter(key: "threshold", label: "Merge Threshold", kind: .float,
+                              value: 1e-6, softMin: 0, softMax: 0.001, step: 0.0001)
+            p.places = 7
+            p.shownWhen = .init("solver", is: 0)
+            return p
+        }
+
+        /// Symmetrize's and Snap to Symmetry's Direction.
+        static var symmetryDirection: Parameter {
+            Parameter(key: "direction", label: "Direction",
+                      kind: .choice([Parameter.Option("NEGATIVE_X", "-X to +X"),
+                                     Parameter.Option("POSITIVE_X", "+X to -X"),
+                                     Parameter.Option("NEGATIVE_Y", "-Y to +Y"),
+                                     Parameter.Option("POSITIVE_Y", "+Y to -Y"),
+                                     Parameter.Option("NEGATIVE_Z", "-Z to +Z"),
+                                     Parameter.Option("POSITIVE_Z", "+Z to -Z")]),
+                      value: 0, softMin: 0, softMax: 5, step: 0.02)
         }
     }
 
@@ -1558,16 +2436,30 @@ public extension LastOperator {
     /// no 3D View), and with every axis off `mirror=True` mirrors nothing
     /// (the axes are the mesh's, transform_convert.cc). Sent only with an axis
     /// on, X turned on with the redo panel open was not mirrored on adjusting.
+    ///
+    /// `pointer` is the app's view and the 3D cursor, for the rows Blender
+    /// runs at the pointer (`MeshPointer`): Rip Vertices and Extend's ray, and
+    /// Point to Target…'s Target, which starts at the cursor. Nil is a view
+    /// from the front onto a cursor at the origin, for the catalogue's tests;
+    /// the menu always passes its own.
     static func mesh(_ op: Mesh, spinningAround origin: SIMD3<Float>?,
-                     symmetry: MeshSymmetry? = nil) -> LastOperator {
+                     symmetry: MeshSymmetry? = nil, pointer: MeshPointer? = nil) -> LastOperator {
         var made = LastOperator(name: op.displayName, call: op.call,
                                 parameters: op.parameters, location: nil,
                                 restoration: .restoreMesh, needsEditMode: true)
         made.fixedArguments = op.fixedArguments
+        made.memberArguments = op.memberArguments
+        let pointer = pointer ?? .front
+        if op == .pointNormals {
+            made["target_location.x"] = Double(pointer.cursor.x)
+            made["target_location.y"] = Double(pointer.cursor.y)
+            made["target_location.z"] = Double(pointer.cursor.z)
+        }
         if op.honoursMeshSymmetry, symmetry != nil {
             made.fixedArguments.append("mirror=True")
         }
         made.refusal = op.refusal
+        made.unchanged = op.unchanged
         let c = origin ?? .zero
         if op == .spin {
             made["center.x"] = Double(c.x)
@@ -1583,6 +2475,20 @@ public extension LastOperator {
                 "plane_co=(\(number(Double(c.x))), \(number(Double(c.y))), \(number(Double(c.z))))")
         }
         made.lead = op.lead
+        if op == .ripVerticesExtend {
+            // `rip_edge`'s exec takes the ray its invoke makes from the
+            // pointer; here the pointer is over Blender's 3D cursor in the
+            // app's view (`_blenderkit_meshmenu.pointer_ray`, read from
+            // Blender's cursor when it runs). Its poll wants a 3D View
+            // (EDBM_view3d_poll): the borrowed one, the call with its undo
+            // off, as every call under it is (`refuse_undo_in_area`).
+            made.lead = (made.lead.map { $0 + "\n" } ?? "") + """
+                import _blenderkit_context
+                _bk_ray = _blenderkit_meshmenu.pointer_ray(\(pointer.pythonArguments(up: false)))
+                """
+            made.memberArguments["MESH_OT_rip_edge"] = ["\"location\": _bk_ray[0]", "\"direction\": _bk_ray[1]"]
+            made.within = "_blenderkit_context.temp_override_view3d('Rip Vertices and Extend')"
+        }
         return made
     }
 }
@@ -1718,7 +2624,8 @@ public extension LastOperator {
     /// 32-sided circle cut a plane and each face of a cube with every new
     /// vertex on the circle to within 1e-6; the rest of what was measured is
     /// in that module's docstring. `knife_tool`, the drawn knife, is still
-    /// modal and still refuses.
+    /// modal and refuses without a pointer; the toolbar's Knife cuts along a
+    /// drawn path through this same operator (`LastOperator.knife`).
     ///
     /// Cut Through is the one property Blender's own redo panel offers for it,
     /// and the only argument the operator takes.

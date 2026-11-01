@@ -72,15 +72,6 @@ public enum BpyCommands {
     public static let selectAll = "bpy.ops.object.select_all(action='SELECT')"
     public static let deselect  = "bpy.ops.object.select_all(action='DESELECT')"
 
-    public static func setLocation(_ name: String, _ v: SIMD3<Float>) -> String {
-        String(format: "bpy.data.objects[\"%@\"].location = (%.4f, %.4f, %.4f)", name, v.x, v.y, v.z)
-    }
-    public static func setRotation(_ name: String, _ v: SIMD3<Float>) -> String {
-        String(format: "bpy.data.objects[\"%@\"].rotation_euler = (%.4f, %.4f, %.4f)", name, v.x, v.y, v.z)
-    }
-    public static func setScale(_ name: String, _ v: SIMD3<Float>) -> String {
-        String(format: "bpy.data.objects[\"%@\"].scale = (%.4f, %.4f, %.4f)", name, v.x, v.y, v.z)
-    }
 }
 
 /// A stand-in interpreter that understands a small, explicit subset of `bpy`
@@ -343,7 +334,7 @@ public final class BpySession {
     /// holds every other key the same way while the brush is down.
     public internal(set) var sculptStrokeOpen = false
     /// What the reader is told when something waits for the stroke.
-    public static let strokeOpenMessage = "A sculpt stroke is in progress. Lift the finger or Pencil first."
+    public static let strokeOpenMessage = "A brush stroke is in progress. Lift the finger or Pencil first."
 
     /// A curve's or a lattice's points are being dragged, from
     /// `BpyBridge.beginPointDrag` to its commit or cancel. Every frame puts
@@ -357,11 +348,25 @@ public final class BpySession {
     public internal(set) var pointDragOpen = false
     public static let pointDragOpenMessage = "Points are being moved. Lift the finger first."
 
+    /// A drag Blender previews because a constraint decides where something
+    /// goes (a gizmo or free drag, or a Transform field's scrub), from
+    /// `BpyBridge.beginConstrainedDrag` to `endConstrainedDrag`. Each frame
+    /// puts the channels back and runs the release's call again
+    /// (`_blenderkit_constraints.drag_frame`), the curve-point drag's design,
+    /// so it holds every other command the same way. Round 4's review measured
+    /// the cost of not holding it, with the app's undo stack: an Undo between
+    /// two frames put a cube with Limit Location back at y 0 and the step to
+    /// 'Limit Location', and the next frame and the drag's end put it at y 2
+    /// again — the undone change back with no step under it.
+    public internal(set) var constrainedDragOpen = false
+    public static let constrainedDragOpenMessage = "Objects are being moved. Lift the finger first."
+
     /// What holds every other command while a gesture streams into Blender,
     /// in the words the reader is told; nil when nothing does.
     public var gestureHold: String? {
         if sculptStrokeOpen { return Self.strokeOpenMessage }
         if pointDragOpen { return Self.pointDragOpenMessage }
+        if constrainedDragOpen { return Self.constrainedDragOpenMessage }
         return nil
     }
 
@@ -630,10 +635,18 @@ public final class BpySession {
             source = code
             changesScene = true
         }
-        if changesScene { prepareBackendChange() }
+        // The history's first step, if it has none yet, before any console
+        // line — not only the ones that read as Python. It is what makes
+        // Blender's undo stack, and Sculpt Mode's operators crash without one:
+        // ncdu's mini-shell runs `python` inside a line that reads as `ncdu`
+        // (round 4's review of group 7; `_blenderkit_context.require_undo_stack`
+        // refuses such a call off the main thread, where no stack can be
+        // made). Once the history has a step this does nothing.
+        prepareBackendChange()
         if Self.runsOffMainThread, !ScriptThread.needsMainThread(source) {
             startGPUOnMainThread(before: source, scene: scene)
         }
+        if changesScene { armCyclesWarning(for: source, scene: scene) }
 
         runKind = .console
         isRunning = true
@@ -666,6 +679,7 @@ public final class BpySession {
             self.console += lines.map { BpyLine(failed ? .error : .output, $0) }
             self.lastConsoleOutput = start..<self.console.count
             self.isRunning = false
+            self.disarmCyclesWarning(scene: scene)
             if changesScene { self.pushUndo("Console Command") }
         }
 
@@ -756,6 +770,7 @@ public final class BpySession {
         }
         prepareBackendChange()
         history.append(source)
+        armCyclesWarning(for: source, scene: scene)
         let lines = Self.lineCount(of: source)
         let before = scene.objects.count
         console.append(BpyLine(.info, "--- Run Script · \(lines) lines ---"))
@@ -877,7 +892,30 @@ public final class BpySession {
         }
         lastRun = outcome
         console.append(BpyLine(error == nil ? .info : .error, outcome.consoleLine))
+        disarmCyclesWarning(scene: scene)
         pushUndo("Run Script")
+    }
+
+    /// Whether `_blenderkit_cycles` is armed for the run in progress.
+    @ObservationIgnored private var cyclesWarningArmed = false
+
+    /// Before a run that may render with Cycles while its Metal kernels are
+    /// not known to be built: the Render panel's warning, in the console,
+    /// before the render starts (`_blenderkit_cycles`). A script render on
+    /// the user's iPad M3 was still running at 195 s with nothing said.
+    private func armCyclesWarning(for source: String, scene: BKScene) {
+        guard usesRealBlender, CyclesKernels.mayRender(source), !CyclesKernels.built else { return }
+        _ = runtime.query(CyclesKernels.arm, scene: scene)
+        cyclesWarningArmed = true
+    }
+
+    /// After it: the handlers go, and a Cycles render that finished on the
+    /// GPU means the kernels are built — for the Render panel too.
+    private func disarmCyclesWarning(scene: BKScene) {
+        guard cyclesWarningArmed else { return }
+        cyclesWarningArmed = false
+        let printed = runtime.query(CyclesKernels.disarm, scene: scene).map(\.text)
+        if CyclesKernels.finishedOnGPU(printed) { CyclesKernels.built = true }
     }
 
     public func stopScript() {
@@ -1038,13 +1076,29 @@ public final class BpySession {
         let name = direction < 0 ? backendHistory.undoLabel : backendHistory.redoLabel
         let started = Date()
         let output = runtime.evaluate(BackendHistoryPython.step(direction), scene: boundScene)
-        if output.contains(where: { $0.kind == .error }) { console += output; return }
-        applyBackendHistory(output.filter { $0.kind == .output }.map(\.text).joined(separator: "\n"),
-                            what: verb, started: started, mirror: runtime.lastSyncDuration)
+        let errors = output.filter { $0.kind == .error }
+        let state = output.filter { $0.kind == .output }.map(\.text).joined(separator: "\n")
+        // An error with no state back is the step's own failure. With the state
+        // back, the step was taken and the mirror's pass after it refused: a
+        // file the history opened that changed after the app wrote it is priced
+        // as a script's load (`_blenderkit_gate.opening`), and what makes more
+        // is held. The history follows Python, and the words are said.
+        guard errors.isEmpty || BackendHistoryState.parse(state) != nil else { console += output; return }
+        applyBackendHistory(state, what: verb, started: started, mirror: runtime.lastSyncDuration)
         backendRevision &+= 1
         noteBackendChange()
         note((name.isEmpty ? verb : "\(verb) \(name)")
              + ". Reacquire Python variables that referenced old Blender datablocks.")
+        if let last = errors.last?.text {
+            console += errors
+            let said = last.hasPrefix("RuntimeError: ") ? String(last.dropFirst("RuntimeError: ".count)) : last
+            lastRun = RunOutcome(lines: 0, duration: 0, error: "\(verb): \(said)",
+                                 objectsBefore: boundScene.objects.count, objectsAfter: boundScene.objects.count)
+            #if DEBUG
+            print("[bk-undo] \(verb) said: \(said)")
+            fflush(stdout)
+            #endif
+        }
     }
 
     /// Undoes the step on top so that the next `recordBackendChange(_:replace:)`
@@ -1096,6 +1150,9 @@ public final class BpySession {
     }
 
     private func autosaveIfQuiet() {
+        // Never during Test All Features: the scene then is the test's own,
+        // and the recovery file has to keep the user's (`beginFeatureTest`).
+        guard !featureTestOpen else { return }
         // Not under a stroke either: the write would hold the stroke's chunks
         // for as long as it takes, and the stroke's end schedules it again.
         switch autosavePolicy.decide(running: isRunning || gestureHold != nil) {
@@ -1109,20 +1166,25 @@ public final class BpySession {
     /// app is going to the background. Not while a script runs: the script's
     /// thread has bpy, and it will be written once the run ends.
     public func flushBackendAutosave() {
-        guard usesRealBlender, autosavePolicy.isPending, !isRunning else { return }
+        guard usesRealBlender, autosavePolicy.isPending, !isRunning, !featureTestOpen else { return }
         autosaveCheck?.cancel()
         writeBackendAutosave()
     }
 
-    private func writeBackendAutosave() {
+    /// Returns whether the file was written (the Self-Test starts only then).
+    @discardableResult
+    private func writeBackendAutosave() -> Bool {
         guard let written = capture(BackendHistoryPython.autosave(path: Self.recoveryURL.path)) else {
-            return
+            return false
         }
+        // What the launch opens as the app's own (`RecoveryRecord`).
+        RecoveryRecord.record(Self.recoveryURL.path)
         autosavePolicy.noteWritten()
         #if DEBUG
         print("[bk-undo] autosave.blend written in \(written.split(separator: "\n").last ?? "?") ms")
         fflush(stdout)
         #endif
+        return true
     }
 
     public func openDocument(_ url: URL, scene: BKScene) {
@@ -1130,7 +1192,8 @@ public final class BpySession {
         if let held = gestureHold { note(held); return }
         if usesRealBlender {
             guard url.pathExtension == "blend" else { note("Open a .blend file with the Blender backend."); return }
-            submit("bpy.ops.wm.open_mainfile(filepath=\(Bpy.quote(url.path)), load_ui=False)", scene: scene)
+            submit(Bpy.appLoad("bpy.ops.wm.open_mainfile(filepath=\(Bpy.quote(url.path)), load_ui=False)"),
+                   scene: scene)
         } else {
             do { try SceneDocument.read(url, into: scene) }
             catch { note("Open failed: \(error.localizedDescription)") }
@@ -1254,6 +1317,7 @@ public final class BpySession {
     /// things they did not already know.
     public func evaluate(_ source: String, scene: BKScene) -> [BpyLine] {
         let output = runtime.evaluate(source, scene: scene)
+        lastMirrorDuration = runtime.lastSyncDuration
         console += output.filter { $0.kind != .input }
         if usesRealBlender { backendRevision &+= 1 }
         return output
@@ -1309,6 +1373,195 @@ public final class BpySession {
         if usesRealBlender { stepBackendHistory(1); return }
         guard let boundScene, let undo, let name = undo.redo(into: boundScene) else { return }
         console.append(BpyLine(.info, "Redo: \(name)"))
+    }
+
+    // MARK: Self-Test
+
+    /// Runs the Self-Test (`_blenderkit_selftest.run`, the Python
+    /// `SelfTest.python` builds) and returns its report, or nil when it did
+    /// not run (said in the console).
+    ///
+    /// On the main thread, as a script that loads a file runs: the checks call
+    /// `temp_override`, Blender's Undo, file loads and a render, which only the
+    /// main thread's context can (`ScriptThread.needsMainThread`). The
+    /// interface is given its turns from inside the run (`ConsoleStream`'s
+    /// heartbeat), and each check's progress line reaches `onEvent` as it is
+    /// printed.
+    ///
+    /// The user's scene goes to disk first as the recovery file, so a check
+    /// that takes the app down leaves the next launch the scene as it was. The
+    /// run saves a copy of its own too, works in Blender's startup file, and
+    /// opens that copy again at the end. The checks mirror into a scene nobody
+    /// draws; the user's, opened again, is mirrored into the viewport after.
+    /// Opening a file ends Blender's undo history, so the history the run
+    /// leaves — its own step, back to the scene as it was — is applied here as
+    /// a push's would be.
+    @discardableResult
+    public func runSelfTest(about: [(String, String)], onEvent: @escaping (SelfTest.Event) -> Void) -> URL? {
+        guard usesRealBlender else {
+            note("The Self-Test needs Blender's own module, which runs on an iPad and on a Mac with Apple silicon.")
+            return nil
+        }
+        guard !isRunning, let boundScene else { note("A script is running."); return nil }
+        if let held = gestureHold { note(held); return nil }
+        let report = SelfTest.folder.appendingPathComponent(SelfTest.reportName())
+        do {
+            try FileManager.default.createDirectory(at: SelfTest.folder, withIntermediateDirectories: true)
+        } catch {
+            note("The Self-Test could not make its folder: \(error.localizedDescription)")
+            return nil
+        }
+        let render = FileManager.default.temporaryDirectory.appendingPathComponent("self-test-render.png").path
+        prepareBackendChange()
+        autosaveCheck?.cancel()
+        guard writeBackendAutosave() else {
+            note("The Self-Test did not start: the scene could not be saved first.")
+            return nil
+        }
+        runKind = .console
+        isRunning = true
+        runElapsed = 0
+        let carrier = LineCarrier()
+        let kept = SelfTestHistory()
+        ConsoleStream.sink = { chunk in
+            for line in carrier.take(chunk) {
+                guard let event = SelfTest.event(line) else { continue }
+                if case .history(let state) = event { kept.state = state } else { onEvent(event) }
+            }
+        }
+        ConsoleStream.tick = { [weak self] in
+            guard let self, let started = ConsoleStream.runStarted else { return }
+            let now = (Date().timeIntervalSince(started) * 10).rounded(.down) / 10
+            if now != self.runElapsed { self.runElapsed = now }
+        }
+        // Drawn as running before the main thread goes into Blender.
+        ConsoleStream.pump()
+        let started = Date()
+        ConsoleStream.runStarted = started
+        let heartbeat = ConsoleStream.startHeartbeat()
+        let output = runtime.query(SelfTest.python(report: report.path, historyRoot: Self.historyRoot,
+                                                   renderOutput: render, about: about),
+                                   scene: BKScene(startupFile: false))
+        heartbeat.cancel()
+        ConsoleStream.sink = nil
+        ConsoleStream.tick = nil
+        ConsoleStream.runStarted = nil
+        // The user's scene, opened again by the run, back in the viewport.
+        let mirrored = runtime.evaluate("pass", scene: boundScene)
+        isRunning = false
+        runElapsed = 0
+        if let state = kept.state {
+            applyBackendHistory(state, what: "Self-Test", started: started)
+            backendSeeded = true
+        }
+        backendRevision &+= 1
+        noteBackendChange()
+        // A traceback of the run's own (a check's is in the report).
+        console += (output + mirrored).filter { $0.kind == .error }
+        guard FileManager.default.fileExists(atPath: report.path) else {
+            note("The Self-Test did not write a report.")
+            return nil
+        }
+        note("Self-Test: Documents/Self-Test/\(report.lastPathComponent)")
+        return report
+    }
+
+    // MARK: Test All Features
+
+    /// Test All Features is running in the scratch scene `beginFeatureTest`
+    /// opened: the recovery file is not written until `endFeatureTest` has
+    /// put the user's scene back, so a run that takes the app down leaves
+    /// the next launch the scene as it was, never a feature's.
+    public private(set) var featureTestOpen = false
+
+    /// How long the mirror pass of the last command took (Blender's scene
+    /// read back into the 3D View's), for Test All Features to say where a
+    /// slow command's time went. Kept by `evaluate`: the runtime's own figure
+    /// is cleared by the undo push's read straight after.
+    public private(set) var lastMirrorDuration: TimeInterval = 0
+
+    /// What `beginFeatureTest` found: the user's scene saved and Blender's
+    /// startup file open, or why nothing was touched.
+    public struct FeatureTestStart {
+        public let started: Bool
+        /// Why it did not start, in one line.
+        public let refusal: String?
+        public let objects: Int
+        public let vertices: Int
+        public let blender: String
+    }
+
+    /// Saves the user's scene and opens Blender's startup file for Test All
+    /// Features (`_blenderkit_featuretest.begin`), as the Self-Test does: the
+    /// recovery file written first, the run's own copy saved, the scene
+    /// fingerprinted. Unlike the Self-Test's, the scratch scene is mirrored
+    /// into the 3D View, where every feature then draws. Nothing is touched
+    /// when it refuses: painted pixels unsaved, a script or a stroke running,
+    /// or the stand-in for Blender's module.
+    public func beginFeatureTest() -> FeatureTestStart {
+        func refused(_ why: String) -> FeatureTestStart {
+            FeatureTestStart(started: false, refusal: why, objects: 0, vertices: 0, blender: "")
+        }
+        guard usesRealBlender else {
+            return refused("it needs Blender's own module, which runs on an iPad and on a Mac with Apple silicon")
+        }
+        guard !isRunning, let boundScene else { return refused("a script is running") }
+        if let held = gestureHold { return refused(held) }
+        prepareBackendChange()
+        autosaveCheck?.cancel()
+        guard writeBackendAutosave() else { return refused("your scene could not be saved first") }
+        let saved = FileManager.default.temporaryDirectory
+            .appendingPathComponent("blender-local-feature-test-\(ProcessInfo.processInfo.processIdentifier).blend")
+        let started = Date()
+        let output = runtime.evaluate(FeatureTest.beginPython(saved: saved.path, historyRoot: Self.historyRoot),
+                                      scene: boundScene)
+        backendRevision &+= 1
+        guard let answer = FeatureTest.answer(in: output.map(\.text)) else {
+            console += output.filter { $0.kind == .error }
+            return refused("Blender did not answer: "
+                           + (output.last { $0.kind == .error }?.text ?? "no output"))
+        }
+        guard answer["ok"] as? Bool == true else {
+            return refused(answer["why"] as? String ?? "Blender refused")
+        }
+        featureTestOpen = true
+        applyFeatureTestHistory(answer, started: started)
+        return FeatureTestStart(started: true, refusal: nil, objects: answer["objects"] as? Int ?? 0,
+                                vertices: answer["vertices"] as? Int ?? 0,
+                                blender: answer["blender"] as? String ?? "")
+    }
+
+    /// Puts the user's scene back (`_blenderkit_featuretest.end`): whether it
+    /// came back exactly, and what the report says about it. The history is
+    /// left with that scene on top. The recovery file already holds it, so
+    /// nothing is written.
+    public func endFeatureTest() -> (restored: Bool, detail: String) {
+        guard featureTestOpen, let boundScene else { return (false, "no test was running") }
+        // A stroke or a drag left open by a feature that failed ends first.
+        if sculptStrokeOpen || pointDragOpen || constrainedDragOpen {
+            note("Test All Features ended a gesture left open.")
+        }
+        let started = Date()
+        let output = runtime.evaluate(FeatureTest.endPython, scene: boundScene)
+        featureTestOpen = false
+        autosaveCheck?.cancel()
+        autosavePolicy.noteWritten()
+        backendRevision &+= 1
+        guard let answer = FeatureTest.answer(in: output.map(\.text)) else {
+            console += output.filter { $0.kind == .error }
+            return (false, "Blender did not answer: " + (output.last { $0.kind == .error }?.text ?? "no output")
+                    + "; File ▸ Revert opens the app's recovery file, which holds your scene")
+        }
+        applyFeatureTestHistory(answer, started: started)
+        return (answer["restored"] as? Bool == true, answer["detail"] as? String ?? "")
+    }
+
+    private func applyFeatureTestHistory(_ answer: [String: Any], started: Date) {
+        guard let history = answer["history"], !(history is NSNull),
+              let data = try? JSONSerialization.data(withJSONObject: history),
+              let text = String(data: data, encoding: .utf8) else { return }
+        applyBackendHistory(text, what: "Test All Features", started: started)
+        backendSeeded = true
     }
 
     /// A one-line message from the interface itself, not from Python.

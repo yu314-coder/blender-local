@@ -85,10 +85,63 @@ public struct EditSelection: Sendable {
     /// Triangle index, so face *n* is `indices[3n ..< 3n+3]`.
     public var faces: Set<Int> = []
 
+    /// Blender's selection order (`BMesh.select_history`), oldest first: the
+    /// last entry is the active element, which Blender draws white and which
+    /// Ctrl+click (Pick Shortest Path), Next Active, Previous Active and Side
+    /// of Active start from. In Blender's own numbering (`EditElement`), as
+    /// the mirror reads it (`_blenderkit_select.history_bytes`). A tap adds
+    /// to it as Blender's click does (`picked`), and `Bpy.pushEditSelection`
+    /// hands it back — before round 4 the app's taps never set it, so Blender
+    /// had no active element to start any of those from.
+    public var history: [EditElement] = []
+    /// Blender's active face (`bm.faces.active`) while it is selected and not
+    /// the last of `history`: Blender keeps it apart, and a Ctrl+click in Face
+    /// mode starts from it when the order has no face. A Blender polygon.
+    public var activeFace: Int?
+
     public var isEmpty: Bool { vertices.isEmpty && edges.isEmpty && faces.isEmpty }
+
+    /// The active element: the last of the selection order.
+    public var active: EditElement? { history.last }
 
     public mutating func clear() {
         vertices.removeAll(); edges.removeAll(); faces.removeAll()
+        history.removeAll(); activeFace = nil
+    }
+}
+
+/// One element of Blender's edit mesh by Blender's own index: a vertex, an
+/// edge (its place in Blender's edge list, `EditTopology.blenderEdges`) or a
+/// face (a Blender polygon). The viewport numbers edges and faces its own way
+/// — edges built from triangles, faces as triangles — so the selection order,
+/// which Blender keeps, is held in Blender's.
+public enum EditElement: Hashable, Sendable {
+    case vertex(Int)
+    case edge(Int)
+    case face(Int)
+
+    /// The kind as `_blenderkit_select` numbers it: 0, 1, 2.
+    public var kind: Int {
+        switch self {
+        case .vertex: return 0
+        case .edge:   return 1
+        case .face:   return 2
+        }
+    }
+
+    public var index: Int {
+        switch self {
+        case .vertex(let i), .edge(let i), .face(let i): return i
+        }
+    }
+
+    /// The select mode whose elements are of this kind.
+    public var mode: MeshSelectMode {
+        switch self {
+        case .vertex: return .vertex
+        case .edge:   return .edge
+        case .face:   return .face
+        }
     }
 }
 

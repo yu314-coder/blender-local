@@ -40,12 +40,9 @@ struct RootView: View {
     private func runLaunchScriptIfRequested() {
         #if DEBUG
         let args = ProcessInfo.processInfo.arguments
-        guard let i = args.firstIndex(of: "-eval64"), i + 1 < args.count,
-              let data = Data(base64Encoded: args[i + 1]),
-              let source = String(data: data, encoding: .utf8)
-        else { return }
-        // The script is already in the draft — `BlenderLocalApp.init` puts it
-        // there, because by the time this runs the editor has read it.
+        guard let source = ScriptDocument.launchSource else { return }
+        // The editor shows it too, in memory (`ScriptDocument.restored`); the
+        // reader's draft on disk is never written with it.
 
         // Wait for the first frame before running.
         //
@@ -103,13 +100,13 @@ struct RootView: View {
                     } ?? 0
                     print("[bk] export \(exporter.ext): "
                           + (url == nil ? "FAILED" : "wrote \(size ?? 0) bytes"))
-                    // And straight back in, through the call the Import Model…
-                    // item makes: a format that writes but cannot be read is
+                    // And straight back in, through the call File ▸ Import's
+                    // row makes: a format that writes but cannot be read is
                     // only half a feature.
                     guard let url, let op = BpySession.importers[exporter.ext] else { continue }
                     let before = scene.objects.count
                     let outcome = bridge?.run(BpySession.importPython(op, from: url.path),
-                                              undo: "Import Model")
+                                              undo: BpySession.importUndo(op))
                     print("[bk] import \(exporter.ext): "
                           + (outcome?.succeeded == true && scene.objects.count > before
                              ? "read back, \(before) -> \(scene.objects.count) objects"
@@ -183,9 +180,10 @@ struct RootView: View {
     /// as the Add Modifier menu sends it. A hook with its own Python would
     /// test nothing a button sends.
     ///
+    /// `@select=Name` makes that object alone selected and active, as a tap.
     /// Two steps set the object up as other controls would: `@mode=SCULPT`
     /// (any mode) is F3's Run on `object.mode_set` (`BlenderOperatorForm`),
-    /// and `@hide=1` / `@hide=0` is the Object tab's Show in Viewports
+    /// and `@hide=1` / `@hide=0` is the Object tab's Visibility ▸ Show In ▸ Viewports
     /// switch (`Bpy.setDisabledInViewports`) — the path round 3's review took
     /// to an object Blender will not take out of Sculpt Mode. Each step also
     /// prints the banner the interface would show.
@@ -200,13 +198,19 @@ struct RootView: View {
             .flatMap { $0 + 1 < args.count ? args[$0 + 1] : nil }
         guard steps != nil || args.contains("-modifier-dump") else { return }
         func describe(_ m: Modifier) -> String {
-            let settings = (Bpy.modifierSettings(m)).map { line -> String in
+            // The budget checks that ride in front of a level are no setting.
+            let settings = Bpy.modifierSettings(m).map { line -> String in
                 guard let dot = line.range(of: "].") else { return line }
                 return line[dot.upperBound...].replacingOccurrences(of: " = ", with: "=")
             }
             var extra: [String] = []
             if m.kind == .multires { extra.append("total_levels=\(m.totalLevels)") }
             if m.kind == .correctiveSmooth { extra.append("rest_source=\(m.restSource)") }
+            // A declared row's read-only facts (round 4, group 8).
+            for field in m.kind.fields where field.isReadOnly {
+                if let v = m.values[field.key] { extra.append("\(field.key)=\(v)") }
+            }
+            if m.kind.takesVertexGroup && !m.vertexGroup.isEmpty { extra.append("vertex_group=\(m.vertexGroup)") }
             return "\(m.name) [\(m.blenderType) \"\(m.typeLabel)\" \(m.kind.rawValue)] "
                 + "viewport=\(m.showInViewport ? 1 : 0) render=\(m.showInRender ? 1 : 0)"
                 + ((settings + extra).isEmpty ? "" : " " + (settings + extra).joined(separator: " "))
@@ -216,6 +220,7 @@ struct RootView: View {
             print("[bk] modifiers \(label) on \(obj.name), \(obj.mesh.vertices.count) verts, "
                   + "\(obj.modifiers.count) rows, \(scene.mode) mode:")
             for (i, m) in obj.modifiers.enumerated() { print("[bk]   \(i) \(describe(m))") }
+            print("[bk]   \(BudgetProbe.report(bridge))")
         }
         func whenIdle(_ body: @escaping () -> Void) {
             guard !session.isRunning else {
@@ -245,24 +250,39 @@ struct RootView: View {
                           + "; now \(scene.mode.bpyMode); banner: \(banner())")
                     continue
                 }
+                if step.hasPrefix("@select=") {
+                    // A tap on an object: it alone selected and active.
+                    let name = String(step.dropFirst("@select=".count))
+                    let outcome = bridge?.run(Bpy.objectSelection([name], active: name), undo: nil)
+                    print("[bk] step \(step): " + (outcome?.succeeded == true ? "active \(scene.active?.name ?? "none")"
+                                                   : "FAILED \(outcome?.error ?? "no bridge")"))
+                    continue
+                }
                 if step.hasPrefix("@hide="), let obj = scene.active {
                     let outcome = bridge?.run(Bpy.setDisabledInViewports(obj.name, step.hasSuffix("1")),
-                                              undo: "Show in Viewports")
-                    print("[bk] step \(step): Show in Viewports on \(obj.name) "
+                                              undo: "Viewports")
+                    print("[bk] step \(step): Visibility ▸ Show In ▸ Viewports on \(obj.name) "
                           + (outcome?.succeeded == true ? "succeeded" : "FAILED \(outcome?.error ?? "no bridge")")
                           + "; disabled \(obj.disabledInViewports); banner: \(banner())")
                     continue
                 }
                 if step.hasPrefix("+") {
-                    guard let obj = scene.active,
-                          let kind = ModifierKind(rawValue: String(step.dropFirst())),
-                          ModifierKind.addable.contains(kind) else {
-                        print("[bk] step \(step): no active object, or not a kind Add Modifier offers")
+                    // `+kind` (a ModifierKind raw value) or `+TYPE` (any row of
+                    // Blender's Add Modifier on this object, by its type or an
+                    // Essentials row by name): what the menu's row sends
+                    // (`Bpy.addModifierRow`, the vertex budget's price first).
+                    let name = String(step.dropFirst())
+                    let rows = scene.active.map { ModifierCatalog.rows(for: $0.blenderType) } ?? []
+                    let type = ModifierKind(rawValue: name).map(\.bpyType) ?? name
+                    guard let obj = scene.active, let row = rows.first(where: { $0.type == type }) else {
+                        print("[bk] step \(step): no active object, or not a row Add Modifier offers on it")
                         continue
                     }
-                    let outcome = bridge?.run(Bpy.addModifier(kind, on: obj.mesh), undo: "Add Modifier")
-                    print("[bk] step \(step): Add Modifier "
-                          + (outcome?.succeeded == true ? "succeeded" : "FAILED \(outcome?.error ?? "no bridge")"))
+                    let started = Date()
+                    let outcome = bridge?.run(Bpy.addModifierRow(row, on: obj.mesh), undo: UndoStep.addModifier)
+                    print("[bk] step \(step) (\(Int(Date().timeIntervalSince(started) * 1000)) ms): Add Modifier ▸ \(row.label) "
+                          + (outcome?.succeeded == true ? "succeeded" : "FAILED \(outcome?.error ?? "no bridge")")
+                          + (outcome?.succeeded == true ? "" : "; banner: \(banner())"))
                     dump("after \(step)")
                     continue
                 }
@@ -288,8 +308,9 @@ struct RootView: View {
                     print("[bk] step \(step): the row sends nothing")
                     continue
                 }
+                let started = Date()
                 let outcome = bridge?.run(command.lines, undo: command.undo)
-                print("[bk] step \(step): \(command.undo) "
+                print("[bk] step \(step) (\(Int(Date().timeIntervalSince(started) * 1000)) ms): \(command.undo) "
                       + (outcome?.succeeded == true ? "succeeded" : "FAILED \(outcome?.error ?? "no bridge")")
                       + " — " + command.lines.joined(separator: " / ").replacingOccurrences(of: "\n", with: " ⏎ ")
                       + (outcome?.succeeded == true ? "" : "; banner: \(banner())"))
@@ -318,7 +339,14 @@ struct RootView: View {
             args.firstIndex(of: flag).flatMap { $0 + 1 < args.count ? args[$0 + 1] : nil }
         }
         let opsearch = value("-opsearch"), uvRow = value("-uv-row")
-        guard opsearch != nil || uvRow != nil || args.contains("-dump-state") else { return }
+        // `-data-api '[["path", "property", "json"], ...]'`: the Data API
+        // row's edits, each the string its field sends
+        // (`BlenderDataBrowser.setCommand`), with the budget's count and
+        // Blender's after each (`BudgetProbe`).
+        let dataAPI = value("-data-api").flatMap { text -> [[String]]? in
+            (try? JSONSerialization.jsonObject(with: Data(text.utf8))) as? [[String]]
+        }
+        guard opsearch != nil || uvRow != nil || dataAPI != nil || args.contains("-dump-state") else { return }
         func whenIdle(_ body: @escaping () -> Void) {
             guard !session.isRunning else {
                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) { whenIdle(body) }
@@ -354,7 +382,26 @@ struct RootView: View {
                     print("[bk] opsearch form for \(path): could not be read")
                 }
                 let outcome = bridge?.run(BlenderOperatorForm.command(path: path, json: json), undo: path)
-                print("[bk] opsearch Run \(path) \(json): \(said(outcome)); now in \(scene.mode.bpyMode) mode")
+                // The active object's Multires levels as Blender holds them
+                // (viewport, sculpt, total), for the Sculpt Mode budgets.
+                let levels = bridge?.capture("""
+                    _bk_a = bpy.context.view_layer.objects.active
+                    print([(_bk_m.name, _bk_m.levels, _bk_m.sculpt_levels, _bk_m.total_levels)
+                           for _bk_m in (_bk_a.modifiers if _bk_a is not None else []) if _bk_m.type == 'MULTIRES'])
+                    """)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? "?"
+                print("[bk] opsearch Run \(path) \(json): \(said(outcome)); now in \(scene.mode.bpyMode) mode; "
+                      + "Multires levels in Blender \(levels)")
+            }
+            for edit in dataAPI ?? [] where edit.count == 3 {
+                // The object the path is on (`bpy.data.objects["Name"]…`), else the active one.
+                let owner = edit[0].range(of: #"bpy\.data\.objects\["([^"]*)"\]"#, options: .regularExpression)
+                    .map { String(edit[0][$0].dropFirst("bpy.data.objects[\"".count).dropLast(2)) }
+                print("[bk] data api before \(edit[0]).\(edit[1]) = \(edit[2]): \(BudgetProbe.report(bridge, object: owner))")
+                bridge?.dismissReport(bridge?.report?.id ?? -1)
+                let outcome = bridge?.run(BlenderDataBrowser.setCommand(path: edit[0], property: edit[1], json: edit[2]),
+                                          undo: edit[1])
+                print("[bk] data api \(edit[0]).\(edit[1]) = \(edit[2]): \(said(outcome)); "
+                      + BudgetProbe.report(bridge, object: owner))
             }
             if let name = uvRow {
                 if let op = UVOperator(rawValue: name) {
@@ -531,6 +578,9 @@ struct RootView: View {
         }
         .background(BTheme.topbar)
         .ignoresSafeArea(.keyboard, edges: .bottom)
+        #if DEBUG
+        .modifier(DebugFrame())
+        #endif
         // ⌘1 and ⌘2 for the tabs, ⇧⌘P for the operator search — the commands
         // that exist whichever tab is showing.
         .focusedSceneValue(\.appKeys, AppKeyActions(
@@ -561,8 +611,26 @@ struct RootView: View {
             if session.usesRealBlender {
                 let recovery = SceneDocument.documentsURL.appendingPathComponent("autosave.blend")
                 if FileManager.default.fileExists(atPath: recovery.path) {
-                    // Read recovery before the first checkpoint replaces it.
-                    _ = session.evaluate("bpy.ops.wm.open_mainfile(filepath=\(Bpy.quote(recovery.path)), load_ui=False)", scene: scene)
+                    // Read recovery before the first checkpoint replaces it:
+                    // as saved while it is as the app wrote it, else priced as
+                    // a script's load (a script can write it, `RecoveryRecord`).
+                    let call = "bpy.ops.wm.open_mainfile(filepath=\(Bpy.quote(recovery.path)), load_ui=False)"
+                    let load = RecoveryRecord.verdict(recovery.path) == .changed
+                        ? Bpy.changedRecovery(call)
+                        : Bpy.appLoad(call)
+                    let output = session.evaluate(load, scene: scene)
+                    // A refusal of a changed recovery file (`Bpy.changedRecovery`)
+                    // is said where the top bar shows what the last run did, not
+                    // only in the console.
+                    if let last = output.last(where: { $0.kind == .error })?.text {
+                        let said = last.hasPrefix("RuntimeError: ") ? String(last.dropFirst("RuntimeError: ".count)) : last
+                        session.lastRun = .init(lines: 0, duration: 0, error: "Recovery: \(said)",
+                                                objectsBefore: scene.objects.count, objectsAfter: scene.objects.count)
+                        #if DEBUG
+                        print("[bk-recovery] said: \(said)")
+                        fflush(stdout)
+                        #endif
+                    }
                 }
             }
             runLaunchScriptIfRequested()
@@ -577,6 +645,21 @@ struct RootView: View {
                 scene.animation.showsTimeline = true
             }
             FocusLog.startIfRequested()
+            // `-ui-audit <tag>`: every labelled element's frame, 7 s in, after
+            // `-panel` and `-object-ops` have done their part
+            // (`AccessibilityDump.audit`).
+            let args = ProcessInfo.processInfo.arguments
+            if let i = args.firstIndex(of: "-ui-audit"), i + 1 < args.count {
+                let tag = args[i + 1]
+                // SwiftUI builds its accessibility tree only once something
+                // asks for it; in a simulator nothing does, and the walk finds
+                // no elements. Automation mode is what a UI test turns on.
+                if let ax = dlopen("/usr/lib/libAccessibility.dylib", RTLD_NOW),
+                   let sym = dlsym(ax, "_AXSSetAutomationEnabled") {
+                    unsafeBitCast(sym, to: (@convention(c) (Int32) -> Void).self)(1)
+                }
+                DispatchQueue.main.asyncAfter(deadline: .now() + 7) { AccessibilityDump.audit(tag) }
+            }
             #endif
         }
         .onChange(of: workspace) { _, ws in
@@ -607,3 +690,25 @@ struct RootView: View {
         }
     }
 }
+
+#if DEBUG
+/// `-ui-frame <width>x<height>`: the whole interface laid out in a frame of
+/// that size inside the window, for the walkthrough's landscape and narrow
+/// cases on a simulator that cannot be rotated from the command line.
+private struct DebugFrame: ViewModifier {
+    func body(content: Content) -> some View {
+        let args = ProcessInfo.processInfo.arguments
+        if let i = args.firstIndex(of: "-ui-frame"), i + 1 < args.count {
+            let parts = args[i + 1].split(separator: "x").compactMap { Double($0) }
+            if parts.count == 2 {
+                content.frame(width: parts[0], height: parts[1]).border(Color.red, width: 1)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+            } else {
+                content
+            }
+        } else {
+            content
+        }
+    }
+}
+#endif

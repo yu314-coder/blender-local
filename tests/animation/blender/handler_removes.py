@@ -15,7 +15,8 @@ attribute 'matrix_world'` instead, and the frame never reached the timeline.
 MODULE is the _blenderkit_anim.py to load (the tree's, or an old copy to show
 the defect). VARIANT is what the handler allocates after it deletes, so that
 freed memory is reused: `meshes`, `geometry` (meshes with faces), `cameras`,
-or `none`.
+or `none` — or `clears`, a handler that clears the whole list instead of
+deleting anything.
 
 Exit 0 when every check passes; 1 when one fails; a crash is the exit code
 Blender dies with.
@@ -143,7 +144,12 @@ removed = keyed[::2]
 
 def user_handler(sc, _depsgraph):
     """What a user's script might do: at frame 5, delete half the keyed
-    objects with their meshes, then make new data-blocks."""
+    objects with their meshes, then make new data-blocks — or, as `clears`,
+    clear every frame handler, the app's own collector with it."""
+    if VARIANT == 'clears':
+        if sc.frame_current == 5:
+            bpy.app.handlers.frame_change_post.clear()
+        return
     if sc.frame_current != 5 or not any(n in bpy.data.objects for n in removed):
         return
     for name in removed:
@@ -187,6 +193,16 @@ sent = [f["frame"] for f in bridge.frames]
 check("every frame reached the timeline, 2 to 7", sent == list(range(2, 8)), sent)
 at5 = next((f for f in bridge.frames if f["frame"] == 5), None)
 names = set(at5["names"]) if at5 else set()
+if VARIANT == 'clears':
+    # The collector went with the list before it ran at frame 5, so what the
+    # frame changed is not known: a whole mirror is asked for.
+    check("frame 5, whose handler cleared the list before the app's collector ran, asks for a whole "
+          "mirror", anim.FULL_MIRROR in printed.getvalue(), printed.getvalue()[-300:])
+    check("and the frames after it send every keyed object again",
+          all(set(f["names"]) == set(keyed) for f in bridge.frames if f["frame"] in (6, 7)),
+          [(f["frame"], len(f["names"])) for f in bridge.frames])
+    print("\nALL PASS" if fail == 0 else "\n%d FAILED" % fail)
+    sys.exit(1 if fail else 0)
 check("frame 5 sends none of the deleted objects", not (names & set(removed)),
       sorted(names & set(removed)))
 check("and every keyed object that is left", names == set(keyed) - set(removed), sorted(names))

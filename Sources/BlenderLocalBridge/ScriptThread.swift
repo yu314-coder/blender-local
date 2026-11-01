@@ -3,23 +3,43 @@ import Foundation
 /// Which thread a script or console line runs on.
 ///
 /// Scripts run off the main thread when the setting says so, which keeps the
-/// interface drawing while they work. Two things work on the main thread
+/// interface drawing while they work. Three things work on the main thread
 /// only. One is `Context.temp_override` with a window, screen, area or region.
 /// Blender gives those members out on the main thread and reads None for them
 /// anywhere else, so off it the override cannot reach the operators inside the
 /// block, and before `_blenderkit_context.py` it also wiped the main thread's
-/// window and screen as it ended. The other is loading a file (`fileReads`).
+/// window and screen as it ended. The others are loading a file (`fileReads`)
+/// and picking a brush (`brushPicks`).
 public enum ScriptThread {
     /// Whether `source` runs on the main thread even when scripts normally run
-    /// off it: whenever it mentions `temp_override` or one of `fileReads` at
-    /// all.
+    /// off it: whenever it mentions `temp_override`, one of `fileReads` or one
+    /// of `brushPicks` at all.
     ///
     /// Deliberately blunt. The members arrive in every shape — keywords,
     /// `**override`, a dict built from `context.copy()` — and a mention in a
     /// comment only costs one run on the main thread, which is how every
     /// script ran before build 20.
     public static func needsMainThread(_ source: String) -> Bool {
-        source.contains("temp_override") || readsFile(source)
+        source.contains("temp_override") || readsFile(source) || picksBrush(source)
+    }
+
+    /// The operators that pick a brush: `brush.asset_activate`, the line
+    /// Blender's Info editor logs for every brush pick.
+    ///
+    /// It gives the brush to the 3D View's tool in Blender's workspace, which
+    /// Blender gives out on the main thread only: off it the pick crashed
+    /// desktop Blender 5.2.1 with the app's context (exit 139 in
+    /// `WM_toolsystem_activate_brush_and_tool`) whether or not the mode had a
+    /// tool, and on the main thread `_blenderkit_context.give_brush_tool`
+    /// makes the tool a file opened in a paint mode lacks (round 4's fix
+    /// round). The same names as `BRUSH_PICKS` in `_blenderkit_context.py`,
+    /// which refuses the pick off the main thread for the calls this check
+    /// cannot see; run-scriptthread-tests.sh compares the two lists.
+    public static let brushPicks = ["asset_activate"]
+
+    /// Whether `source` mentions one of `brushPicks`.
+    public static func picksBrush(_ source: String) -> Bool {
+        brushPicks.contains { source.contains($0) }
     }
 
     /// The `bpy.ops.wm` operators that load a .blend over the scene.
@@ -75,8 +95,14 @@ public enum ScriptThread {
     public static let fileReadNote =
         "Running on the main thread: loading a file takes down Blender's screen, which exists there only."
 
+    /// Said instead when the run is there because it picks a brush.
+    public static let brushPickNote =
+        "Running on the main thread: picking a brush needs Blender's workspace, which Blender gives out there only."
+
     /// The note for a run of `source` that `needsMainThread` put on the main thread.
     public static func note(for source: String) -> String {
-        readsFile(source) ? fileReadNote : mainThreadNote
+        if readsFile(source) { return fileReadNote }
+        if !source.contains("temp_override") && picksBrush(source) { return brushPickNote }
+        return mainThreadNote
     }
 }

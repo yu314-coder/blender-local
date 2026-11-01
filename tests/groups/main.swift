@@ -12,6 +12,13 @@ func check(_ label: String, _ ok: Bool, _ detail: @autoclosure () -> String = ""
     if !ok { failures += 1 }
 }
 
+/// The settings an edit sends, the vertex budget's price in front of them
+/// left out: every edit carries one (`Bpy.modifierEdit`, round 4's fix round),
+/// and tests/budget holds each to it.
+func sent(_ lines: [String]) -> [String] {
+    lines.filter { !$0.hasPrefix("__import__('_blenderkit_budget').price_modifier(") }
+}
+
 // What `_blenderkit_groups.record` writes for a mesh with two groups, the
 // second called `a;b|c=d%e` (escaped, as `_value` escapes it), and three keys.
 let record = "kind=head;active_group=1.0;weight=0.25;active_key=2.0;use_relative=1;reference=Basis;"
@@ -136,9 +143,9 @@ check("Select and Deselect name their operators",
 check("Remove takes all=False; Delete All all=True",
       GroupsBpy.removeGroup("L", object: "G").call.contains("all=False")
       && GroupsBpy.removeAllGroups(object: "G").call.contains("all=True"))
-check("New Shape from Mix is from_mix=True, and named so",
+check("New Combined is from_mix=True, and its step is shape_key_add's, as Blender's history names it",
       GroupsBpy.addKey(fromMix: true, object: "G").call == "bpy.ops.object.shape_key_add(from_mix=True)"
-      && GroupsBpy.addKey(fromMix: true, object: "G").undo == "New Shape from Mix")
+      && GroupsBpy.addKey(fromMix: true, object: "G").undo == "Add Shape Key")
 check("Apply All is apply_mix=True",
       GroupsBpy.removeAllKeys(apply: true, object: "G").call.contains("apply_mix=True"))
 // In Edit Mode no key setting and no switch pushes a step (measured: the
@@ -167,7 +174,9 @@ check("a value is sent at six significant places",
 
 print("== the modifiers' Vertex Group field ==")
 let kinds = ModifierKind.allCases.filter(\.takesVertexGroup)
-check("thirteen kinds take one", kinds.count == 13, "\(kinds)")
+// Thirteen, and since round 4's group 8 the nine of its declared rows whose
+// panel draws the field (tests/modkinds/blender/verify.py measures each).
+check("twenty-two kinds take one", kinds.count == 22, "\(kinds)")
 check("Bevel does not: its group is read only under a limit the row does not offer",
       !ModifierKind.bevel.takesVertexGroup && !ModifierKind.subdivision.takesVertexGroup)
 var displace = Modifier(kind: .displace)
@@ -180,23 +189,23 @@ check("a kind without the field reads neither", subsurf.vertexGroup == "" && !su
 var grouped = Modifier(kind: .displace)
 grouped.vertexGroup = "Left"
 check("picking a group sends that line alone",
-      Bpy.modifierEdit(from: Modifier(kind: .displace), to: grouped)
+      sent(Bpy.modifierEdit(from: Modifier(kind: .displace), to: grouped))
         == ["bpy.context.object.modifiers[\"Displace\"].vertex_group = \"Left\""])
 var inverted2 = grouped
 inverted2.invertVertexGroup = true
 check("Invert sends that line alone",
-      Bpy.modifierEdit(from: grouped, to: inverted2)
+      sent(Bpy.modifierEdit(from: grouped, to: inverted2))
         == ["bpy.context.object.modifiers[\"Displace\"].invert_vertex_group = True"])
 var stronger = grouped
 stronger.thickness = 0.3
 check("another setting's edit sends no Vertex Group line",
-      Bpy.modifierEdit(from: grouped, to: stronger) == ["bpy.context.object.modifiers[\"Displace\"].strength = 0.3000"])
+      sent(Bpy.modifierEdit(from: grouped, to: stronger)) == ["bpy.context.object.modifiers[\"Displace\"].strength = 0.3000"])
 check("the field is not in the settings the simulator's stand-in is checked against",
       !Bpy.modifierSettings(grouped).contains { $0.contains("vertex_group") })
 var subsurfGrouped = Modifier(kind: .subdivision)
 subsurfGrouped.vertexGroup = "Left"
 check("a kind without the field sends nothing for it",
-      Bpy.modifierEdit(from: Modifier(kind: .subdivision), to: subsurfGrouped).isEmpty)
+      sent(Bpy.modifierEdit(from: Modifier(kind: .subdivision), to: subsurfGrouped)).isEmpty)
 let stack = Modifier.stack(from: "kind=SOLIDIFY;name=Solidify;thickness=0.1;vertex_group=Left;invert_vertex_group=0")
 check("a stack from the record carries it", stack.first?.vertexGroup == "Left" && stack.first?.invertVertexGroup == false)
 
@@ -209,6 +218,15 @@ json.removeValue(forKey: "vertexGroup")
 json.removeValue(forKey: "invertVertexGroup")
 let older = try? JSONDecoder().decode(Modifier.self, from: JSONSerialization.data(withJSONObject: json))
 check("a file from before the field opens, with no group", older?.vertexGroup == "" && older?.invertVertexGroup == false)
+
+print("\n== the name fields: an edit ends as Blender's does ==")
+// Return or a tap elsewhere both end the edit, and both send it (NameDraft);
+// the field used to send on Return alone, so a draft left by tapping away
+// stayed on screen as a name Blender did not hold.
+check("a draft that differs is sent when the edit ends", NameDraft(text: "Left").ending(over: "Group") == "Left")
+check("nothing typed sends nothing", NameDraft().ending(over: "Group") == nil)
+check("the same name again sends nothing", NameDraft(text: "Group").ending(over: "Group") == nil)
+check("a blank name is sent, for Blender's refusal to say why", NameDraft(text: "  ").ending(over: "Group") == "  ")
 
 print(failures == 0 ? "\nALL PASS" : "\n\(failures) FAILED")
 exit(failures == 0 ? 0 : 1)

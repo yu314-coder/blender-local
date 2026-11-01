@@ -88,12 +88,34 @@ extension MetalViewportView.Coordinator {
     }
 
     /// A tap in Texture Paint is a stroke of one dab, as a click is in Blender.
-    func texturePaintTap(_ g: UITapGestureRecognizer) -> Bool {
+    func texturePaintTap(at point: CGPoint) -> Bool {
         guard parent.scene.mode == .texturePaint, let view else { return false }
-        beginTexturePaint(at: g.location(in: view), in: view, pressure: 1)
+        beginTexturePaint(at: point, in: view, pressure: 1)
         endTexturePaint()
         return true
     }
+
+    /// One moment of a drag in Texture Paint, by its phase: what
+    /// `handleTexturePaint` does for a finger at full pressure, for Test All
+    /// Features' stroke (`featureTexturePaint`).
+    func texturePaintPhase(_ phase: SculptDragPhase, at point: CGPoint) {
+        guard parent.scene.mode == .texturePaint, let view else { return }
+        switch phase {
+        case .began(let touchedDown):
+            beginTexturePaint(at: touchedDown, in: view, pressure: 1)
+            moveTexturePaint(to: point, pressure: 1)
+        case .changed:
+            moveTexturePaint(to: point, pressure: 1)
+        case .ended:
+            moveTexturePaint(to: point, pressure: 1)
+            endTexturePaint()
+        case .cancelled:
+            endTexturePaint()
+        }
+    }
+
+    /// The texels the stroke in progress has painted, for the test's detail.
+    var texturePaintTexels: Int { texturePaintInput.stroke?.paintedTexels ?? 0 }
 
     private func beginTexturePaint(at point: CGPoint, in view: MTKView, pressure: Float) {
         endTexturePaint()

@@ -25,7 +25,12 @@ BUILD="${TMPDIR:-/tmp}/blenderlocal-objectmenu-blender"
 mkdir -p "$BUILD"
 swiftc -O -o "$BUILD/dump" Sources/BlenderLocalBridge/*.swift tests/objectmenu/blender/main.swift
 "$BUILD/dump" > "$BUILD/calls.txt"
-"$BLENDER" -b --factory-startup --python-exit-code 1 \
+# Blender gets a HOME and BLENDER_USER_RESOURCES of its own: even a bare
+# `-b --factory-startup` run writes ~/.thumbnails into HOME (measured), and an
+# operator can write Blender's settings. Other checks run at the same time.
+home="$BUILD/home"
+mkdir -p "$home"
+HOME="$home" BLENDER_USER_RESOURCES="$home/res" "$BLENDER" -b --factory-startup --python-exit-code 1 \
   --python tests/objectmenu/blender/verify.py -- "$BUILD/calls.txt" "$BUILD/passes.json"
 "$BUILD/dump" "$BUILD/passes.json"
 
@@ -48,7 +53,7 @@ else
   rm -rf "$CLONE"
 fi
 if [ -x "$CLONE/Contents/MacOS/Blender" ]; then
-  "$CLONE/Contents/MacOS/Blender" -b --factory-startup --python-exit-code 1 \
+  HOME="$home" BLENDER_USER_RESOURCES="$home/res" "$CLONE/Contents/MacOS/Blender" -b --factory-startup --python-exit-code 1 \
     --python tests/objectmenu/blender/noassets.py -- "$BUILD/calls.txt"
 else
   echo "  SKIP  Blender without its Essentials library: no APFS clone (cp -c failed)"

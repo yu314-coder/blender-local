@@ -380,8 +380,14 @@ do {
     check("Select Mirror sends its axis as the set Blender takes",
           SelectMenu.MeshItem.mirror.operation.python == "bpy.ops.mesh.select_mirror(axis={'X'}, extend=False)",
           SelectMenu.MeshItem.mirror.operation.python)
-    check("Linked delimits at seams, Blender's default",
-          SelectMenu.MeshItem.linked.operation.python == "bpy.ops.mesh.select_linked(delimit={'SEAM'})")
+    // Blender's first press: no Delimit while vertices or edges are
+    // selectable, Seam in Face mode (tests/selectpick has the rest).
+    check("Linked delimits at seams in Face mode only, as Blender's first press does",
+          SelectMenu.MeshItem.linked.operation(view: nil, selectMode: .face).python
+              == "bpy.ops.mesh.select_linked(delimit={'SEAM'})"
+              && SelectMenu.MeshItem.linked.operation(view: nil, selectMode: .vertex).python
+              == "bpy.ops.mesh.select_linked(delimit=set())",
+          SelectMenu.MeshItem.linked.operation(view: nil, selectMode: .vertex).python)
     check("Shortest Path turns a silent CANCELLED into a sentence",
           SelectMenu.MeshItem.shortestPath.operation.executedPython.contains("raise RuntimeError"))
     check("every edit-mode row runs in edit mode, as its undo step and panel title",
@@ -403,21 +409,30 @@ do {
     adjusted["seed"] = 7
     check("its panel re-runs it with what is dragged",
           adjusted.python == "bpy.ops.mesh.select_random(ratio=0.25, seed=7, action='SELECT')", adjusted.python)
-    if case .run(let python, let undo) = SelectMenu.selectLinked("MATERIAL") {
+    // The Object Mode rows run through `perform` since round 4 group 4, with
+    // Blender's redo panel, inside `_blenderkit_select.object_select`, which
+    // puts the selection back on a CANCELLED and refuses first without an
+    // active object (scripts/run-selectpick-blender-check.sh runs them).
+    if case .perform(let op) = SelectMenu.selectLinked("MATERIAL") {
         check("object Select Linked puts the selection back when Blender cancels",
-              python.contains("_bk_r = bpy.ops.object.select_linked(type='MATERIAL')")
-                && python.contains("if 'CANCELLED' in _bk_r:")
-                && python.contains("_bk_o.select_set(_bk_o.name in _bk_was)") && undo == "Select Linked", python)
+              op.python == "bpy.ops.object.select_linked(extend=False, type='MATERIAL')"
+                && op.executedPython.contains("with _blenderkit_select.object_select(")
+                && !op.python.contains("_blenderkit_select")
+                && op.executedPython.contains("if 'CANCELLED' in bpy.ops.object.select_linked(")
+                && op.name == "Select Linked", op.executedPython)
         check("and refuses first when nothing is active, which Blender answers with an error "
-              + "after deselecting everything", python.hasPrefix("if bpy.context.view_layer.objects.active is None:"))
-    } else { check("object Select Linked is a run", false) }
-    if case .run(let python, _) = SelectMenu.ObjectItem.child.action {
+              + "after deselecting everything", op.executedPython.contains("needs_active=\"Select Linked\""),
+              op.executedPython)
+    } else { check("object Select Linked is an adjustable operator", false) }
+    if case .perform(let op) = SelectMenu.ObjectItem.child.action {
         check("Child is refused without an active object, where Blender's poll fails",
-              python.hasPrefix("if bpy.context.view_layer.objects.active is None:")
-                && SelectMenu.ObjectItem.child.needsActive && !SelectMenu.ObjectItem.more.needsActive)
-    } else { check("object Select Linked is a run", false) }
-    if case .run(let python, _) = SelectMenu.selectPattern("Wheel\"*") {
-        check("a pattern goes over quoted", python.contains("pattern=\"Wheel\\\"*\""), python)
+              op.executedPython.contains("needs_active=\"Child\"")
+                && op.python == "bpy.ops.object.select_hierarchy(direction='CHILD', extend=False)"
+                && SelectMenu.ObjectItem.child.needsActive && !SelectMenu.ObjectItem.more.needsActive,
+              op.executedPython)
+    } else { check("Child is an adjustable operator", false) }
+    if case .perform(let op) = SelectMenu.selectPattern("Wheel\"*") {
+        check("a pattern goes over quoted", op.python.contains("pattern=\"Wheel\\\"*\""), op.python)
     }
 }
 
@@ -529,6 +544,131 @@ do {
     check("face mode takes the 3 faces that show in all nine views (\(counts))", counts.allSatisfy { $0 == 3 })
     check("vertex and edge mode, which compare depth alone, still take 7 and 9 (\(Set(verticesAndEdges)))",
           Set(verticesAndEdges) == ["7/9"])
+
+    // Which of its faces the viewport takes as facing the view
+    // (`FaceWinding.isFrontFacing`, what it lights from the outside, and
+    // what it culled to until round 4's review) has to be what face mode
+    // takes: round 3's review found the renderer culling exactly those
+    // faces, because it kept its front face anticlockwise for every object.
+    var agree: [String] = [], before: [String] = []
+    for (w, h) in [(1194.0, 700.0), (800.0, 600.0)] {
+        for azimuth in [Float(0.4), 2.2, -1.3] {
+            var camera = ViewportCamera()
+            camera.distance = 8
+            camera.azimuth = azimuth
+            camera.elevation = 0.35
+            let size = CGSize(width: w, height: h)
+            let vp = camera.viewProjection(aspect: Float(w / h))
+            let all = SelectionRegion.box(CGRect(x: w * 0.01, y: h * 0.01, width: w * 0.98, height: h * 0.98))
+            let taken = Set(RegionSelect.elements(mesh: mesh, topology: topology, model: model,
+                                                  viewProjection: vp, size: size, region: all, mode: .face,
+                                                  seeThrough: false).faces.map { topology.trianglePolygons[$0] })
+            func drawn(_ flips: Bool) -> Set<UInt32> {
+                var faces = Set<UInt32>()
+                for t in 0..<(mesh.indices.count / 3) {
+                    let i = mesh.indices[3 * t..<3 * t + 3].map { mesh.vertices[Int($0)].position }
+                    if FaceWinding.isFrontFacing(i[0], i[1], i[2], model: model, viewProjection: vp,
+                                                 flipsMirrored: flips) {
+                        faces.insert(topology.trianglePolygons[t])
+                    }
+                }
+                return faces
+            }
+            agree.append(drawn(true) == taken && taken.count == 3 ? "same" : "\(drawn(true).sorted()) vs \(taken.sorted())")
+            before.append(drawn(false).isDisjoint(with: taken) ? "disjoint" : "overlap")
+        }
+    }
+    check("the viewport faces exactly the faces face mode takes towards the view, in six views (\(Set(agree)))",
+          Set(agree) == ["same"])
+    check("negative control: anticlockwise for every object drew none of them (\(Set(before)))",
+          Set(before) == ["disjoint"])
+    var unmirrored = matrix_identity_float4x4
+    unmirrored.columns.0.x = 2
+    check("an object scaled without a mirror keeps anticlockwise", !FaceWinding.isMirrored(unmirrored)
+          && FaceWinding.isMirrored(model))
+}
+
+print("\n== an open mesh seen from behind ==")
+do {
+    // A one-face plane whose normal points away from the camera: Blender's
+    // 3D View draws it (show_backface_culling is False on every startup
+    // screen of desktop 5.2.1) and face mode takes it (region select draws
+    // both sides, as Blender's selection does). The renderer culled it in
+    // Solid mode, so a box select took a face the 3D View did not show
+    // (round 4's review).
+    let quad: [SIMD3<Float>] = [SIMD3(-1, -1, 0), SIMD3(-1, 1, 0), SIMD3(1, 1, 0), SIMD3(1, -1, 0)]
+    let plane = MeshData(vertices: quad.map { MeshVertex($0, SIMD3(0, 0, -1)) }, indices: [0, 1, 2, 0, 2, 3])
+    let topology = EditTopology(vertexCount: 4, polygonCount: 1, trianglePolygons: [0, 0],
+                                realEdges: Set(0..<(plane.edges.count / 2)).filter { e in
+                                    let a = plane.edges[2 * e], b = plane.edges[2 * e + 1]
+                                    return !((a == 0 && b == 2) || (a == 2 && b == 0)) })
+    var camera = ViewportCamera()
+    camera.snap(to: .top)
+    camera.distance = 6
+    let vp = camera.viewProjection(aspect: aspect)
+    let model = matrix_identity_float4x4
+    let all = SelectionRegion.box(CGRect(x: 8, y: 8, width: size.width - 16, height: size.height - 16))
+    let taken = RegionSelect.elements(mesh: plane, topology: topology, model: model, viewProjection: vp,
+                                      size: size, region: all, mode: .face, seeThrough: false).faces
+    let tris = [(0, 1, 2), (0, 2, 3)].map { (plane.vertices[$0.0].position, plane.vertices[$0.1].position,
+                                             plane.vertices[$0.2].position) }
+    let facing = tris.filter { FaceWinding.isFrontFacing($0.0, $0.1, $0.2, model: model, viewProjection: vp) }
+    let drawn = tris.filter { FaceWinding.isDrawn($0.0, $0.1, $0.2, model: model, viewProjection: vp) }
+    let culled = tris.filter { FaceWinding.isDrawn($0.0, $0.1, $0.2, model: model, viewProjection: vp,
+                                                   culling: true) }
+    check("seen from the top, the plane faces away (\(facing.count) of 2 triangles face the view)",
+          facing.isEmpty)
+    check("face mode takes it (\(taken.count) triangles), as Blender's box select does", taken.count == 2)
+    check("and the viewport draws both its triangles, as Blender's 3D View does (\(drawn.count) of 2)",
+          drawn.count == 2 && !FaceWinding.cullsBackFaces)
+    check("negative control: culling back faces, the rule before, drew none of it (\(culled.count))",
+          culled.isEmpty)
+}
+
+print("\n== nothing beyond the 3D View's edge ==")
+do {
+    // A drag that leaves the view: Blender takes only what the view shows
+    // (V3D_PROJ_TEST_CLIP_WIN), and an edge only by the part of it inside.
+    // Round 3's review found Box, Circle and Lasso taking elements beyond.
+    let (mesh, topology) = grid(20)
+    var camera = ViewportCamera()
+    camera.snap(to: .top)
+    camera.distance = 8
+    let vp = camera.viewProjection(aspect: aspect)
+    let screen = mesh.vertices.map { project($0.position, vp) }
+    let past = CGRect(x: -400, y: -400, width: 600, height: size.height + 800)
+    let beyond = screen.indices.filter { past.contains(screen[$0]) && screen[$0].x < 0 }
+    let inside = screen.indices.filter { past.contains(screen[$0]) && screen[$0].x >= 0
+        && screen[$0].y >= 0 && screen[$0].y <= size.height }
+    for (label, region) in [("box", SelectionRegion.box(past)),
+                            ("lasso", SelectionRegion.lasso([CGPoint(x: -400, y: -400), CGPoint(x: 200, y: -400),
+                                                             CGPoint(x: 200, y: size.height + 400),
+                                                             CGPoint(x: -400, y: size.height + 400)]))] {
+        let got = RegionSelect.elements(mesh: mesh, topology: topology, model: matrix_identity_float4x4,
+                                        viewProjection: vp, size: size, region: region, mode: .vertex,
+                                        seeThrough: true).vertices
+        check("\(label) past the left edge takes the \(inside.count) vertices the view shows and none of the "
+              + "\(beyond.count) beyond it (took \(got.count))", !beyond.isEmpty && got == Set(inside),
+              "\(got.count)")
+    }
+    let edges = RegionSelect.elements(mesh: mesh, topology: topology, model: matrix_identity_float4x4,
+                                      viewProjection: vp, size: size, region: .box(past), mode: .edge,
+                                      seeThrough: true).edges
+    let offView = edges.filter { e in
+        let a = screen[Int(mesh.edges[2 * e])], b = screen[Int(mesh.edges[2 * e + 1])]
+        return a.x < 0 && b.x < 0
+    }
+    let fullyBeyondInRegion = (0..<(mesh.edges.count / 2)).filter { e in
+        let a = screen[Int(mesh.edges[2 * e])], b = screen[Int(mesh.edges[2 * e + 1])]
+        return a.x < 0 && b.x < 0 && past.contains(a) && past.contains(b)
+    }
+    check("no edge wholly beyond the edge is taken (\(edges.count) taken, \(fullyBeyondInRegion.count) "
+          + "lie inside the box beyond it)", offView.isEmpty && !edges.isEmpty && !fullyBeyondInRegion.isEmpty,
+          "\(offView.count)")
+    check("clipping: a segment's part inside the view, its inside end unchanged",
+          RegionSelect.clip(CGPoint(x: -10, y: 5), CGPoint(x: 10, y: 5), to: CGRect(x: 0, y: 0, width: 20, height: 20))
+            .map { $0.0 == CGPoint(x: 0, y: 5) && $0.1 == CGPoint(x: 10, y: 5) } == true
+          && RegionSelect.clip(CGPoint(x: -10, y: 5), CGPoint(x: -1, y: 5), to: CGRect(x: 0, y: 0, width: 20, height: 20)) == nil)
 }
 
 print("\n== a lasso that crosses itself ==")

@@ -25,7 +25,12 @@ swiftc -O -o "$BUILD/dump" Sources/BlenderLocalBridge/*.swift \
   "$UI/TransformGizmo.swift" "$UI/TransformGizmoGeometry.swift" \
   tests/gizmo/stub.swift tests/render/blender/main.swift
 "$BUILD/dump" > "$BUILD/calls.txt"
+# Blender gets a HOME and BLENDER_USER_RESOURCES of its own: even a bare
+# `-b --factory-startup` run writes ~/.thumbnails into HOME (measured), and an
+# operator can write Blender's settings. Other checks run at the same time.
+home="$BUILD/home"
+mkdir -p "$home"
 echo "== Blender $("$BLENDER" --version | head -1 | cut -d' ' -f2), headless"
-exec "$BLENDER" -b --factory-startup --python-exit-code 1 \
+exec env HOME="$home" BLENDER_USER_RESOURCES="$home/res" "$BLENDER" -b --factory-startup --python-exit-code 1 \
   --python tests/render/blender/verify.py -- "$BUILD/calls.txt" "$BUILD" 2>&1 \
   | grep -v "^Blender quit\|^Read prefs\|^Fra:\|^Saved:\|Blender 5\|^$"

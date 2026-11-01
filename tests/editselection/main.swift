@@ -239,9 +239,17 @@ do {
     let object = BKObject(name: "Quad", kind: .plane)
     object.setMirroredMesh(shown)
     object.editTopology = mirrored.topology
+    // Drawn smaller than the taps' projection, so vertex 4 (at x = 2) is
+    // inside the view: at 0.5 it lies on the view's right edge, which
+    // Blender's window clip leaves out (V3D_PROJ_TEST_CLIP_WIN).
+    let smaller = simd_float4x4(diagonal: SIMD4<Float>(0.4, 0.4, 0.4, 1))
     let all = object.editElements(in: CGRect(x: -10, y: -10, width: 420, height: 420), mode: .vertex,
-                                  viewProjection: viewProjection, size: CGSize(width: 400, height: 400))
+                                  viewProjection: smaller, size: CGSize(width: 400, height: 400))
     check("a box round everything takes the shown vertices only", all.vertices == [0, 3, 4], "\(all.vertices)")
+    let edge = object.editElements(in: CGRect(x: -10, y: -10, width: 420, height: 420), mode: .vertex,
+                                   viewProjection: viewProjection, size: CGSize(width: 400, height: 400))
+    check("and a vertex on the view's very edge is not taken, as Blender's window clip leaves it out",
+          edge.vertices == [0, 3], "\(edge.vertices)")
 }
 
 print("\n== a mirror pass that hands back the same mesh is recognised ==")

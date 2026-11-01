@@ -347,10 +347,10 @@ do {
     // Axis drags report the component of the axis they are constrained to,
     // not the first non-zero one — dragging Y must not read as X.
     let dy = readout(.translate, .axis(1), .translate(SIMD3(0, 0.25, 0)))
-    check("Y axis move names Y", dy.contains("along Y") && dy.contains("0.2500"), dy)
+    check("Y axis move names Y", dy.contains("along global Y") && dy.contains("0.2500"), dy)
     let dz = readout(.translate, .axis(2), .translate(SIMD3(0, 0, -1.5)))
     check("Z axis move names Z and keeps the sign",
-          dz.contains("along Z") && dz.contains("-1.5000"), dz)
+          dz.contains("along global Z") && dz.contains("-1.5000"), dz)
 
     // A plane handle is named by the two axes it moves in, which are the ones
     // the handle's own index excludes.
@@ -362,7 +362,7 @@ do {
     let rot = readout(.rotate, .axis(2), .rotate(axis: SIMD3(0, 0, 1),
                                                  angle: .pi / 2, axisIndex: 2))
     check("rotation reports degrees, not radians",
-          rot.contains("90.00°") && rot.contains("around Z"), rot)
+          rot.contains("90.00°") && rot.contains("around global Z"), rot)
 
     let view = readout(.rotate, .screen, .rotate(axis: SIMD3(0, 0, 1),
                                                  angle: .pi, axisIndex: nil))
@@ -370,7 +370,7 @@ do {
 
     let sc = readout(.scale, .axis(0), .scale(SIMD3(2.5, 1, 1)))
     check("scale names its axis and factor",
-          sc.contains("along X") && sc.contains("2.5000"), sc)
+          sc.contains("along global X") && sc.contains("2.5000"), sc)
 
     // Nothing is being dragged until something is.
     check("no drag, no readout", s.transformReadout == nil)
@@ -539,12 +539,28 @@ print("\n== what a drag sends to Blender ==")
 do {
     let (s, obj) = freshScene()
     obj.rotation = SIMD3(0, 0, .pi / 4)
+    // Blender's default orientation is Global, and its scale handles follow
+    // it as the move and rotate ones do.
+    let globalGizmo = TransformGizmo.make(mode: .scale, scene: s, options: options, camera: camera, size: size)!
+    check("a scale's handles follow the Global orientation by default",
+          close(globalGizmo.axes[0], SIMD3(1, 0, 0)) && close(globalGizmo.axes[2], SIMD3(0, 0, 1)),
+          "\(globalGizmo.axes)")
+    let globalScale = TransformGizmo.python(
+        .scale(SIMD3(2, 1, 1)),
+        session: TransformGizmo.beginSession(handle: .axis(0), at: .zero, gizmo: globalGizmo,
+                                             scene: s, camera: camera, size: size))
+    check("and say so, with no matrix for Blender to work out the identity from",
+          globalScale.contains("orient_type='GLOBAL'") && !globalScale.contains("orient_matrix"), globalScale)
+    s.orientation = OrientationState(type: .local)
     let g = TransformGizmo.make(mode: .scale, scene: s, options: options, camera: camera, size: size)!
+    check("in Local they are the object's own", close(g.axes[0], SIMD3(cos(Float.pi / 4), sin(Float.pi / 4), 0), 1e-5),
+          "\(g.axes)")
     let session = TransformGizmo.beginSession(handle: .axis(0), at: .zero, gizmo: g,
                                               scene: s, camera: camera, size: size)
     let scale = TransformGizmo.python(.scale(SIMD3(2, 1, 1)), session: session)
-    check("a scale is in the local axes its handles are drawn along",
-          scale.contains("orient_type='LOCAL'"), scale)
+    check("a Local scale goes bare, for Blender to scale each object along its own axes",
+          scale.contains("orient_type='LOCAL'") && !scale.contains("orient_matrix"), scale)
+    s.orientation = OrientationState(type: .global, axes: matrix_identity_float3x3)
 
     func rows(in python: String) -> [SIMD3<Float>]? {
         guard let start = python.range(of: "orient_matrix=("),
@@ -595,6 +611,7 @@ do {
     let a = s.add(.cube); a.location = SIMD3(2, 0, 0); a.rotation = SIMD3(0, 0, .pi / 4)
     let b = s.add(.cube); b.location = SIMD3(-2, 1, 0); b.rotation = SIMD3(0, 0, .pi / 6)
     s.selection = [a.id, b.id]; s.activeID = a.id
+    s.orientation = OrientationState(type: .local)
     let g = TransformGizmo.make(mode: .scale, scene: s, options: options, camera: camera, size: size)!
     let session = TransformGizmo.beginSession(handle: .axis(0), at: .zero, gizmo: g,
                                               scene: s, camera: camera, size: size)

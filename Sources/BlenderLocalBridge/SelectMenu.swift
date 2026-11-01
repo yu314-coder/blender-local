@@ -13,13 +13,34 @@ import Foundation
 /// `perform`, which gives them the Adjust Last Operation panel with Blender's
 /// own arguments and defaults (`get_rna_type()`), labels included.
 ///
-/// Rows that need what the app cannot give are drawn disabled (`BUnavailable`)
-/// rather than left out, so the menu keeps Blender's shape: Select Grouped
-/// fails its poll without a window even inside the 3D View override; Next and
-/// Previous Active and Side of Active need Blender's selection history, which
-/// a selection handed over from the viewport does not carry (measured: Side
-/// of Active returns CANCELLED and Next Active changes nothing).
+/// Every row of Blender's two menus is here (round 4, group 4). Next and
+/// Previous Active and Side of Active were drawn disabled: they need Blender's
+/// selection order, which a selection handed over from the viewport did not
+/// carry (measured: Side of Active returned CANCELLED and Next Active changed
+/// nothing). The order is the mirror's now (`EditSelection.history`) and the
+/// push writes it, so each is Blender's operator. Select Grouped fails its
+/// poll whenever Blender has no interface (`object_select_grouped_poll`
+/// returns False for G.background, which a bpy module always is), so it is
+/// that operator's exec, type for type (`_blenderkit_select.select_grouped`).
+/// By Attribute is Blender's: with no active boolean attribute its poll says
+/// why ("There must be an active attribute"), on the banner. The Object Mode
+/// rows run through `perform` now too, with Blender's redo panel — before,
+/// only the Edit Mode rows had one.
 public enum SelectMenu {
+
+    /// Where the 3D View looks, for the one row that asks: Side of Active
+    /// with Axis Mode View, which reads the view's rotation. World space.
+    public struct ViewDirection: Equatable, Sendable {
+        public var forward: SIMD3<Float>
+        public var up: SIMD3<Float>
+        public init(forward: SIMD3<Float>, up: SIMD3<Float>) { self.forward = forward; self.up = up }
+    }
+
+    /// The undo step Select ▸ All, None and Invert push, and A, Alt+A and
+    /// Ctrl+I: `select_all`'s name, which is what Blender's undo history
+    /// shows for each of the three (measured in desktop 5.2.1 with the app's
+    /// undo stack, objects, meshes, curves and lattices alike).
+    public static let selectAllUndo = "(De)select All"
 
     /// What a row does.
     public enum Action: Equatable, Sendable {
@@ -41,22 +62,32 @@ public enum SelectMenu {
         case byType(String)
         case linked(String)
         case pattern(String)
+        /// Select ▸ Select Grouped, by its type's identifier.
+        case grouped(String)
 
         /// What the row sends. All, None and Invert are the rows the Select
         /// button's menu and the A / Alt+A / Ctrl+I keys already sent, with
-        /// the same undo names.
-        public func action(editing: Bool) -> Action {
+        /// the same undo names. `view` is where the 3D View looks, which Side
+        /// of Active's View axis reads; `selectMode` is Blender's select mode,
+        /// which Select Linked ▸ Linked's first-press Delimit follows
+        /// (`MeshItem.parameters(selectMode:)`).
+        public func action(editing: Bool, view: ViewDirection? = nil,
+                           selectMode: MeshSelectMode? = nil) -> Action {
             switch self {
-            case .all:    return .run(python: Bpy.selectAll(editing: editing), undo: "Select All")
-            case .none:   return .run(python: Bpy.deselectAll(editing: editing), undo: "Deselect")
-            case .invert: return .run(python: Bpy.invertSelection(editing: editing), undo: "Invert Selection")
-            case .mesh(let item):     return .perform(item.operation)
+            // One operator for all three, `select_all`, whose name is the
+            // step Blender's undo history shows for each (measured in 5.2.1,
+            // object and edit mode: "(De)select All").
+            case .all:    return .run(python: Bpy.selectAll(editing: editing), undo: SelectMenu.selectAllUndo)
+            case .none:   return .run(python: Bpy.deselectAll(editing: editing), undo: SelectMenu.selectAllUndo)
+            case .invert: return .run(python: Bpy.invertSelection(editing: editing), undo: SelectMenu.selectAllUndo)
+            case .mesh(let item):     return .perform(item.operation(view: view, selectMode: selectMode))
             case .similar(let type):  return .perform(type.operation)
             case .loops(let op):      return .perform(LastOperator.mesh(op))
             case .object(let item):   return item.action
             case .byType(let type):   return SelectMenu.selectByType(type)
             case .linked(let type):   return SelectMenu.selectLinked(type)
             case .pattern(let text):  return SelectMenu.selectPattern(text)
+            case .grouped(let type):  return SelectMenu.selectGrouped(type)
             }
         }
 
@@ -82,6 +113,9 @@ public enum SelectMenu {
             case "type":    self = .byType(tail)
             case "objlinked": self = .linked(tail)
             case "pattern": self = .pattern(tail)
+            case "grouped":
+                guard SelectMenu.groupedTypes.contains(where: { $0.identifier == tail }) else { return nil }
+                self = .grouped(tail)
             default:
                 guard let item = MeshItem(rawValue: head) else { return nil }
                 self = .mesh(item)
@@ -94,12 +128,12 @@ public enum SelectMenu {
     /// The edit-mode rows beyond All / None / Invert and the tools.
     public enum MeshItem: String, CaseIterable, Sendable {
         case mirror, random, checkerDeselect
-        case more, less
+        case more, less, nextActive, previousActive
         case similarRegion
         case nonManifold, loose, interiorFaces, facesBySides, polesByCount, ungrouped
         case linked, shortestPath, linkedFlat
         case boundaryLoops, loopInnerRegion, boundaryOfSelected
-        case sharpEdges
+        case sharpEdges, sideOfActive, byAttribute
 
         /// The row, as Blender's menu labels it.
         public var title: String {
@@ -109,6 +143,8 @@ public enum SelectMenu {
             case .checkerDeselect:    return "Checker Deselect"
             case .more:               return "More"
             case .less:               return "Less"
+            case .nextActive:         return "Next Active"
+            case .previousActive:     return "Previous Active"
             case .similarRegion:      return "Face Regions"
             case .nonManifold:        return "Non Manifold"
             case .loose:              return "Loose Geometry"
@@ -123,6 +159,8 @@ public enum SelectMenu {
             case .loopInnerRegion:    return "Loop Inner-Region"
             case .boundaryOfSelected: return "Boundary of Selected"
             case .sharpEdges:         return "Sharp Edges"
+            case .sideOfActive:       return "Side of Active"
+            case .byAttribute:        return "By Attribute"
             }
         }
 
@@ -136,6 +174,8 @@ public enum SelectMenu {
             case .checkerDeselect:    return "Checker Deselect"
             case .more:               return "Select More"
             case .less:               return "Select Less"
+            case .nextActive:         return "Select Next Element"
+            case .previousActive:     return "Select Previous Element"
             case .similarRegion:      return "Select Similar Regions"
             case .nonManifold:        return "Select Non-Manifold"
             case .loose:              return "Select Loose Geometry"
@@ -150,6 +190,8 @@ public enum SelectMenu {
             case .loopInnerRegion:    return "Select Loop Inner-Region"
             case .boundaryOfSelected: return "Select Boundary of Selected"
             case .sharpEdges:         return "Select Sharp Edges"
+            case .sideOfActive:       return "Select Axis"
+            case .byAttribute:        return "Select by Attribute"
             }
         }
 
@@ -160,6 +202,8 @@ public enum SelectMenu {
             case .checkerDeselect:    return "bpy.ops.mesh.select_nth"
             case .more:               return "bpy.ops.mesh.select_more"
             case .less:               return "bpy.ops.mesh.select_less"
+            case .nextActive:         return "bpy.ops.mesh.select_next_item"
+            case .previousActive:     return "bpy.ops.mesh.select_prev_item"
             case .similarRegion:      return "bpy.ops.mesh.select_similar_region"
             case .nonManifold:        return "bpy.ops.mesh.select_non_manifold"
             case .loose:              return "bpy.ops.mesh.select_loose"
@@ -174,6 +218,8 @@ public enum SelectMenu {
             case .loopInnerRegion:    return "bpy.ops.mesh.loop_to_region"
             case .boundaryOfSelected: return "bpy.ops.mesh.region_to_loop"
             case .sharpEdges:         return "bpy.ops.mesh.edges_select_sharp"
+            case .sideOfActive:       return "bpy.ops.mesh.select_axis"
+            case .byAttribute:        return "bpy.ops.mesh.select_by_attribute"
             }
         }
 
@@ -201,8 +247,9 @@ public enum SelectMenu {
         /// Blender's redo-panel fields, with its defaults and soft ranges
         /// (`get_rna_type()` in 5.2.1). Only the ones that change what is
         /// selected; the ones that tag edges instead (Shortest Path's Edge
-        /// Tag) are left at Blender's default.
-        var parameters: [LastOperator.Parameter] {
+        /// Tag) are left at Blender's default. `selectMode` is Blender's select
+        /// mode, which Linked's Delimit starts from.
+        func parameters(selectMode: MeshSelectMode?) -> [LastOperator.Parameter] {
             typealias P = LastOperator.Parameter
             let offOn = [P.Option("False", "Off"), P.Option("True", "On")]
             func toggle(_ key: String, _ label: String, _ on: Bool) -> P {
@@ -259,14 +306,25 @@ public enum SelectMenu {
                         toggle("extend", "Extend", false),
                         toggle("exclude_nonmanifold", "Exclude Non Manifold", true)]
             case .linked:
-                // `delimit` is a set; the panel offers what one flag or none
-                // gives, which is what its row of toggles mostly gets used for.
-                return [P(key: "delimit", label: "Delimit",
-                          kind: .literal([P.Option("{'SEAM'}", "Seam"), P.Option("set()", "None"),
-                                          P.Option("{'NORMAL'}", "Normal"),
-                                          P.Option("{'MATERIAL'}", "Material"),
-                                          P.Option("{'SHARP'}", "Sharp"), P.Option("{'UV'}", "UVs")]),
-                          value: 0, softMin: 0, softMax: 5, step: 0.02)]
+                // Blender's Ctrl+L and its Select Linked ▸ Linked row call
+                // `select_linked` with no Delimit, and its exec then picks one
+                // by the scene's select mode (USE_LINKED_SELECT_DEFAULT_HACK,
+                // `select_linked_delimit_default_from_op`, editmesh_select.cc):
+                // on a first press none while vertices or edges are selectable,
+                // Seam in Face mode alone. This row sent Seam in every mode, and
+                // round 4's review measured the difference in 5.2.1 on a 4 × 4
+                // grid with a seam down its middle: Blender's Ctrl+L 25
+                // vertices in Vertex and in Edge mode, this row 15. The panel
+                // draws the enum flag as Blender's does, one toggle per item
+                // under its heading, with 5.2.1's items and labels
+                // (`get_rna_type()`, measured). Without the select mode the
+                // row leaves Delimit to Blender's own rule and has no panel
+                // row for it, rather than show a value Blender may not use.
+                guard let selectMode else { return [] }
+                return P.flags("delimit", "Delimit",
+                               [("NORMAL", "Normal"), ("MATERIAL", "Material"), ("SEAM", "Seam"),
+                                ("SHARP", "Sharp"), ("UV", "UVs")],
+                               on: selectMode == .face ? ["SEAM"] : [])
             case .shortestPath:
                 return [toggle("use_face_step", "Face Stepping", false),
                         toggle("use_topology_distance", "Topology Distance", false),
@@ -281,7 +339,25 @@ public enum SelectMenu {
                 return [toggle("extend", "Extend", true)]
             case .loopInnerRegion:
                 return [toggle("select_bigger", "Select Bigger", false)]
-            case .similarRegion, .interiorFaces, .boundaryOfSelected:
+            case .sideOfActive:
+                // `select_axis` (5.2.1): Axis Mode from Local, the sign, the
+                // axis, and Threshold 0.0001 within 0.00001 … 10.
+                return [P(key: "orientation", label: "Axis Mode",
+                          kind: .choice([P.Option("GLOBAL", "Global"), P.Option("LOCAL", "Local"),
+                                         P.Option("NORMAL", "Normal"), P.Option("GIMBAL", "Gimbal"),
+                                         P.Option("VIEW", "View"), P.Option("CURSOR", "Cursor"),
+                                         P.Option("PARENT", "Parent")]),
+                          value: 1, softMin: 0, softMax: 6, step: 0.02),
+                        P(key: "sign", label: "Axis Sign",
+                          kind: .choice([P.Option("POS", "Positive Axis"), P.Option("NEG", "Negative Axis"),
+                                         P.Option("ALIGN", "Aligned Axis")]),
+                          value: 0, softMin: 0, softMax: 2, step: 0.02),
+                        P(key: "axis", label: "Axis",
+                          kind: .choice([P.Option("X", "X"), P.Option("Y", "Y"), P.Option("Z", "Z")]),
+                          value: 0, softMin: 0, softMax: 2, step: 0.02),
+                        P(key: "threshold", label: "Threshold", kind: .float, value: 0.0001,
+                          softMin: 0.00001, softMax: 10, step: 0.0004, unit: .meters)]
+            case .similarRegion, .interiorFaces, .boundaryOfSelected, .nextActive, .previousActive, .byAttribute:
                 return []
             }
         }
@@ -294,15 +370,52 @@ public enum SelectMenu {
             switch self {
             case .shortestPath:
                 return "It selects the path between two selected elements: select two first"
+            case .sideOfActive:
+                // Measured in 5.2.1: CANCELLED with no active vertex, and with
+                // an active edge or face.
+                return "It selects the vertices on one side of the active vertex — the one selected "
+                    + "last — and there is none: tap a vertex first"
             default:
                 return nil
             }
         }
 
-        public var operation: LastOperator {
-            var op = LastOperator(name: operatorName, call: call, parameters: parameters,
+        /// The words for a FINISHED that changed no selection and not the
+        /// order: measured in 5.2.1, Select Next Element with fewer than two
+        /// elements in the order and Select Previous Element with none both
+        /// return FINISHED, saying only "Selection pair not found" or "Last
+        /// selected not found" in a report a bpy module cannot read.
+        var unchangedSelection: String? {
+            switch self {
+            case .nextActive:
+                return "Next Active walks on from the last two elements selected, in the order they "
+                    + "were selected, and there are not two to walk from. Tap one, then another next to it."
+            case .previousActive:
+                return "Previous Active takes back the element selected last, and nothing has been "
+                    + "selected one at a time. Tap an element first."
+            default:
+                return nil
+            }
+        }
+
+        public var operation: LastOperator { operation(view: nil) }
+
+        /// The row's operator. Side of Active runs in the borrowed 3D View
+        /// aimed as `view` looks, when given: its View axis reads the view's
+        /// rotation, and without a view it reads the world's (measured in
+        /// 5.2.1, both ways: with no view View selected what Global does).
+        /// `selectMode` is Blender's, for Linked's Delimit.
+        public func operation(view: ViewDirection?, selectMode: MeshSelectMode? = nil) -> LastOperator {
+            var op = LastOperator(name: operatorName, call: call, parameters: parameters(selectMode: selectMode),
                                   restoration: .restoreMesh, needsEditMode: true)
             op.refusal = refusal
+            op.unchangedSelection = unchangedSelection
+            if self == .sideOfActive, let view {
+                func v(_ p: SIMD3<Float>) -> String { "(\(p.x), \(p.y), \(p.z))" }
+                op.lead = "import _blenderkit_select"
+                op.within = "_blenderkit_select.aimed_view('Side of Active', forward=\(v(view.forward)), "
+                    + "up=\(v(view.up)))"
+            }
             return op
         }
     }
@@ -414,17 +527,15 @@ public enum SelectMenu {
             }
         }
 
+        /// The operator, bare: its arguments are the redo panel's.
         public var call: String {
             switch self {
-            case .activeCamera: return "bpy.ops.object.select_camera()"
-            case .mirror:       return "bpy.ops.object.select_mirror()"
-            case .random:       return "bpy.ops.object.select_random()"
-            case .more:         return "bpy.ops.object.select_more()"
-            case .less:         return "bpy.ops.object.select_less()"
-            case .parent:       return "bpy.ops.object.select_hierarchy(direction='PARENT', extend=False)"
-            case .child:        return "bpy.ops.object.select_hierarchy(direction='CHILD', extend=False)"
-            case .extendParent: return "bpy.ops.object.select_hierarchy(direction='PARENT', extend=True)"
-            case .extendChild:  return "bpy.ops.object.select_hierarchy(direction='CHILD', extend=True)"
+            case .activeCamera: return "bpy.ops.object.select_camera"
+            case .mirror:       return "bpy.ops.object.select_mirror"
+            case .random:       return "bpy.ops.object.select_random"
+            case .more:         return "bpy.ops.object.select_more"
+            case .less:         return "bpy.ops.object.select_less"
+            case .parent, .child, .extendParent, .extendChild: return "bpy.ops.object.select_hierarchy"
             }
         }
 
@@ -462,12 +573,69 @@ public enum SelectMenu {
             }
         }
 
-        public var action: Action {
-            .run(python: SelectMenu.objectCommand(call, refusal: refusal,
-                                                  needsActive: needsActive ? title : nil,
-                                                  refuseUnchanged: self == .mirror || self == .random),
-                 undo: operatorName)
+        /// Blender's redo-panel fields (5.2.1, `get_rna_type()`).
+        var parameters: [LastOperator.Parameter] {
+            typealias P = LastOperator.Parameter
+            switch self {
+            case .activeCamera, .mirror:
+                return [SelectMenu.toggle("extend", "Extend", false)]
+            case .random:
+                // A factor (subtype FACTOR), which Blender shows as 0.500.
+                return [P(key: "ratio", label: "Ratio", kind: .float, value: 0.5,
+                          softMin: 0, softMax: 1, step: 0.004, unit: .none),
+                        P(key: "seed", label: "Random Seed", kind: .integer, value: 0,
+                          softMin: 0, softMax: 255, step: 0.05),
+                        P(key: "action", label: "Action",
+                          kind: .choice([P.Option("SELECT", "Select"), P.Option("DESELECT", "Deselect")]),
+                          value: 0, softMin: 0, softMax: 1, step: 0.02)]
+            case .more, .less:
+                return []
+            case .parent, .child, .extendParent, .extendChild:
+                return [P(key: "direction", label: "Direction",
+                          kind: .choice([P.Option("PARENT", "Parent"), P.Option("CHILD", "Child")]),
+                          value: self == .parent || self == .extendParent ? 0 : 1,
+                          softMin: 0, softMax: 1, step: 0.02),
+                        SelectMenu.toggle("extend", "Extend", self == .extendParent || self == .extendChild)]
+            }
         }
+
+        public var operation: LastOperator {
+            SelectMenu.objectOperation(name: operatorName, call: call, parameters: parameters,
+                                       refusal: refusal, needsActive: needsActive ? title : nil,
+                                       refuseUnchanged: self == .mirror || self == .random)
+        }
+
+        public var action: Action { .perform(operation) }
+    }
+
+    /// An Off/On row of a redo panel.
+    static func toggle(_ key: String, _ label: String, _ on: Bool) -> LastOperator.Parameter {
+        LastOperator.Parameter(key: key, label: label,
+                               kind: .literal([LastOperator.Parameter.Option("False", "Off"),
+                                               LastOperator.Parameter.Option("True", "On")]),
+                               value: on ? 1 : 0, softMin: 0, softMax: 1, step: 0.02)
+    }
+
+    /// An Object Mode row as an adjustable operator: Blender's call with its
+    /// redo panel, inside `_blenderkit_select.object_select`, which refuses
+    /// first what needs an active object, puts back what a CANCELLED or an
+    /// error changed on the way, and — for the operators that always finish —
+    /// refuses a run that left the selection and the active object as they
+    /// were (`refuseUnchanged`), so no step is recorded for it. Blender's own
+    /// undo puts the selection back for a re-run (`.throughBlenderUndo`).
+    static func objectOperation(name: String, call: String, parameters: [LastOperator.Parameter],
+                                fixed: [String] = [], refusal: String, needsActive row: String? = nil,
+                                refuseUnchanged: Bool = false) -> LastOperator {
+        var op = LastOperator(name: name, call: call, parameters: parameters,
+                              restoration: .throughBlenderUndo, needsEditMode: false)
+        op.fixedArguments = fixed
+        op.guardWithin = "object_select(\(Bpy.quote(refusal)), unchanged="
+            + (refuseUnchanged ? "True" : "False")
+            + (row.map { ", needs_active=\(Bpy.quote($0))" } ?? "") + ")"
+        op.refusal = refusal
+        // Select Grouped is the exec's port, which the log names as it runs.
+        if call.hasPrefix("_blenderkit_select.") { op.lead = "import _blenderkit_select" }
+        return op
     }
 
     /// Select ▸ Select All by Type: Blender's `object.select_by_type` types.
@@ -484,84 +652,67 @@ public enum SelectMenu {
         ("PARTICLE", "Particle System"), ("LIBRARY", "Library"),
         ("LIBRARY_OBDATA", "Library (Object Data)")]
 
+    /// Select ▸ Select Grouped: Blender's `object.select_grouped` types
+    /// (prop_select_grouped_types, 5.2.1), as its menu lists them.
+    public static let groupedTypes: [(identifier: String, label: String)] = [
+        ("CHILDREN_RECURSIVE", "Children"), ("CHILDREN", "Immediate Children"), ("PARENT", "Parent"),
+        ("SIBLINGS", "Siblings"), ("TYPE", "Type"), ("COLLECTION", "Collection"), ("HOOK", "Hook"),
+        ("PASS", "Pass"), ("COLOR", "Color"), ("KEYINGSET", "Keying Set"), ("LIGHT_TYPE", "Light Type")]
+
+    /// A choice row of `items`, starting at `identifier`.
+    private static func typeRow(_ items: [(identifier: String, label: String)],
+                                _ identifier: String) -> LastOperator.Parameter {
+        LastOperator.Parameter(key: "type", label: "Type",
+                               kind: .choice(items.map { LastOperator.Parameter.Option($0.identifier, $0.label) }),
+                               value: Double(items.firstIndex { $0.identifier == identifier } ?? 0),
+                               softMin: 0, softMax: Double(items.count - 1), step: 0.02)
+    }
+
     /// Measured in 5.2.1: with none of the type it finishes, having
     /// deselected everything (Extend is off), as Blender's menu does.
     public static func selectByType(_ identifier: String) -> Action {
-        .run(python: objectCommand("bpy.ops.object.select_by_type(type='\(identifier)')",
-                                   refusal: "Blender changed nothing.", refuseUnchanged: true),
-             undo: "Select by Type")
+        .perform(objectOperation(name: "Select by Type", call: "bpy.ops.object.select_by_type",
+                                 parameters: [toggle("extend", "Extend", false), typeRow(objectTypes, identifier)],
+                                 refusal: "Blender changed nothing.", refuseUnchanged: true))
     }
 
     /// Measured in 5.2.1: by Material, Instanced Collection or Particle System
     /// on an object with none returns CANCELLED — having deselected
     /// everything first — and with no active object it raises "No active
-    /// object", again after deselecting. `objectCommand` puts the selection
+    /// object", again after deselecting. `object_select` puts the selection
     /// back either way, so a refused row changes nothing and leaves no step
     /// nobody can undo.
     public static func selectLinked(_ identifier: String) -> Action {
         let label = linkedTypes.first { $0.identifier == identifier }?.label ?? identifier
-        return .run(python: objectCommand("bpy.ops.object.select_linked(type='\(identifier)')",
-                                          refusal: "The active object has no " + label.lowercased()
+        return .perform(objectOperation(name: "Select Linked", call: "bpy.ops.object.select_linked",
+                                        parameters: [toggle("extend", "Extend", false),
+                                                     typeRow(linkedTypes, identifier)],
+                                        refusal: "The active object has no " + label.lowercased()
                                             + " for others to share.",
-                                          needsActive: "Select Linked"),
-                    undo: "Select Linked")
+                                        needsActive: "Select Linked"))
     }
 
     /// Select ▸ Select Pattern…, Blender's defaults: not case sensitive, and
-    /// added to the selection.
+    /// added to the selection. The pattern is what was typed; the panel has
+    /// Blender's Case Sensitive and Extend.
     public static func selectPattern(_ pattern: String) -> Action {
-        .run(python: objectCommand("bpy.ops.object.select_pattern(pattern=\(Bpy.quote(pattern)), "
-                                   + "case_sensitive=False, extend=True)",
-                                   refusal: "No unselected object's name matches \(Bpy.quote(pattern)).",
-                                   refuseUnchanged: true),
-             undo: "Select Pattern")
+        .perform(objectOperation(name: "Select Pattern", call: "bpy.ops.object.select_pattern",
+                                 parameters: [toggle("case_sensitive", "Case Sensitive", false),
+                                              toggle("extend", "Extend", true)],
+                                 fixed: ["pattern=\(Bpy.quote(pattern))"],
+                                 refusal: "No unselected object's name matches \(Bpy.quote(pattern)).",
+                                 refuseUnchanged: true))
     }
 
-    /// An object-mode select operator, with its CANCELLED turned into a
-    /// sentence, and anything it changed on the way to a CANCELLED or an
-    /// error put back. `needsActive` names the row when Blender needs an
-    /// active object for it, which is refused first, before anything changes.
-    ///
-    /// `refuseUnchanged`: the operator always finishes — Select Pattern is a
-    /// Python operator returning FINISHED whatever matched, Select by Type,
-    /// Mirror and Random finish too (measured in 5.2.1) — so a CANCELLED never
-    /// says that nothing happened, and a pattern matching nothing left a
-    /// "Select Pattern" undo step that changed nothing. With it, a run that
-    /// leaves the selection and the active object as they were is refused in
-    /// the same words, and the bridge records no step for a failed command.
-    static func objectCommand(_ call: String, refusal: String, needsActive row: String? = nil,
-                              refuseUnchanged: Bool = false) -> String {
-        var lines: [String] = []
-        if let row {
-            let message = Bpy.quote(row + " starts from the active object, and no object is active. Tap one first.")
-            lines += ["if bpy.context.view_layer.objects.active is None:",
-                      "    raise RuntimeError(\(message))"]
-        }
-        lines.append("""
-        _bk_was = {_bk_o.name for _bk_o in bpy.context.view_layer.objects if _bk_o.select_get()}
-        _bk_act = bpy.context.view_layer.objects.active
-        _bk_err = None
-        try:
-            _bk_r = \(call)
-        except Exception as _bk_e:
-            _bk_r, _bk_err = {'CANCELLED'}, _bk_e
-        if 'CANCELLED' in _bk_r:
-            for _bk_o in bpy.context.view_layer.objects:
-                if _bk_o.select_get() != (_bk_o.name in _bk_was):
-                    _bk_o.select_set(_bk_o.name in _bk_was)
-            bpy.context.view_layer.objects.active = _bk_act
-            if _bk_err is not None:
-                raise _bk_err
-            raise RuntimeError(\(Bpy.quote(refusal)))
-        """)
-        if refuseUnchanged {
-            lines.append("""
-            if ({_bk_o.name for _bk_o in bpy.context.view_layer.objects if _bk_o.select_get()} == _bk_was
-                    and bpy.context.view_layer.objects.active == _bk_act):
-                raise RuntimeError(\(Bpy.quote(refusal)))
-            """)
-        }
-        return lines.joined(separator: "\n")
+    /// Select ▸ Select Grouped, as `object_select_grouped_exec` does it
+    /// (`_blenderkit_select.select_grouped`: Blender's own operator fails its
+    /// poll without an interface). Its CANCELLED is a run that changed no
+    /// selection; the active object is what every type starts from.
+    public static func selectGrouped(_ identifier: String) -> Action {
+        .perform(objectOperation(name: "Select Grouped", call: "_blenderkit_select.select_grouped",
+                                 parameters: [toggle("extend", "Extend", false), typeRow(groupedTypes, identifier)],
+                                 refusal: "Nothing else is grouped with the active object that way.",
+                                 needsActive: "Select Grouped"))
     }
 
     // MARK: region selects on objects
@@ -572,7 +723,7 @@ public enum SelectMenu {
     ///
     /// Blender leaves the active object alone. The app's box select has made
     /// the first object it caught active since it was built, because the
-    /// Object Details panel shows the active one; that stays, but only when
+    /// Properties panel shows the active one; that stays, but only when
     /// the active object is no longer selected — otherwise a box that also
     /// caught the object being edited would take its panel away.
     public static func objectRegion(_ names: [String], action: SelectAction) -> String {

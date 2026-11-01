@@ -400,6 +400,54 @@ public struct EmptyDisplay: Equatable, Sendable {
     /// kind of empty Set Origin moves (`Bpy.originReach`).
     public var instancesCollection = false
 
+    // An image empty's picture and Blender's rules for drawing it (round 4,
+    // group 8; `_blenderkit_images.record_values`). Defaults are a new image
+    // empty's in 5.2.1 (measured: Add ▸ Image ▸ Reference).
+
+    /// The image data-block's name, and a file the viewport can read its
+    /// picture from ("" for none: the frame is drawn alone).
+    public var imageName = ""
+    public var imageFile = ""
+    /// `Image.has_data`: false for a file Blender could not read as an image
+    /// (measured: a text file added as one is 0 × 0).
+    public var imageHasData = false
+    /// `Image.alpha_mode == 'PREMUL'`.
+    public var imagePremultiplied = false
+    /// `Object.empty_image_depth`: Default, Front or Back.
+    public enum Depth: String, CaseIterable, Sendable {
+        case `default` = "DEFAULT", front = "FRONT", back = "BACK"
+        public var label: String {
+            switch self {
+            case .default: return "Default"
+            case .front: return "Front"
+            case .back: return "Back"
+            }
+        }
+    }
+    public var depth = Depth.default
+    /// `Object.empty_image_side`: Both, Front or Back.
+    public enum Side: String, CaseIterable, Sendable {
+        case both = "DOUBLE_SIDED", front = "FRONT", back = "BACK"
+        public var label: String {
+            switch self {
+            case .both: return "Both"
+            case .front: return "Front"
+            case .back: return "Back"
+            }
+        }
+    }
+    public var side = Side.both
+    public var showOrthographic = true
+    public var showPerspective = true
+    public var onlyAxisAligned = false
+    /// `use_empty_image_alpha` (the Opacity checkbox) and the object colour,
+    /// whose alpha is Opacity's slider and whose colour tints the picture
+    /// (overlay_image_frag.glsl: `tex_color * ucolor`).
+    public var useAlpha = false
+    public var color = SIMD4<Float>(1, 1, 1, 1)
+    /// `show_in_front`: drawn over everything, as Front is.
+    public var inFront = false
+
     public init() {}
 
     init(fields f: [String: String]) {
@@ -408,14 +456,82 @@ public struct EmptyDisplay: Equatable, Sendable {
         if let o = DisplayRecord.floats(f, "empty_image_offset", count: 2) { imageOffset = SIMD2(o[0], o[1]) }
         if let a = DisplayRecord.floats(f, "image_aspect", count: 2) { imageAspect = SIMD2(a[0], a[1]) }
         instancesCollection = DisplayRecord.bool(f, "instances_collection", instancesCollection)
+        // A name and a path can hold the record's separators, which
+        // `_escape_display` percent-escapes.
+        imageName = f["image_name"].map { $0.removingPercentEncoding ?? $0 } ?? imageName
+        imageFile = f["image_file"].map { $0.removingPercentEncoding ?? $0 } ?? imageFile
+        imageHasData = DisplayRecord.bool(f, "image_has_data", imageHasData)
+        imagePremultiplied = DisplayRecord.bool(f, "image_premultiplied", imagePremultiplied)
+        depth = DisplayRecord.choice(f, "empty_image_depth", depth)
+        side = DisplayRecord.choice(f, "empty_image_side", side)
+        showOrthographic = DisplayRecord.bool(f, "show_empty_image_orthographic", showOrthographic)
+        showPerspective = DisplayRecord.bool(f, "show_empty_image_perspective", showPerspective)
+        onlyAxisAligned = DisplayRecord.bool(f, "show_empty_image_only_axis_aligned", onlyAxisAligned)
+        useAlpha = DisplayRecord.bool(f, "use_empty_image_alpha", useAlpha)
+        if let c = DisplayRecord.floats(f, "color", count: 4) { color = SIMD4(c[0], c[1], c[2], c[3]) }
+        inFront = DisplayRecord.bool(f, "show_in_front", inFront)
     }
 
     var fields: [(String, String)] {
-        [("empty_display_type", kind.rawValue),
-         ("empty_display_size", DisplayRecord.number(size)),
-         ("empty_image_offset", DisplayRecord.vector([imageOffset.x, imageOffset.y])),
-         ("image_aspect", DisplayRecord.vector([imageAspect.x, imageAspect.y])),
-         ("instances_collection", DisplayRecord.flag(instancesCollection))]
+        func escaped(_ s: String) -> String {
+            s.replacingOccurrences(of: "%", with: "%25").replacingOccurrences(of: ";", with: "%3B")
+                .replacingOccurrences(of: "=", with: "%3D").replacingOccurrences(of: "\n", with: "%0A")
+        }
+        var out: [(String, String)] = [
+            ("empty_display_type", kind.rawValue),
+            ("empty_display_size", DisplayRecord.number(size)),
+            ("empty_image_offset", DisplayRecord.vector([imageOffset.x, imageOffset.y])),
+            ("image_aspect", DisplayRecord.vector([imageAspect.x, imageAspect.y])),
+            ("instances_collection", DisplayRecord.flag(instancesCollection))]
+        if kind == .image {
+            out += [("image_name", escaped(imageName)), ("image_file", escaped(imageFile)),
+                    ("image_has_data", DisplayRecord.flag(imageHasData)),
+                    ("image_premultiplied", DisplayRecord.flag(imagePremultiplied)),
+                    ("empty_image_depth", depth.rawValue), ("empty_image_side", side.rawValue),
+                    ("show_empty_image_orthographic", DisplayRecord.flag(showOrthographic)),
+                    ("show_empty_image_perspective", DisplayRecord.flag(showPerspective)),
+                    ("show_empty_image_only_axis_aligned", DisplayRecord.flag(onlyAxisAligned)),
+                    ("use_empty_image_alpha", DisplayRecord.flag(useAlpha)),
+                    ("color", DisplayRecord.vector([color.x, color.y, color.z, color.w])),
+                    ("show_in_front", DisplayRecord.flag(inFront))]
+        }
+        return out
+    }
+
+    /// `BKE_object_empty_image_frame_is_visible_in_view3d`: the frame, and
+    /// with it the picture, is drawn in a perspective view unless Show In
+    /// Perspective is off, and in an orthographic one unless Orthographic is.
+    public func frameVisible(perspective: Bool) -> Bool {
+        perspective ? showPerspective : showOrthographic
+    }
+
+    /// `BKE_object_empty_image_data_is_visible_in_view3d` (object.cc): Side
+    /// Front hides the picture seen from behind — the object's Z axis away
+    /// from the viewer — and Back hides it seen from the front; Only Axis
+    /// Aligned hides it unless the view looks straight along the object's Z.
+    /// `world` is the object's matrix; `view` the view, whose `back` is
+    /// Blender's `viewinv[2]` and `eye` its `viewinv[3]`.
+    public func pictureVisible(world: simd_float4x4, view: OverlayView) -> Bool {
+        let z = SIMD3(world.columns.2.x, world.columns.2.y, world.columns.2.z)
+        if side != .both {
+            let dot: Float, eps: Float
+            if view.isPerspective {
+                let location = SIMD3(world.columns.3.x, world.columns.3.y, world.columns.3.z)
+                dot = simd_dot(z, view.eye - location)
+                eps = 0
+            } else {
+                dot = simd_dot(z, view.back)
+                eps = 1e-5
+            }
+            if side == .front && dot < eps { return false }
+            if side == .back && dot > -eps { return false }
+        }
+        if onlyAxisAligned {
+            let axis = simd_length(z) > 0 ? simd_normalize(z) : z
+            let projected = axis - view.back * simd_dot(axis, view.back)
+            if simd_length_squared(projected) > 1e-5 { return false }
+        }
+        return true
     }
 }
 

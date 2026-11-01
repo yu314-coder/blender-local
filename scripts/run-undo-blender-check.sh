@@ -25,6 +25,15 @@ trap 'rm -rf "$WORK"' EXIT
 mkdir -p "$WORK/Documents"
 swiftc -O -o "$WORK/dump" Sources/BlenderLocalBridge/*.swift tests/undo/blender/main.swift
 "$WORK/dump" > "$WORK/calls.txt"
+# Blender gets a HOME and BLENDER_USER_RESOURCES of its own: even a bare
+# `-b --factory-startup` run writes ~/.thumbnails into HOME (measured), and an
+# operator can write Blender's settings. Other checks run at the same time.
+home="$WORK/home"
+mkdir -p "$home"
 echo "  $(grep -c '^###' "$WORK/calls.txt") strings from the Swift, put through Blender $("$BLENDER" --version | head -1 | cut -d' ' -f2)"
-"$BLENDER" -b --factory-startup --python-exit-code 1 \
-  --python tests/undo/blender/verify.py -- "$WORK/calls.txt" "$WORK"
+# From the temporary folder, not the repo: what Blender writes into its
+# working folder stays out of the tree.
+ROOT="$(pwd)"
+cd "$WORK"
+HOME="$home" BLENDER_USER_RESOURCES="$home/res" "$BLENDER" -b --factory-startup --python-exit-code 1 \
+  --python "$ROOT/tests/undo/blender/verify.py" -- "$WORK/calls.txt" "$WORK"

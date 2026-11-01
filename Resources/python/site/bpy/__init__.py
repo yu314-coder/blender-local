@@ -334,6 +334,34 @@ class Modifier:
         "corrective_smooth": {"factor": 1, "iterations": 1, "scale": 1, "smooth_type": 1,
                               "use_only_smooth": 1, "use_pin_boundary": 1},
         "lattice":      {"strength": 1, "object": "object"},
+        # Round 4, group 8's declared rows (ModifierFields.swift): numbers and
+        # switches as numbers; enums and enum sets as their identifiers, and
+        # the other object by name, both through `_bk.modifier_set_object`
+        # ("text" and "object"). Curve is not here: this stand-in keeps a
+        # Curve modifier of its own (`_CURVE_MODS`).
+        "wireframe":    {"thickness": 1, "offset": 1, "use_boundary": 1, "use_replace": 1,
+                         "use_even_offset": 1, "use_relative_offset": 1, "use_crease": 1,
+                         "crease_weight": 1, "material_offset": 1, "thickness_vertex_group": 1},
+        "skin":         {"branch_smoothing": 1, "use_x_symmetry": 1, "use_y_symmetry": 1,
+                         "use_z_symmetry": 1, "use_smooth_shade": 1},
+        "hook":         {"object": "object", "strength": 1, "falloff_type": "text",
+                         "falloff_radius": 1, "use_falloff_uniform": 1},
+        "armature":     {"object": "object", "use_deform_preserve_volume": 1,
+                         "use_multi_modifier": 1, "use_vertex_groups": 1, "use_bone_envelopes": 1},
+        "surface_deform": {"target": "object", "falloff": 1, "strength": 1, "use_sparse_bind": 1},
+        "mesh_deform":  {"object": "object", "precision": 1, "use_dynamic_bind": 1},
+        "data_transfer": {"object": "object", "use_object_transform": 1, "mix_mode": "text",
+                          "mix_factor": 1, "use_vert_data": 1, "data_types_verts": "text",
+                          "vert_mapping": "text", "use_edge_data": 1, "data_types_edges": "text",
+                          "edge_mapping": "text", "use_loop_data": 1, "data_types_loops": "text",
+                          "loop_mapping": "text", "use_poly_data": 1, "data_types_polys": "text",
+                          "poly_mapping": "text"},
+        "normal_edit":  {"mode": "text", "target": "object", "use_direction_parallel": 1,
+                         "mix_mode": "text", "mix_factor": 1, "mix_limit": 1,
+                         "no_polynors_fix": 1, "offset": 3},
+        "mask":         {"mode": "text", "armature": "object", "use_smooth": 1, "threshold": 1},
+        "build":        {"frame_start": 1, "frame_duration": 1, "use_reverse": 1,
+                         "use_random_order": 1, "seed": 1},
     }
 
     # The two switches every modifier has, whatever its kind — the ones every
@@ -395,7 +423,11 @@ class Modifier:
                      "edgeSplit": "EDGE_SPLIT",
                      "laplacianSmooth": "LAPLACIANSMOOTH",
                      "correctiveSmooth": "CORRECTIVE_SMOOTH",
-                     "lattice": "LATTICE"}.get(kind, kind.upper())
+                     "lattice": "LATTICE",
+                     "surfaceDeform": "SURFACE_DEFORM",
+                     "meshDeform": "MESH_DEFORM",
+                     "dataTransfer": "DATA_TRANSFER",
+                     "normalEdit": "NORMAL_EDIT"}.get(kind, kind.upper())
 
     @property
     def _kind(self):
@@ -430,6 +462,18 @@ class Modifier:
             raise AttributeError(
                 "{} modifier has no setting '{}'; available: {}"
                 .format(self.type, key, ", ".join(sorted(allowed))))
+        if allowed[key] == "text":
+            # An enum identifier, or an enum set's identifiers joined, as
+            # Blender's record carries them; the Swift refuses one that is not
+            # in the setting's enum.
+            text = ",".join(sorted(value)) if isinstance(value, (set, frozenset, list, tuple)) \
+                else str(value)
+            try:
+                _bk.modifier_set_object(self._obj, self.name, key, text)
+            except AttributeError:
+                raise ValueError("{!r} is not a valid {} for a {} modifier"
+                                 .format(value, key, self.type)) from None
+            return
         if allowed[key] == "object":
             # Blender takes an object or None and raises TypeError for anything
             # else, including a name.
@@ -2124,14 +2168,20 @@ class _EditMeshOps:
         _bk.mesh_op("flip_normals", 0.0)
         return {"FINISHED"}
 
-    def normals_make_consistent(self, inside=False, **kw):
-        _bk.mesh_op("normals_make_consistent", 0.0)
-        return {"FINISHED"}
-
     def merge(self, type="CENTER", threshold=0.0001, **kw):
         """Blender's Merge. `type='COLLAPSE'` and the distance variants both
-        come down to welding, which is what remove_doubles does."""
-        if type not in ("CENTER", "COLLAPSE", "FIRST", "LAST"):
+        come down to welding, which is what remove_doubles does.
+
+        At Cursor, At First and At Last are refused in words: this stand-in
+        keeps no 3D cursor in its engine and no selection order, and welding
+        in their place would answer FINISHED for something else."""
+        if type == "CURSOR":
+            raise NotImplementedError(
+                "Merge At Cursor needs the 3D cursor in Blender's own mesh; the real bpy on device has it")
+        if type in ("FIRST", "LAST"):
+            raise NotImplementedError(
+                "Merge At First and At Last need Blender's selection order; the real bpy on device has it")
+        if type not in ("CENTER", "COLLAPSE"):
             raise NotImplementedError("merge type %r needs a half-edge mesh" % type)
         _bk.mesh_op("remove_doubles", max(threshold, 1e-4))
         return {"FINISHED"}
@@ -2274,7 +2324,60 @@ class _EditMeshOps:
 
     def subdivide_edgering(self, **kw):
         raise NotImplementedError(
-            "Loop Cut needs a half-edge mesh; the real bpy on device has it")
+            "Subdivide Edge-Ring needs a half-edge mesh; the real bpy on device has it")
+
+    # The Mesh menu's rows round 4 (group 6) added. Each works on edges,
+    # polygons, custom normals or a select history this stand-in's triangle
+    # mesh does not keep; named so the simulator says which row it cannot do.
+    def edge_collapse(self, **kw):
+        raise NotImplementedError("Collapse Edges & Faces needs a half-edge mesh; the real bpy on device has it")
+
+    def delete_edgeloop(self, **kw):
+        raise NotImplementedError("Delete Edge Loops needs a half-edge mesh; the real bpy on device has it")
+
+    def vert_connect(self, **kw):
+        raise NotImplementedError("Connect Vertex Pairs needs a half-edge mesh; the real bpy on device has it")
+
+    def vertices_smooth_laplacian(self, **kw):
+        raise NotImplementedError(
+            "Smooth Vertices (Laplacian) needs a half-edge mesh; the real bpy on device has it")
+
+    def edge_rotate(self, **kw):
+        raise NotImplementedError("Rotate Edge needs a half-edge mesh; the real bpy on device has it")
+
+    def intersect(self, **kw):
+        raise NotImplementedError("Intersect (Knife) needs a half-edge mesh; the real bpy on device has it")
+
+    def intersect_boolean(self, **kw):
+        raise NotImplementedError("Intersect (Boolean) needs a half-edge mesh; the real bpy on device has it")
+
+    def face_split_by_edges(self, **kw):
+        raise NotImplementedError("Weld Edges into Faces needs a half-edge mesh; the real bpy on device has it")
+
+    def convex_hull(self, **kw):
+        raise NotImplementedError("Convex Hull needs a half-edge mesh; the real bpy on device has it")
+
+    def symmetry_snap(self, **kw):
+        raise NotImplementedError("Snap to Symmetry needs a half-edge mesh; the real bpy on device has it")
+
+    def set_normals_from_faces(self, **kw):
+        raise NotImplementedError("custom normals are not stored here; the real bpy on device has them")
+
+    def average_normals(self, **kw):
+        raise NotImplementedError("custom normals are not stored here; the real bpy on device has them")
+
+    def smooth_normals(self, **kw):
+        raise NotImplementedError("custom normals are not stored here; the real bpy on device has them")
+
+    def point_normals(self, **kw):
+        raise NotImplementedError("custom normals are not stored here; the real bpy on device has them")
+
+    def extrude_manifold(self, **kw):
+        raise NotImplementedError("Extrude Manifold needs a half-edge mesh; the real bpy on device has it")
+
+    def rip_edge_move(self, **kw):
+        raise NotImplementedError(
+            "Rip Vertices and Extend needs a half-edge mesh and Blender's 3D View; the real bpy on device has them")
 
     def subdivide(self, number_cuts=1, **kw):
         for _ in range(max(1, int(number_cuts))):
@@ -2282,6 +2385,10 @@ class _EditMeshOps:
         return {"FINISHED"}
 
     def delete(self, type="VERT", **kw):
+        if type in ("EDGE_FACE", "ONLY_FACE"):
+            raise NotImplementedError(
+                "Delete ▸ Only Edges & Faces and Only Faces keep what they leave behind in a half-edge mesh; "
+                "the real bpy on device has it")
         if type not in ("FACE", "VERT", "EDGE"):
             raise ValueError("unknown delete type: %s" % type)
         _bk.mesh_op({"FACE": "delete", "VERT": "delete_verts",
@@ -2300,6 +2407,17 @@ class _EditMeshOps:
         return {"FINISHED"}
 
     def normals_make_consistent(self, inside=False, **kw):
+        """The stand-in's triangles are built facing out and stay that way, so
+        Recalculate Outside has nothing to turn, as in Blender on a consistent
+        mesh. (A second definition above, which recomputed smooth vertex
+        normals — not what Blender's operator does — was never reached: this
+        one replaced it.) Recalculate Inside turns every face in, which the
+        stand-in's engine cannot do, so it says so rather than answer
+        FINISHED for nothing."""
+        if inside:
+            raise NotImplementedError(
+                "Recalculate Inside turns the faces to point inwards, which the simulator's stand-in cannot; "
+                "the real bpy on device can")
         return {"FINISHED"}
 
 
@@ -2383,7 +2501,7 @@ class _RenderOps:
     def render(self, write_still=False, **kw):
         raise NotImplementedError(
             "this stand-in renders from the viewport, not from bpy; use "
-            "More \u25b8 Render in the 3D View. The real module on an iPad "
+            "More \u25b8 Render in the Layout tab. The real module on an iPad "
             "renders with Cycles or Eevee")
 
 

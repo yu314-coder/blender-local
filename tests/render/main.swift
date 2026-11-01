@@ -57,8 +57,8 @@ do {
     check("the device is written where the panel can read it",
           cycles.contains("open(\"/tmp/dev.txt\", 'w').write(_device)"), cycles)
     let eevee = RenderRequest(engine: .eevee, output: "/tmp/a.png").python
-    check("Eevee needs no device set: it draws with the GPU either way",
-          !eevee.contains("compute_device_type") && eevee.contains("_device = \"Eevee on the GPU\""), eevee)
+    check("EEVEE needs no device set: it draws with the GPU either way",
+          !eevee.contains("compute_device_type") && eevee.contains("_device = \"EEVEE on the GPU\""), eevee)
     check("nothing is written when the panel did not ask",
           !RenderRequest(engine: .cycles, output: "/tmp/a.png").python.contains(".write(_device)"))
 }
@@ -248,9 +248,14 @@ do {
           == "bpy.context.scene.camera = bpy.data.objects[\"Camera 2\"]")
     let aim = Bpy.alignCameraToView("Camera", RenderRequest.ViewCamera(
         location: SIMD3(1, 2, 3), rotation: SIMD3(0.1, 0.2, 0.3), fovY: 0.7))
-    check("aiming a camera at the view moves and turns it",
-          aim.contains("bpy.data.objects[\"Camera\"].location = (1.0000, 2.0000, 3.0000)")
-          && aim.contains("bpy.data.objects[\"Camera\"].rotation_euler = (0.1000, 0.2000, 0.3000)"), aim)
+    check("aiming a camera at the view writes where it ends up in the world, through its parent",
+          aim.contains("_bk_loc = (1.000000, 2.000000, 3.000000)")
+          && aim.contains("_bk_rot = (0.100000, 0.200000, 0.300000)")
+          && aim.contains("_bk_o.matrix_world = "), aim)
+    // The negative control: round 3's two lines wrote the view's world values
+    // into the local channels, which a parent or a quaternion camera ignores.
+    check("and no longer writes the world values into the local channels alone",
+          !aim.contains("bpy.data.objects[\"Camera\"].rotation_euler = (0.1000"), aim)
     check("a light's power", Bpy.setObjectData("Point", "energy", 250)
           == "bpy.data.objects[\"Point\"].data.energy = 250.0000")
     check("a light's colour", Bpy.setObjectData("Point", "color", colour: SIMD3(1, 0.5, 0.25))

@@ -35,6 +35,13 @@ struct MetalViewportView: UIViewRepresentable {
     /// Ctrl is held: the select tool's mode in the Select menu, Blender's
     /// tool-header buttons. Taps keep `selectAction`.
     var regionAction: SelectAction = .set
+    /// What a finger's tap does while editing a mesh when no key is held:
+    /// one of Blender's pick selections (Loop Select, Edge Ring Select, Pick
+    /// Shortest Path, Select Linked), or nil for an ordinary select. Touch has
+    /// no Alt or Ctrl, so the Select menu and the pick bar set it.
+    var pick: SelectPick? = nil
+    /// Blender's Shift variant of `pick`, for a finger (`SelectPick.shiftLabel`).
+    var pickShift = false
     /// Where interface actions go. A drag previews locally and commits through
     /// here on release; a tap goes straight through.
     var bridge: BpyBridge?
@@ -155,7 +162,11 @@ struct MetalViewportView: UIViewRepresentable {
         #if DEBUG
         context.coordinator.paintLaunchStrokeIfRequested()
         context.coordinator.regionSelectLaunchIfRequested()
+        context.coordinator.cutLaunchIfRequested()
+        context.coordinator.measureLaunchIfRequested()
+        context.coordinator.selectPickLaunchIfRequested()
         context.coordinator.sculptLaunchStrokeIfRequested()
+        context.coordinator.vwPaintLaunchStrokeIfRequested()
         context.coordinator.standInDabLaunchIfRequested()
         #endif
         return view
@@ -167,7 +178,9 @@ struct MetalViewportView: UIViewRepresentable {
         #endif
         context.coordinator.parent = self
         (view as? ViewportMTKView)?.onTab = onToggleEditing
-        context.coordinator.renderer?.camera = camera
+        // While a camera drag is under way the view's camera is a step behind
+        // the drawn one (`Coordinator.liveCamera`).
+        context.coordinator.renderer?.camera = context.coordinator.liveCamera ?? camera
         context.coordinator.renderer?.scene = scene
         context.coordinator.renderer?.shading = shading
         context.coordinator.renderer?.options = options
@@ -191,6 +204,9 @@ struct MetalViewportView: UIViewRepresentable {
         /// gets a look at it.
         private var gizmo: TransformGizmo.Session?
         private var gizmoResult: TransformGizmo.Result?
+        /// The drag moves something a constraint decides, and Blender
+        /// previews it (`BpyBridge.beginConstrainedDrag`).
+        private var constrainedDrag = false
         /// What a move has snapped to, drawn over the view. A layer rather
         /// than the renderer's pass, so every workspace's 3D View has it.
         private var snapMarker: CAShapeLayer?
@@ -201,15 +217,43 @@ struct MetalViewportView: UIViewRepresentable {
         let texturePaintInput = TexturePaintInput()
         /// A stroke with Blender's own sculpt brush. See SculptStrokeInput.swift.
         let sculptInput = SculptStrokeInput()
+        /// Loop Cut's rings, asked of Blender once per edge (CutToolInput.swift).
+        var loopCutCache = LoopCutCache()
+        /// Why the last ring could not be had, for a tap to say.
+        var loopCutRefusal: String?
+        /// The Knife's snapping cage (CutToolInput.swift).
+        var knifeCageCache = KnifeCageCache()
+        /// Where a mouse, trackpad or Pencil last hovered over the view, for
+        /// Blender's L (Select Linked under the pointer); nil once it left.
+        var lastPointer: CGPoint?
+        /// The L key's notification (`SelectPick.linkedKey`).
+        var linkedKeyObserver: NSObjectProtocol?
+        /// A drag of the 3D cursor with the Cursor tool (CursorMeasureInput.swift).
+        var cursorDrag: CursorDrag?
+        /// A drag with the Measure tool (CursorMeasureInput.swift).
+        var rulerDrag: RulerDrag?
 
-        init(_ parent: MetalViewportView) { self.parent = parent }
+        init(_ parent: MetalViewportView) {
+            self.parent = parent
+            super.init()
+            Self.live.add(self)
+            linkedKeyObserver = NotificationCenter.default.addObserver(
+                forName: SelectPickKeys.linked, object: nil, queue: .main) { [weak self] note in
+                    let deselect = (note.userInfo?["deselect"] as? Bool) ?? false
+                    self?.selectLinkedUnderPointer(deselect: deselect)
+                }
+        }
 
         deinit {
+            if let linkedKeyObserver { NotificationCenter.default.removeObserver(linkedKeyObserver) }
             // A view torn down under a drag of a curve's or a lattice's points
             // (its workspace closed) cancels it, so the session is not left
             // holding every command (BpySession.pointDragOpen) for a lift that
             // will never come.
             if gizmo?.points != nil, Thread.isMainThread { parent.bridge?.cancelPointDrag() }
+            // A constrained drag the same: Blender's channels back as it found
+            // them, and the hold (BpySession.constrainedDragOpen) let go.
+            if constrainedDrag, Thread.isMainThread { parent.bridge?.endConstrainedDrag() }
         }
 
         /// One finger: orbits with Tweak, and with a transform tool transforms
@@ -222,6 +266,21 @@ struct MetalViewportView: UIViewRepresentable {
 
             if g.state == .began {
                 lastPan = .zero
+                // The Measure tool's drags make and move rulers, and the
+                // Cursor tool's drag from on the cursor moves it — from where
+                // the finger went down (CursorMeasureInput.swift).
+                if let view {
+                    let press = CGPoint(x: g.location(in: view).x - g.translation(in: view).x,
+                                        y: g.location(in: view).y - g.translation(in: view).y)
+                    if beginRulerDrag(at: press, size: view.bounds.size, modifiers: g.modifierFlags) {
+                        updateRulerDrag(to: g.location(in: view), modifiers: g.modifierFlags)
+                        return
+                    }
+                    if beginCursorDrag(at: press, size: view.bounds.size, places: false, modifiers: g.modifierFlags) {
+                        updateCursorDrag(to: g.location(in: view), modifiers: g.modifierFlags)
+                        return
+                    }
+                }
                 if let view, beginRegion(at: g.location(in: view), modifiers: g.modifierFlags) {
                     return
                 }
@@ -240,6 +299,7 @@ struct MetalViewportView: UIViewRepresentable {
                 return
             }
 
+            if continueCursorOrRuler(g) { return }
             // A select region owns the whole gesture: no orbit, no transform.
             if regionGesture != nil, let view {
                 continueRegion(g, in: view)
@@ -256,7 +316,7 @@ struct MetalViewportView: UIViewRepresentable {
             // happened, and what it changed has to be kept.
             if g.state == .cancelled || g.state == .failed {
                 parent.scene.endViewportDrag(.brush)
-                parent.scene.endViewportDrag(.orbit)
+                endCameraMove(.orbit)
                 finishStroke()
             }
             guard g.state == .changed || g.state == .ended else { lastPan = .zero; return }
@@ -264,15 +324,13 @@ struct MetalViewportView: UIViewRepresentable {
             let dx = Float(p.x - lastPan.x)
             let dy = Float(p.y - lastPan.y)
 
-            // Vertex and weight paint: a drag paints the attribute, not pixels.
-            if parent.scene.mode == .vertexPaint || parent.scene.mode == .weightPaint {
-                if g.state == .changed, let view {
-                    vertexPaintDab(at: g.location(in: view), in: view)
-                    parent.scene.beginViewportDrag(.brush,
-                        parent.scene.mode == .vertexPaint ? "Vertex Paint" : "Weight Paint")
-                } else if g.state == .ended || g.state == .cancelled {
-                    parent.scene.endViewportDrag(.brush)
-                }
+            // Vertex and weight paint on the simulator's stand-in: a drag
+            // paints the display cache's attribute. With the real Blender
+            // `handleBlenderSculpt` above has taken the drag already — or,
+            // in a 3D View without the bridge, nothing can: then the drag
+            // orbits and the refusal is said as it ends (`standInPaintDrag`).
+            if parent.scene.mode == .vertexPaint || parent.scene.mode == .weightPaint, let view,
+               standInPaintDrag(g.state, at: g.location(in: view), in: view) {
                 return
             }
 
@@ -292,7 +350,7 @@ struct MetalViewportView: UIViewRepresentable {
                         strokeObject = parent.scene.active
                     }
                     parent.scene.beginViewportDrag(.brush,
-                        "Sculpt  \(parent.scene.sculpt.brush.label)")
+                        "Sculpt  \(parent.scene.sculpt.brush.name)")
                 } else if g.state == .ended {
                     parent.scene.endViewportDrag(.brush)
                     finishStroke()
@@ -310,14 +368,34 @@ struct MetalViewportView: UIViewRepresentable {
             // the viewport completely dead to drags. And a transform tool whose
             // drag started on empty space rather than on the selection.
             if g.state == .changed {
-                parent.camera.orbit(dx: dx * 0.008, dy: dy * 0.008)
-                parent.scene.beginViewportDrag(.orbit, String(
-                    format: "Orbit  %.0f°, %.0f°",
-                    parent.camera.azimuth * 180 / .pi,
-                    parent.camera.elevation * 180 / .pi))
+                moveCamera(.orbit, readout: Self.orbitReadout) { $0.orbit(dx: dx * 0.008, dy: dy * 0.008) }
             } else if g.state == .ended || g.state == .cancelled {
-                parent.scene.endViewportDrag(.orbit)
+                endCameraMove(.orbit)
             }
+        }
+
+        /// A cursor drag or a ruler drag in progress owns the gesture until it
+        /// lifts. Returns whether it did.
+        private func continueCursorOrRuler(_ g: UIPanGestureRecognizer) -> Bool {
+            guard let view else { return false }
+            if cursorDrag != nil {
+                switch g.state {
+                case .changed: updateCursorDrag(to: g.location(in: view), modifiers: g.modifierFlags)
+                case .ended: endCursorDrag()
+                case .cancelled, .failed: endCursorDrag(cancelled: true)
+                default: break
+                }
+                return true
+            }
+            if rulerDrag != nil {
+                switch g.state {
+                case .changed: updateRulerDrag(to: g.location(in: view), modifiers: g.modifierFlags)
+                case .ended, .cancelled, .failed: endRulerDrag()
+                default: break
+                }
+                return true
+            }
+            return false
         }
 
         /// Hands a finished stroke to whoever keeps it.
@@ -430,7 +508,7 @@ struct MetalViewportView: UIViewRepresentable {
             guard let gesture = regionGesture, let region = currentRegion(), region.isUsable else { return nil }
             let bounds = view.bounds
             guard bounds.width > 0, bounds.height > 0 else { return nil }
-            let vp = parent.camera.viewProjection(aspect: Float(bounds.width / bounds.height))
+            let vp = currentCamera.viewProjection(aspect: Float(bounds.width / bounds.height))
             let action = gesture.action ?? parent.regionAction.forRegion(circle: gesture.tool == .circleSelect)
             // Blender's X-Ray, and Wireframe, where its X-Ray is on by default:
             // what the surface hides is selected too.
@@ -481,14 +559,11 @@ struct MetalViewportView: UIViewRepresentable {
                                                        viewProjection: vp, size: bounds.size,
                                                        seeThrough: seeThrough)
                 // Blender's own gesture returns CANCELLED when it changes
-                // nothing, and pushes no undo step; neither does this.
-                let current = parent.scene.editSelection
-                let unchanged: Bool
-                switch parent.scene.selectMode {
-                case .vertex: unchanged = selection.vertices == current.vertices
-                case .edge:   unchanged = selection.edges == current.edges
-                case .face:   unchanged = selection.faces == current.faces
-                }
+                // nothing, and pushes no undo step; neither does this. A Set
+                // with anything selected always changes Blender's selection
+                // order (`BKObject.regionChanges`).
+                let unchanged = !BKObject.regionChanges(selection, from: parent.scene.editSelection,
+                                                        mode: parent.scene.selectMode, action: action)
                 if unchanged && !parent.scene.editSelectionPending { return region }
                 if let bridge = parent.bridge, bridge.usesRealBlender {
                     bridge.run(Bpy.pushEditSelection(selection, mode: parent.scene.selectMode, of: object),
@@ -568,6 +643,55 @@ struct MetalViewportView: UIViewRepresentable {
             return true
         }
 
+        // MARK: the camera during a drag
+
+        /// The camera while an orbit, pan or zoom is under way: drawn every
+        /// frame from here, and handed to the view (`parent.camera`, SwiftUI
+        /// state at the root) when the drag ends. Written to the view on every
+        /// step, each step re-ran the whole 3D View's body — the header, the
+        /// toolbar, the editors' dock — before the renderer saw the new camera:
+        /// orbit, pan and zoom drew 12 to 20 frames a second on a 64,226-vertex
+        /// sphere while a frame took 0.1 ms to draw (Test All Features,
+        /// November 1).
+        private(set) var liveCamera: ViewportCamera?
+
+        /// The camera as it is drawn now.
+        var currentCamera: ViewportCamera { liveCamera ?? parent.camera }
+
+        /// One step of a camera drag: `change` applied to the camera as drawn,
+        /// drawn by the next frame and shown to the overlays that follow the
+        /// view (`ViewportCameraFeed`), with the readout the drag shows. The
+        /// readout is the one thing on screen each step changes, and only the
+        /// 3D View's info row reads it (`ViewportInfoRow`).
+        func moveCamera(_ kind: BKScene.ViewportDragKind, readout: (ViewportCamera) -> String,
+                        _ change: (inout ViewportCamera) -> Void) {
+            var camera = currentCamera
+            change(&camera)
+            liveCamera = camera
+            renderer?.camera = camera
+            ViewportCameraFeed.shared.live = camera
+            parent.scene.beginViewportDrag(kind, readout(camera))
+        }
+
+        /// The drag over: the camera handed to the view and the readout
+        /// released (`kind`'s, if it still holds it; nil leaves the readout to
+        /// whoever ends it). Safe to call when no drag moved the camera.
+        func endCameraMove(_ kind: BKScene.ViewportDragKind?) {
+            if let kind { parent.scene.endViewportDrag(kind) }
+            guard let camera = liveCamera else { return }
+            liveCamera = nil
+            ViewportCameraFeed.shared.live = nil
+            parent.camera = camera
+        }
+
+        static func orbitReadout(_ c: ViewportCamera) -> String {
+            String(format: "Orbit  %.0f°, %.0f°", c.azimuth * 180 / .pi, c.elevation * 180 / .pi)
+        }
+
+        static func zoomReadout(_ c: ViewportCamera) -> String {
+            String(format: "Zoom  %.2f m", c.distance)
+        }
+
         /// How to end the readout the current trackpad scroll started, whichever
         /// kind of navigation it turned out to be.
         private var endScrollReadout: (() -> Void)?
@@ -588,6 +712,7 @@ struct MetalViewportView: UIViewRepresentable {
                 if g.state == .ended || g.state == .cancelled {
                     endScrollReadout?()
                     endScrollReadout = nil
+                    endCameraMove(nil)
                 }
                 return
             }
@@ -598,38 +723,68 @@ struct MetalViewportView: UIViewRepresentable {
             let scene = parent.scene
             if flags.contains(.command) || flags.contains(.control) {
                 // Scrolling up zooms in, matching the scroll wheel everywhere else.
-                parent.camera.dolly(factor: 1 - Float(t.y) * 0.004)
-                scene.beginViewportDrag(.zoom, String(format: "Zoom  %.2f m", parent.camera.distance))
+                moveCamera(.zoom, readout: Self.zoomReadout) { $0.dolly(factor: 1 - Float(t.y) * 0.004) }
                 endScrollReadout = { scene.endViewportDrag(.zoom) }
             } else if flags.contains(.shift) {
-                parent.camera.pan(dx: Float(t.x), dy: Float(t.y))
-                scene.beginViewportDrag(.pan, "Pan")
+                moveCamera(.pan, readout: { _ in "Pan" }) { $0.pan(dx: Float(t.x), dy: Float(t.y)) }
                 endScrollReadout = { scene.endViewportDrag(.pan) }
             } else {
-                parent.camera.orbit(dx: Float(t.x) * 0.008, dy: Float(t.y) * 0.008)
-                scene.beginViewportDrag(.orbit, String(
-                    format: "Orbit  %.0f°, %.0f°",
-                    parent.camera.azimuth * 180 / .pi,
-                    parent.camera.elevation * 180 / .pi))
+                moveCamera(.orbit, readout: Self.orbitReadout) {
+                    $0.orbit(dx: Float(t.x) * 0.008, dy: Float(t.y) * 0.008)
+                }
                 endScrollReadout = { scene.endViewportDrag(.orbit) }
             }
         }
 
-        /// One vertex-paint or weight-paint dab.
+        /// One moment of a drag in Weight Paint or Vertex Paint that
+        /// Blender's own stroke did not take (`handleBlenderSculpt`). On the
+        /// simulator's stand-in it paints the display cache's attribute and
+        /// owns the drag (true). On Blender's mesh, in a 3D View without the
+        /// bridge (the Scripting tab's Showcase keeps the mode), the
+        /// stand-in may not paint (`standInPaintRefusal`): nothing is
+        /// painted, the refusal is said as the drag ends, and false leaves
+        /// the drag to the camera, as a refused sculpt drag is left.
+        func standInPaintDrag(_ state: UIGestureRecognizer.State, at point: CGPoint,
+                              in view: MTKView) -> Bool {
+            let mode = parent.scene.mode
+            if let refusal = parent.scene.active?.standInPaintRefusal(mode) {
+                if state == .ended || state == .cancelled {
+                    print("[bk] \(mode.label) refused: \(refusal)")
+                    fflush(stdout)
+                    parent.bridge?.showReport(mode.label, refusal)
+                }
+                return false
+            }
+            if state == .changed {
+                vertexPaintDab(at: point, in: view)
+                parent.scene.beginViewportDrag(.brush, mode == .vertexPaint ? "Vertex Paint" : "Weight Paint")
+            } else if state == .ended || state == .cancelled {
+                parent.scene.endViewportDrag(.brush)
+            }
+            return true
+        }
+
+        /// One vertex-paint or weight-paint dab of the simulator's stand-in.
+        /// With the real Blender a drag in those modes never gets here: it is
+        /// Blender's own stroke (`handleBlenderSculpt`, `_blenderkit_vwpaint`),
+        /// and over Blender's mesh it paints nothing (`standInPaintRefusal`).
+        /// Returns how many vertices it touched.
         ///
         /// Blender paints the *attribute* here, not a texture: the brush finds
         /// the surface under the touch and blends every vertex within its
         /// radius toward the brush value. That is why these modes need no UV
         /// unwrap, where texture paint does.
-        func vertexPaintDab(at point: CGPoint, in view: MTKView) {
-            guard let renderer, let obj = parent.scene.active, obj.visible else { return }
+        @discardableResult
+        func vertexPaintDab(at point: CGPoint, in view: MTKView) -> Int {
+            guard let renderer, let obj = parent.scene.active, obj.visible,
+                  obj.standInPaintRefusal(parent.scene.mode) == nil else { return 0 }
             let bounds = view.bounds
-            guard bounds.width > 0, bounds.height > 0 else { return }
+            guard bounds.width > 0, bounds.height > 0 else { return 0 }
             let ndc = SIMD2<Float>(Float(point.x / bounds.width) * 2 - 1,
                                    1 - Float(point.y / bounds.height) * 2)
             guard let hit = renderer.surfaceHit(ndc: ndc,
                                                 aspect: Float(bounds.width / bounds.height),
-                                                on: obj) else { return }
+                                                on: obj) else { return 0 }
 
             let settings = parent.scene.paint
             // The dab radius is a fraction of the object's own size, matching
@@ -646,7 +801,7 @@ struct MetalViewportView: UIViewRepresentable {
             case .paintAverage: op = .average
             default:            op = .draw
             }
-            _ = obj.paintVertices(at: world, radius: radius, strength: settings.strength,
+            return obj.paintVertices(at: world, radius: radius, strength: settings.strength,
                                   op: op,
                                   colour: parent.scene.mode == .vertexPaint ? settings.colour : nil,
                                   weight: parent.scene.mode == .weightPaint ? settings.weight : nil,
@@ -792,9 +947,15 @@ struct MetalViewportView: UIViewRepresentable {
         /// True if the touch landed on a handle, in which case the drag is now
         /// the gizmo's.
         private func beginGizmoIfHit(at point: CGPoint) -> Bool {
+            guard let mode = MetalViewportView.gizmoMode(for: parent.tool, scene: parent.scene),
+                  let handle = gizmoHandle(at: point) else { return false }
+            return beginGizmo(mode, handle: handle, at: point)
+        }
+
+        /// The drag is the gizmo's, `mode`'s `handle`, from `point`.
+        private func beginGizmo(_ mode: TransformGizmo.Mode, handle: TransformGizmo.Handle,
+                                at point: CGPoint) -> Bool {
             guard let view,
-                  let mode = MetalViewportView.gizmoMode(for: parent.tool, scene: parent.scene),
-                  let handle = gizmoHandle(at: point),
                   let g = TransformGizmo.make(mode: mode, scene: parent.scene,
                                               options: parent.options,
                                               camera: parent.camera, size: view.bounds.size)
@@ -839,6 +1000,11 @@ struct MetalViewportView: UIViewRepresentable {
                 }
             } else {
                 TransformGizmo.apply(result, session: session)
+                if constrainedDrag, let bridge = parent.bridge,
+                   !bridge.previewConstrainedDrag(TransformGizmo.python(result, session: session)) {
+                    // Blender raised: the viewport's own preview goes on.
+                    endConstrainedDrag()
+                }
             }
             gizmoResult = result
             showSnapMarker(target, projection: session.projection)
@@ -897,6 +1063,7 @@ struct MetalViewportView: UIViewRepresentable {
         /// drag that has just begun moves them. False when it refused — the
         /// banner says why — and the drag is dropped.
         private func beginPointDragIfAny() -> Bool {
+            beginConstrainedDragIfAny()
             guard let session = gizmo, let points = session.points else { return true }
             guard let bridge = parent.bridge,
                   bridge.beginPointDrag(object: points.object.name, followers: points.followers,
@@ -905,6 +1072,29 @@ struct MetalViewportView: UIViewRepresentable {
                 return false
             }
             return true
+        }
+
+        /// An object drag that moves something a constraint decides — a
+        /// constrained object, or one that follows the moved one through a
+        /// constraint or a parent with one: Blender previews each frame by
+        /// the call the release commits, since the viewport's own preview of
+        /// the channels would not be where Blender puts it (round 4, group 7).
+        private func beginConstrainedDragIfAny() {
+            if constrainedDrag { parent.bridge?.endConstrainedDrag() }
+            constrainedDrag = false
+            guard let session = gizmo, session.points == nil, session.edit == nil,
+                  let bridge = parent.bridge else { return }
+            let moving = Set(session.snapshot.map(\.object.id) + session.neighbours.map(\.object.id))
+            guard parent.scene.dragNeedsBlender(moving: moving) else { return }
+            constrainedDrag = bridge.beginConstrainedDrag()
+        }
+
+        /// Ends a constrained drag's preview, Blender's channels put back,
+        /// before its commit or with none.
+        private func endConstrainedDrag() {
+            guard constrainedDrag else { return }
+            constrainedDrag = false
+            parent.bridge?.endConstrainedDrag()
         }
 
         /// A point drag whose frame Blender refused: everything back as it
@@ -927,6 +1117,9 @@ struct MetalViewportView: UIViewRepresentable {
         /// once, through bpy, which is also exactly what Blender's Info log
         /// shows — one operator per gesture rather than one per frame.
         private func endGizmo() {
+            // Blender's channels back as the drag found them, before the
+            // commit runs once as its step (or with no commit at all).
+            endConstrainedDrag()
             defer {
                 gizmo = nil
                 gizmoResult = nil
@@ -946,25 +1139,18 @@ struct MetalViewportView: UIViewRepresentable {
                 return
             }
             guard let session = gizmo, let result = gizmoResult else { return }
-            let python = TransformGizmo.python(result, session: session)
 
             if let bridge = parent.bridge {
-                TransformGizmo.rollBack(session)
-                // The mirror left Blender nothing to transform: the preview
-                // showed nothing move, and Blender would answer CANCELLED
-                // having changed nothing — so nothing is sent, no empty step
-                // is recorded, and the banner says why.
-                if let why = TransformGizmo.nothingToCommit(session) {
-                    bridge.showReport(session.gizmo.mode.undoName, why)
-                    return
-                }
-                // In edit mode the operator acts on Blender's *vertex*
-                // selection. Whatever was tapped since Blender last reported
-                // its selection is handed over by the bridge, in the same
-                // evaluation as the operator.
-                bridge.run(python, undo: session.gizmo.mode.undoName)
+                // Rolled back, then performed as an operator the redo panel
+                // can adjust — Move X, Y and Z typed, the orientation, the
+                // proportional settings — by undoing and running it again,
+                // as Blender's does. It used to go through `bridge.run`, which
+                // clears that panel: no gizmo drag ever opened it. The mirror
+                // leaving Blender nothing to transform is said instead
+                // (`nothingToCommit`), with no empty step recorded.
+                TransformGizmo.commit(result, session: session, bridge: bridge)
             } else {
-                parent.onTransform(python)
+                parent.onTransform(TransformGizmo.python(result, session: session))
                 parent.onCommit(session.gizmo.mode.undoName)
             }
         }
@@ -976,6 +1162,20 @@ struct MetalViewportView: UIViewRepresentable {
 
             if g.state == .began {
                 lastPencilPan = .zero
+                // The Measure tool's drag and the Cursor tool's: Blender's
+                // press places the cursor, then the drag moves it.
+                if let view {
+                    let press = CGPoint(x: g.location(in: view).x - g.translation(in: view).x,
+                                        y: g.location(in: view).y - g.translation(in: view).y)
+                    if beginRulerDrag(at: press, size: view.bounds.size, modifiers: g.modifierFlags) {
+                        updateRulerDrag(to: g.location(in: view), modifiers: g.modifierFlags)
+                        return
+                    }
+                    if beginCursorDrag(at: press, size: view.bounds.size, places: true, modifiers: g.modifierFlags) {
+                        updateCursorDrag(to: g.location(in: view), modifiers: g.modifierFlags)
+                        return
+                    }
+                }
                 // The Pencil draws a lasso, a box or a circle stroke as a
                 // finger does: the select tools are drags of their own.
                 if let view, beginRegion(at: g.location(in: view), modifiers: g.modifierFlags) {
@@ -986,6 +1186,7 @@ struct MetalViewportView: UIViewRepresentable {
                 }
                 return
             }
+            if continueCursorOrRuler(g) { return }
             if regionGesture != nil, let view {
                 continueRegion(g, in: view)
                 return
@@ -1005,13 +1206,9 @@ struct MetalViewportView: UIViewRepresentable {
             // that is because Tweak is active or because nothing is selected
             // for a transform tool to act on.
             if g.state == .changed {
-                parent.camera.orbit(dx: dx * 0.008, dy: dy * 0.008)
-                parent.scene.beginViewportDrag(.orbit, String(
-                    format: "Orbit  %.0f°, %.0f°",
-                    parent.camera.azimuth * 180 / .pi,
-                    parent.camera.elevation * 180 / .pi))
+                moveCamera(.orbit, readout: Self.orbitReadout) { $0.orbit(dx: dx * 0.008, dy: dy * 0.008) }
             } else if g.state == .ended || g.state == .cancelled {
-                parent.scene.endViewportDrag(.orbit)
+                endCameraMove(.orbit)
             }
         }
 
@@ -1019,6 +1216,23 @@ struct MetalViewportView: UIViewRepresentable {
         /// it. Only fires on hardware that reports hover.
         @objc func handleHover(_ g: UIHoverGestureRecognizer) {
             guard let view, let renderer else { return }
+            switch g.state {
+            case .began, .changed: lastPointer = g.location(in: view)
+            default:               lastPointer = nil
+            }
+            // Loop Cut previews the ring under the pointer, and the Knife the
+            // segment its next point would add, as Blender's do as the mouse
+            // moves.
+            if let cut = cutTool {
+                let hovering = g.state == .began || g.state == .changed
+                switch cut {
+                case .loopCut:
+                    if hovering { loopCutHover(at: g.location(in: view), size: view.bounds.size) }
+                case .knife:
+                    knifeHover(at: hovering ? g.location(in: view) : nil, size: view.bounds.size)
+                }
+                return
+            }
             switch g.state {
             case .began, .changed:
                 let point = g.location(in: view)
@@ -1053,33 +1267,98 @@ struct MetalViewportView: UIViewRepresentable {
             defer { lastPan = p }
             guard g.state == .changed else {
                 lastPan = .zero
-                if g.state == .ended || g.state == .cancelled { parent.scene.endViewportDrag(.pan) }
+                if g.state == .ended || g.state == .cancelled { endCameraMove(.pan) }
                 return
             }
-            parent.camera.pan(dx: Float(p.x - lastPan.x), dy: Float(p.y - lastPan.y))
-            parent.scene.beginViewportDrag(.pan, "Pan")
+            let step = CGPoint(x: p.x - lastPan.x, y: p.y - lastPan.y)
+            moveCamera(.pan, readout: { _ in "Pan" }) { $0.pan(dx: Float(step.x), dy: Float(step.y)) }
         }
 
         @objc func handlePinch(_ g: UIPinchGestureRecognizer) {
             if sculptInput.isStroking { return }
             switch g.state {
             case .began:
-                pinchStartDistance = parent.camera.distance
+                pinchStartDistance = currentCamera.distance
             case .changed:
-                parent.camera.distance = min(max(pinchStartDistance / Float(g.scale), 0.4), 500)
-                parent.scene.beginViewportDrag(.zoom,
-                    String(format: "Zoom  %.2f m", parent.camera.distance))
+                let distance = min(max(pinchStartDistance / Float(g.scale), 0.4), 500)
+                moveCamera(.zoom, readout: Self.zoomReadout) { $0.distance = distance }
             default:
-                parent.scene.endViewportDrag(.zoom)
+                endCameraMove(.zoom)
             }
         }
 
+        /// A tap on a mesh in Edit Mode, with the keys `modifiers` held.
+        ///
+        /// Blender's pick selections first: Alt+click (Loop Select),
+        /// Ctrl+Alt+click (Edge Ring Select) and Ctrl+click (Pick Shortest
+        /// Path) from a pointer, Shift adding Blender's Shift variant — or the
+        /// pick the Select menu or the pick bar set for a finger, which has no
+        /// keys (SelectPickInput.swift). Otherwise the element under the tap,
+        /// as `selectAction` combines it.
+        func meshEditTap(at point: CGPoint, size: CGSize, modifiers: UIKeyModifierFlags) {
+            guard let renderer, size.width > 0, size.height > 0 else { return }
+            let keyed = SelectPick.fromKeys(shift: modifiers.contains(.shift),
+                                            control: modifiers.contains(.control) || modifiers.contains(.command),
+                                            option: modifiers.contains(.alternate))
+            if let (pick, shift) = keyed ?? parent.pick.map({ ($0, parent.pickShift || modifiers.contains(.shift)) }) {
+                selectPickTap(pick, shift: shift, at: point, size: size)
+                return
+            }
+            // The tap's pick reaches Blender the way a region's does
+            // (`Bpy.pushEditSelection`), so it has the region's limit: a
+            // mesh drawn through a modifier that rebuilds it has no vertex
+            // Blender would recognise, and the push left is the one that
+            // deselects everything first. Measured in 5.2.1 (round 3's
+            // review): with all 8 of a cube's vertices selected, one tap
+            // left 0 of 8 under a Subdivision Surface and 1 under a Mirror.
+            // Said, not done, as Box, Circle and Lasso do.
+            if let bridge = parent.bridge, bridge.usesRealBlender,
+               let refusal = parent.scene.active?.editRegionRefusal() {
+                bridge.showReport("Select", refusal)
+                return
+            }
+            let ndc = SIMD2<Float>(Float(point.x / size.width) * 2 - 1, 1 - Float(point.y / size.height) * 2)
+            let hit = renderer.hitTestElement(
+                ndc: ndc, aspect: Float(size.width / size.height), mode: parent.scene.selectMode,
+                viewSize: SIMD2(Float(size.width), Float(size.height)))
+            // Shift+click is Blender's toggle (`view3d.select(toggle=True)`,
+            // SEL_OP_XOR in EDBM_select_pick); a finger has the pick bar's
+            // Toggle Selection for it.
+            let toggle = modifiers.contains(.shift) || (parent.pick == nil && parent.pickShift)
+            parent.scene.editSelection = editTapSelection(hit, action: toggle ? .difference : parent.selectAction)
+            // Blender is told before the next command acts on it, in that
+            // command's own evaluation, rather than paying a round trip per
+            // tap.
+            parent.scene.editSelectionPending = true
+            parent.bridge?.noteSelectionChanged()
+        }
+
+        /// The edit selection a tap that picked `hit` leaves, with `action`.
+        /// Each component set is combined separately, so Extend on a face
+        /// selection grows the faces and the vertices they imply, numbered on
+        /// the cage the tap picked on (`hitTestElement`). Blender's selection
+        /// order follows as Blender's click leaves it (`EditSelection.picked`):
+        /// the element tapped becomes the active one, which Pick Shortest Path,
+        /// Next Active and Side of Active start from.
+        func editTapSelection(_ hit: MeshPicker.Hit, action: SelectAction) -> EditSelection {
+            let object = parent.scene.active
+            return parent.scene.editSelection.tapped(hit, action: action, mode: parent.scene.selectMode,
+                                                     cage: object?.editCage, topology: object?.editTopology)
+        }
+
         @objc func handleTap(_ g: UITapGestureRecognizer) {
-            guard let view, let renderer else { return }
+            guard let view else { return }
             // A tap in the view gives it the keyboard back — after a sheet with
             // a text field, say — so Tab reaches it again.
             (view as? ViewportMTKView)?.takeKeyboard()
-            let point = g.location(in: view)
+            tap(at: g.location(in: view), modifiers: g.modifierFlags)
+        }
+
+        /// What a tap at `point` does, by the tool and the mode: the tap
+        /// gesture's whole handling, which Test All Features' taps go
+        /// through too.
+        func tap(at point: CGPoint, modifiers: UIKeyModifierFlags) {
+            guard let view, let renderer else { return }
             let bounds = view.bounds
             guard bounds.width > 0, bounds.height > 0 else { return }
 
@@ -1090,13 +1369,25 @@ struct MetalViewportView: UIViewRepresentable {
             )
             let aspect = Float(bounds.width / bounds.height)
 
-            if texturePaintTap(g) { return }
+            if texturePaintTap(at: point) { return }
             if tapBlenderSculpt(at: point, in: view) { return }
 
             // Sculpt mode taps are dabs, not selections — and a dab is a whole
             // stroke of its own.
             if parent.scene.mode == .sculpt {
                 standInSculptTap(at: point, in: view)
+                return
+            }
+
+            // The Cursor tool: a tap places the 3D cursor as Blender's click
+            // does; the Measure tool: a tap takes the ruler under it
+            // (CursorMeasureInput.swift).
+            if parent.tool == .cursor, parent.scene.mode == .object || parent.scene.mode == .edit {
+                cursorTap(at: point, size: bounds.size)
+                return
+            }
+            if parent.tool == .measure {
+                rulerTap(at: point, size: bounds.size)
                 return
             }
 
@@ -1119,54 +1410,21 @@ struct MetalViewportView: UIViewRepresentable {
                 return
             }
 
-            // In edit mode a tap picks a mesh element, not an object.
-            if parent.scene.mode == .edit {
-                // The tap's pick reaches Blender the way a region's does
-                // (`Bpy.pushEditSelection`), so it has the region's limit: a
-                // mesh drawn through a modifier that rebuilds it has no vertex
-                // Blender would recognise, and the push left is the one that
-                // deselects everything first. Measured in 5.2.1 (round 3's
-                // review): with all 8 of a cube's vertices selected, one tap
-                // left 0 of 8 under a Subdivision Surface and 1 under a Mirror.
-                // Said, not done, as Box, Circle and Lasso do.
-                if let bridge = parent.bridge, bridge.usesRealBlender,
-                   let refusal = parent.scene.active?.editRegionRefusal() {
-                    bridge.showReport("Select", refusal)
-                    return
+            // Loop Cut and the Knife: a tap previews or cuts a ring, or adds a
+            // point to the knife's path (CutToolInput.swift).
+            if let cut = cutTool {
+                switch cut {
+                case .loopCut: loopCutTap(at: point, size: bounds.size)
+                case .knife:   knifeTap(at: point, size: bounds.size)
                 }
-                let mode = parent.scene.selectMode
-                let hit = renderer.hitTestElement(
-                    ndc: ndc, aspect: aspect, mode: mode,
-                    viewSize: SIMD2(Float(bounds.width), Float(bounds.height)))
-                let action = parent.selectAction
-                var selection = parent.scene.editSelection
+                return
+            }
 
-                // Each component set is combined separately, so Extend on a
-                // face selection grows the faces and the vertices they imply.
-                // Numbered on the cage the tap picked on (`hitTestElement`).
-                let cage = parent.scene.active?.editCage
-                var hitVerts: Set<Int> = []
-                if !hit.faces.isEmpty, let cage {
-                    hitVerts = MeshEditor.vertices(of: hit.faces, in: cage)
-                }
-                if let v = hit.vertex { hitVerts = [v] }
-                var hitEdges: Set<Int> = []
-                if let e = hit.edge, let cage {
-                    hitEdges = [e]
-                    let base = e * 2
-                    if base + 1 < cage.edges.count {
-                        hitVerts = [Int(cage.edges[base]), Int(cage.edges[base + 1])]
-                    }
-                }
-                selection.faces = action.apply(selection.faces, hit: hit.faces)
-                selection.vertices = action.apply(selection.vertices, hit: hitVerts)
-                selection.edges = action.apply(selection.edges, hit: hitEdges)
-                parent.scene.editSelection = selection
-                // Blender is told before the next command acts on it, in that
-                // command's own evaluation, rather than paying a round trip per
-                // tap.
-                parent.scene.editSelectionPending = true
-                parent.bridge?.noteSelectionChanged()
+            // In edit mode a tap picks a mesh element, not an object — or,
+            // with Alt, Ctrl+Alt or Ctrl held or a pick set for a finger,
+            // makes one of Blender's pick selections from it.
+            if parent.scene.mode == .edit {
+                meshEditTap(at: point, size: bounds.size, modifiers: modifiers)
                 return
             }
 
@@ -1363,7 +1621,7 @@ extension MetalViewportView.Coordinator {
         // deselects as Select ▸ None does, between gestures.
         if text.hasPrefix("mode:") || text == "none" {
             if text == "none" {
-                bridge.run(Bpy.deselectAll(editing: parent.scene.mode == .edit), undo: "Deselect")
+                bridge.run(Bpy.deselectAll(editing: parent.scene.mode == .edit), undo: SelectMenu.selectAllUndo)
             } else if let mode = MeshSelectMode.allCases.first(where: { $0.bpyType == text.dropFirst(5) }) {
                 bridge.run(Bpy.setSelectMode(mode))
                 parent.scene.selectMode = mode
@@ -1388,7 +1646,7 @@ extension MetalViewportView.Coordinator {
         let size = view.bounds.size
         // A point is a fraction of the view, `x,y`, or a place in the scene,
         // `@x,y,z`, where the camera shows it.
-        let vp = parent.camera.viewProjection(aspect: Float(size.width / size.height))
+        let vp = currentCamera.viewProjection(aspect: Float(size.width / size.height))
         let points = parts[1].split(separator: ";").compactMap { pair -> CGPoint? in
             if pair.hasPrefix("@") {
                 let xyz = pair.dropFirst().split(separator: ",").compactMap { Float($0) }
@@ -1467,7 +1725,7 @@ extension MetalViewportView.Coordinator {
             ?? parent.regionAction.forRegion(circle: regionGesture?.tool == .circleSelect)
         if editing, let object = parent.scene.active, let drawn {
             let bounds = view.bounds
-            let vp = parent.camera.viewProjection(aspect: Float(bounds.width / bounds.height))
+            let vp = currentCamera.viewProjection(aspect: Float(bounds.width / bounds.height))
             picked = object.regionSelection(drawn, mode: mode, action: gestureAction,
                                             current: parent.scene.editSelection,
                                             viewProjection: vp, size: bounds.size, seeThrough: seeThrough)
@@ -1488,6 +1746,7 @@ extension MetalViewportView.Coordinator {
                 print(','.join(str(v.index) for v in _bm.verts if v.select))
                 print(','.join('%d-%d' % tuple(sorted(v.index for v in e.verts)) for e in _bm.edges if e.select))
                 print(','.join(str(f.index) for f in _bm.faces if f.select))
+                print(len(_bm.select_history))
                 """) ?? "?"
             let lines = answer.split(separator: "\n", omittingEmptySubsequences: false).map(String.init)
             func field(_ i: Int) -> [String] {
@@ -1520,7 +1779,9 @@ extension MetalViewportView.Coordinator {
                   + "Blender holds \(lines.first ?? "?") (v/e/f); the viewport shows "
                   + "\(viewport.0.count)v/\(viewport.1.count)e/\(viewport.2.count)f; "
                   + "pass vs Blender [\(pass.map { agree($0, blender) } ?? "-")], "
-                  + "viewport vs Blender [\(agree(viewport, blender))]; banner: \(banner)")
+                  + "viewport vs Blender [\(agree(viewport, blender))]; Blender's selection order "
+                  + "\(lines.count > 4 ? lines[4] : "?") long, the viewport's "
+                  + "\(parent.scene.editSelection.history.count); banner: \(banner)")
         } else {
             let answer = bridge.capture(
                 "print(','.join(sorted(o.name for o in bpy.context.view_layer.objects if o.select_get())))") ?? "?"
@@ -1541,3 +1802,156 @@ private extension Array {
     subscript(safe i: Int) -> Element? { indices.contains(i) ? self[i] : nil }
 }
 #endif
+
+#if DEBUG
+// MARK: - DEBUG: one gizmo drag through the view's own gesture code
+
+extension MetalViewportView.Coordinator {
+    /// Every coordinator alive, for `debugDrag` to find the 3D View on screen.
+    static var debugCoordinators: NSHashTable<MetalViewportView.Coordinator> { live }
+
+    /// One drag made of the calls `handleOrbit` makes for a finger that goes
+    /// down at a handle of `mode`'s gizmo, moves by `amount` and lifts:
+    /// `beginGizmo` (with `beginPointDragIfAny` and `beginConstrainedDragIfAny`),
+    /// `updateGizmo` (the preview — Blender's, for a drag a constraint
+    /// decides) and `endGizmo` (the commit), in the 3D View on screen with
+    /// its own camera and size. `between` runs after the frame and before
+    /// the release, given the session, the result and whether Blender
+    /// previewed it. Round 4's review of group 7 found the `gizmo:` hooks
+    /// re-implementing that sequence, so their numbers were not the shipped
+    /// path's; this drives the shipped path. Returns what began, or why
+    /// nothing did.
+    static func debugDrag(mode: TransformGizmo.Mode, handle wanted: TransformGizmo.Handle, amount: Float,
+                          between: (TransformGizmo.Session, TransformGizmo.Result, Bool) -> Void) -> String {
+        guard let c = debugCoordinators.allObjects.first(where: { $0.view?.window != nil && $0.parent.bridge != nil }),
+              let view = c.view, view.bounds.width > 0, view.bounds.height > 0
+        else { return "no 3D View with Blender on screen" }
+        let size = view.bounds.size
+        let camera = c.parent.camera
+        guard let g = TransformGizmo.make(mode: mode, scene: c.parent.scene, options: c.parent.options,
+                                          camera: camera, size: size) else {
+            return "no gizmo (orientation \(c.parent.scene.orientation.label)"
+                + "\(c.parent.scene.orientation.unavailable.map { ": \($0)" } ?? ""))"
+        }
+        let p = TransformGizmo.Projection(camera: camera, size: size)
+        guard let (a, b) = gizmoDragPoints(mode: mode, handle: wanted, amount: amount, gizmo: g, projection: p)
+        else { return "the gizmo is off screen" }
+        // The finger down on the handle the hit test finds there, as
+        // `beginGizmoIfHit` does; where it finds none (a free drag, which
+        // `beginFreeTransform` begins on the .screen handle), the one asked for.
+        let hit = g.hitTest(a, projection: p)
+        let handle = hit ?? wanted
+        guard c.beginGizmo(mode, handle: handle, at: a), let session = c.gizmo else {
+            return "the drag at (\(Int(a.x)), \(Int(a.y))) began nothing"
+        }
+        let how = hit == nil ? "\(handle), no handle under the finger" : "\(handle), hit"
+        c.updateGizmo(to: b)
+        guard let result = c.gizmoResult else {
+            c.endGizmo()
+            return "began on \(how) in a \(Int(size.width)) x \(Int(size.height)) view; the move gave no result"
+        }
+        between(c.gizmo ?? session, result, c.constrainedDrag)
+        c.endGizmo()
+        return "began on \(how) in a \(Int(size.width)) x \(Int(size.height)) view"
+    }
+
+}
+#endif
+
+// MARK: - Test All Features: the 3D View's own gestures, from code
+
+extension MetalViewportView.Coordinator {
+    /// Every coordinator alive. Test All Features finds the 3D View on screen
+    /// here, and drives its gestures through the same calls a finger makes;
+    /// the DEBUG launch hooks find it here too (`debugCoordinators`).
+    nonisolated(unsafe) static let live = NSHashTable<MetalViewportView.Coordinator>.weakObjects()
+
+    /// The 3D View on screen with Blender behind it, or nil.
+    static var onScreen: MetalViewportView.Coordinator? {
+        live.allObjects.first { c in
+            guard let view = c.view else { return false }
+            return view.window != nil && c.parent.bridge != nil && view.bounds.width > 0 && view.bounds.height > 0
+        }
+    }
+
+    /// A finger down at a handle of `mode`'s gizmo, as `handleOrbit` takes it
+    /// (`beginGizmo`, which also begins Blender's preview of a constrained
+    /// drag or a curve's points): where it went down and where a drag of
+    /// `amount` lifts. Nil when no gizmo is on screen or the drag began
+    /// nothing. `featureGizmoMove` and `featureGizmoEnd` are the rest of it.
+    func featureGizmoBegin(mode: TransformGizmo.Mode, handle wanted: TransformGizmo.Handle,
+                           amount: Float) -> (from: CGPoint, to: CGPoint)? {
+        guard let view, view.bounds.width > 0, view.bounds.height > 0 else { return nil }
+        let size = view.bounds.size
+        guard let g = TransformGizmo.make(mode: mode, scene: parent.scene, options: parent.options,
+                                          camera: parent.camera, size: size) else { return nil }
+        let p = TransformGizmo.Projection(camera: parent.camera, size: size)
+        guard let (a, b) = Self.gizmoDragPoints(mode: mode, handle: wanted, amount: amount, gizmo: g, projection: p),
+              beginGizmo(mode, handle: g.hitTest(a, projection: p) ?? wanted, at: a), gizmo != nil
+        else { return nil }
+        return (a, b)
+    }
+
+    /// One moment of that drag: the preview, as `handleOrbit`'s `.changed`.
+    func featureGizmoMove(to point: CGPoint) {
+        updateGizmo(to: point)
+    }
+
+    /// The lift: the commit, as the redo panel's operator. Whether a drag
+    /// was there to commit.
+    @discardableResult
+    func featureGizmoEnd() -> Bool {
+        let had = gizmoResult != nil
+        endGizmo()
+        return had
+    }
+
+    /// One moment of a drag in Texture Paint, through the calls a finger's
+    /// drag makes (`handleTexturePaint`).
+    func featureTexturePaint(_ phase: SculptDragPhase, at point: CGPoint) {
+        texturePaintPhase(phase, at: point)
+    }
+
+    /// Where the finger goes down and where it lifts, for a drag of
+    /// `amount` (metres along an axis or in a plane, degrees for a turn, a
+    /// factor for a scale).
+    static func gizmoDragPoints(mode: TransformGizmo.Mode, handle: TransformGizmo.Handle, amount: Float,
+                                    gizmo g: TransformGizmo, projection p: TransformGizmo.Projection)
+        -> (CGPoint, CGPoint)? {
+        guard let c = p.project(g.origin) else { return nil }
+        var a = CGPoint(x: c.x + 60, y: c.y - 40), b = a
+        switch (mode, handle) {
+        case (.rotate, _):
+            let r: CGFloat = 110, t = CGFloat(amount) * .pi / 180
+            a = CGPoint(x: c.x + r, y: c.y)
+            b = CGPoint(x: c.x + r * cos(t), y: c.y + r * sin(t))
+        case (.translate, .axis(let k)):
+            guard let tip = p.project(g.origin + g.axes[k] * g.radius) else { return nil }
+            a = tip
+            let f = CGFloat(amount / g.radius)
+            b = CGPoint(x: tip.x + (tip.x - c.x) * f, y: tip.y + (tip.y - c.y) * f)
+        case (.scale, .axis(let k)):
+            guard let tip = p.project(g.origin + g.axes[k] * g.radius) else { return nil }
+            a = tip
+            b = CGPoint(x: c.x + (tip.x - c.x) * CGFloat(amount), y: c.y + (tip.y - c.y) * CGFloat(amount))
+        case (.translate, .plane(let k)):
+            let (j, l) = ((k + 1) % 3, (k + 2) % 3)
+            let centre = g.origin + (g.axes[j] + g.axes[l]) * (g.radius * 0.42)
+            guard let s0 = p.project(centre), let s1 = p.project(centre + g.axes[j] * amount) else { return nil }
+            a = s0; b = s1
+        default:
+            b = CGPoint(x: c.x + (a.x - c.x) * CGFloat(amount), y: c.y + (a.y - c.y) * CGFloat(amount))
+        }
+        return (a, b)
+    }
+}
+
+/// The camera a drag is moving, for the SwiftUI overlays that are drawn over
+/// the view and have to follow it (`MeasureOverlay`). Only they read it, so a
+/// drag's steps redraw them and nothing else; between drags it is nil and they
+/// use the view's camera.
+@Observable
+final class ViewportCameraFeed {
+    static let shared = ViewportCameraFeed()
+    var live: ViewportCamera?
+}

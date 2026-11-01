@@ -25,23 +25,23 @@ func lastLine(_ m: LastOperator.Mesh) -> String {
 }
 
 // Where Blender has them: Mesh ▸ Split, Clean Up, the Edge, Vertex and Face
-// menus, and the Extrude menu beside Extrude.
+// menus, and the Extrude menu beside Extrude Faces Along Normals.
 let placed: [(LastOperator.Mesh, LastOperator.Mesh.Group, String)] = [
     (.splitSelection, .split, "Selection"), (.edgeSplitEdges, .split, "Faces by Edges"),
     (.edgeSplitVertices, .split, "Faces & Edges by Vertices"),
     (.limitedDissolve, .cleanUp, "Limited Dissolve"), (.deleteLoose, .cleanUp, "Delete Loose"),
     (.fillHoles, .cleanUp, "Fill Holes"), (.unsubdivide, .edge, "Un-Subdivide"),
-    (.beautifyFaces, .fill, "Beautify Faces"), (.bevelVertices, .vertex, "Bevel Vertices"),
-    (.extrudeIndividual, .build, "Extrude Individual Faces")]
+    (.beautifyFaces, .face, "Beautify Faces"), (.bevelVertices, .vertex, "Bevel Vertices"),
+    (.extrudeIndividual, .extrude, "Extrude Individual Faces")]
 for (m, group, label) in placed {
     check("\(label) is in \(group.rawValue), offered outside Edit Mode too",
           m.group == group && m.menuLabel == label && !m.editModeOnly,
           "\(m.group.rawValue), \(m.menuLabel)")
 }
-check("Split is Blender's Mesh ▸ Split, after Add Geometry",
-      LastOperator.Mesh.Group.allCases.firstIndex(of: .split) == 2)
-let build = LastOperator.Mesh.allCases.filter { $0.group == .build }
-check("Extrude Individual Faces is listed right after Extrude",
+check("Split is Blender's Mesh ▸ Split, after Transform, Extrude and Merge",
+      LastOperator.Mesh.Group.allCases.firstIndex(of: .split) == 4)
+let build = LastOperator.Mesh.Group.extrude.rows
+check("Extrude Individual Faces is listed right after Extrude Faces Along Normals",
       build.firstIndex(of: .extrudeIndividual) == build.firstIndex(of: .extrude).map { $0 + 1 },
       "\(build.map(\.menuLabel))")
 check("the panel's title and undo step is the operator's own name: Bevel Vertices is a Bevel",
@@ -103,7 +103,9 @@ for (m, attribute) in [(LastOperator.Mesh.limitedDissolve, "total_vert_sel"),
     check("\(m.displayName) (\(m.menuLabel)) refuses an empty selection of every edit-mode mesh, before the call",
           python.hasPrefix(LastOperator.Mesh.editMeshes + "\n")
           && lines.contains("if not any(_bk_me.\(attribute) for _bk_me in _bk_meshes):")
-          && lines.contains { $0.contains("raise RuntimeError('\(m.displayName) ") }
+          // The sentence names the row (its menu label), the step the
+          // operator (`displayName`).
+          && lines.contains { $0.contains("raise RuntimeError('\(m.rowName) ") }
           && lines.last?.hasPrefix(LastOperator.mesh(m).call) == true,
           lines.joined(separator: " / "))
 }

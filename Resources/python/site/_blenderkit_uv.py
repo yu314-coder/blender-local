@@ -229,6 +229,6 @@ def run(name, **props):
         raise RuntimeError(
             label + ": Blender could not unwrap " + ("the island" if unsolved[1] == 1 else
             "any of the " + str(unsolved[1]) + " islands") + ": a closed surface needs seams "
-            "to open it along. Mark some (Edge ▸ Mark Seam in Edit Mode), or use Smart UV "
+            "to open it along. Mark some (Mesh ▸ Edge ▸ Mark Seam in Edit Mode), or use Smart UV "
             "Project, which needs none. The UVs were left as they were.")
     return result

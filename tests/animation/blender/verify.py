@@ -1128,6 +1128,22 @@ print("        %d keyed empties: a frame change %.1f ms, of which Blender's own 
 # same run measured 45 ms, and the lookups alone made it 191 unloaded.
 check("with 3,000 objects keyed, the mirror's share of a frame is under 100 ms "
       "(the name lookups made it 191)", every - bare < 100, (every, bare))
+# Of that share, the vertex budget's price of the frame (price_frame): round
+# 4's first fix round priced every F-curve of the scene on every frame, 53–54
+# ms here, which put this check over its bound on most runs. Nothing counted
+# reads an empty, so the frame's plan evaluates nothing, and a frame costs a
+# look at the depsgraph's waiting list: 0.0039 to 0.0044 ms measured at a
+# load average of 545. The bound is far over that and under what any work
+# for each of the 3,000 objects would cost (more than a millisecond).
+budget = sys.modules["_blenderkit_budget"]
+costs = []
+for frame in range(2, 34):
+    start = time.perf_counter()
+    budget.price_frame(frame)
+    costs.append((time.perf_counter() - start) * 1000)
+costs.sort()
+print("        of which the vertex budget's price of the frame: %.4f ms (median of 32)" % costs[16])
+check("and the vertex budget's price of the frame is under 0.5 ms of it", costs[16] < 0.5, costs)
 
 print("\n" + ("ALL PASS" if not fail else "%d FAILED" % fail))
 sys.exit(1 if fail else 0)

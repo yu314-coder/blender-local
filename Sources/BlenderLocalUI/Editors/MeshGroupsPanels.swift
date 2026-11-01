@@ -23,6 +23,10 @@ struct MeshGroupsPanels: View {
     /// app's context, so `_blenderkit_groups` refuses them and the panels say
     /// so before a tap does.
     private var usable: Bool { mode == .object || mode == .edit }
+    /// The group list's own controls — Add, Remove, the active group, Lock,
+    /// the name — in Weight Paint too, whose brush paints the active group
+    /// (`_blenderkit_groups.LIST_MODES`, measured there).
+    private var listUsable: Bool { usable || mode == .weightPaint }
 
     var body: some View {
         if !session.usesRealBlender {
@@ -66,12 +70,25 @@ struct MeshGroupsPanels: View {
                 .accessibilityLabel("Vertex Group Specials")
                 Spacer()
             }
-            .disabled(!usable)
+            .disabled(!listUsable)
             if let active = groups.activeGroupName {
-                NameField(label: "Name", name: active) { wanted in
+                NameField(label: "Name", name: active, commit: { wanted in
                     send(GroupsBpy.renameGroup(active, to: wanted, object: object.name))
-                }
-                .disabled(!usable)
+                }, tapAnotherRow: {
+                    // What a tap on another group's row sends (`groupRow`).
+                    guard let other = groups.groups.first(where: { $0.name != active })?.name else { return }
+                    send(GroupsBpy.setActiveGroup(other, object: object.name))
+                    #if DEBUG
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
+                        let held = bridge?.capture("_bk_o = bpy.data.objects[\(Bpy.quote(object.name))]\n"
+                            + "print([g.name for g in _bk_o.vertex_groups], _bk_o.vertex_groups.active.name)")
+                        print("[bk] name-draft: Blender's groups and active group after the tap: "
+                              + (held?.trimmingCharacters(in: .whitespacesAndNewlines) ?? "?"))
+                        fflush(stdout)
+                    }
+                    #endif
+                })
+                .disabled(!listUsable)
             }
             if editing {
                 if let active = groups.activeGroupName {
@@ -92,7 +109,7 @@ struct MeshGroupsPanels: View {
                 // undo step: measured, Blender's undo does not take it back.
                 DraftNumberField(label: "Weight", value: groups.weight, step: 0.01,
                                  clamp: { min(max($0, 0), 1) }) { v in
-                    _ = bridge?.run(GroupsBpy.setWeight(v))
+                    _ = bridge?.run(GroupsBpy.setWeight(v), undo: GroupsBpy.weightUndo)
                 }
             } else if !groups.groups.isEmpty, usable {
                 note("Assign, Remove, Select and Deselect work in Edit Mode")
@@ -100,8 +117,8 @@ struct MeshGroupsPanels: View {
             if !groups.counted {
                 note("Members are counted on meshes of up to 20,000 vertices")
             }
-            if !usable {
-                note("Vertex groups are edited here in Object or Edit Mode")
+            if !listUsable {
+                note("Vertex groups are edited here in Object Mode, Edit Mode or Weight Paint")
             }
         }
     }
@@ -127,7 +144,7 @@ struct MeshGroupsPanels: View {
                 .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
-            .disabled(!usable || active)
+            .disabled(!listUsable || active)
             Button {
                 send(GroupsBpy.lockGroup(group.name, !group.locked, object: object.name))
             } label: {
@@ -137,7 +154,7 @@ struct MeshGroupsPanels: View {
                     .frame(width: 22, height: 20)
             }
             .buttonStyle(.plain)
-            .disabled(!usable)
+            .disabled(!listUsable)
             .accessibilityLabel("Lock \(group.name)")
             .accessibilityValue(group.locked ? "On" : "Off")
         }
@@ -167,13 +184,14 @@ struct MeshGroupsPanels: View {
                 }
                 .disabled(groups.activeKeyBlock == nil)
                 Menu {
-                    Button("New Shape from Mix") { send(GroupsBpy.addKey(fromMix: true, object: object.name)) }
+                    // Shape Key Specials' rows, by 5.2.1's names.
+                    Button("New Combined") { send(GroupsBpy.addKey(fromMix: true, object: object.name)) }
                         .disabled(groups.keys.isEmpty)
-                    Button("Delete All Shape Keys", role: .destructive) {
+                    Button("Delete All", role: .destructive) {
                         send(GroupsBpy.removeAllKeys(apply: false, object: object.name))
                     }
                     .disabled(groups.keys.isEmpty)
-                    Button("Apply All Shape Keys") {
+                    Button("Apply All") {
                         send(GroupsBpy.removeAllKeys(apply: true, object: object.name))
                     }
                     .disabled(groups.keys.isEmpty)
@@ -194,15 +212,21 @@ struct MeshGroupsPanels: View {
                      + (groups.activeKeyBlock.map { ": " + $0.name } ?? ""))
             }
             if !groups.keys.isEmpty {
-                flag("Relative", on: groups.useRelative) {
-                    send(GroupsBpy.set(.useRelative, $0, editing: editing, object: object.name))
+                // Held to Object and Edit Mode, as every other control here
+                // is (`usable`): round 3's review found these three live in
+                // Sculpt Mode and the paint modes.
+                Group {
+                    flag("Relative", on: groups.useRelative) {
+                        send(GroupsBpy.set(.useRelative, $0, editing: editing, object: object.name))
+                    }
+                    flag(GroupsBpy.Switch.showOnly.label, on: groups.showOnlyShapeKey) {
+                        send(GroupsBpy.set(.showOnly, $0, editing: editing, object: object.name))
+                    }
+                    flag("Shape Key Edit Mode", on: groups.shapeKeyEditMode) {
+                        send(GroupsBpy.set(.editMode, $0, editing: editing, object: object.name))
+                    }
                 }
-                flag("Shape Key Lock", on: groups.showOnlyShapeKey) {
-                    send(GroupsBpy.set(.showOnly, $0, editing: editing, object: object.name))
-                }
-                flag("Shape Key Edit Mode", on: groups.shapeKeyEditMode) {
-                    send(GroupsBpy.set(.editMode, $0, editing: editing, object: object.name))
-                }
+                .disabled(!usable)
                 if !groups.useRelative {
                     note("Absolute keys follow Evaluation Time, which this panel does not have")
                 }
@@ -413,18 +437,36 @@ private struct DraftNumberField: View {
     }
 }
 
-/// A name held in Blender: typed into a draft, sent on Return, and shown as
-/// Blender has it after — which is where a clash comes back as "Group.001".
+/// A name held in Blender: typed into a draft, sent when the edit ends —
+/// Return, the field losing focus (the keyboard dismissed, another field
+/// taken), or the name it edits changing under it — as Blender's own text
+/// fields apply an edit (`NameDraft`) — and shown as Blender has it after,
+/// which is where a clash comes back as "Group.001". A draft abandoned by
+/// tapping away used to stay on screen as the name while Blender held the
+/// old one (round 3's review). On iOS a tap elsewhere does not end a text
+/// field's editing, and a tap on another group's row made that group the
+/// one shown and dropped the typed rename (round 4's review); Blender applies
+/// the edit first, and so does this, to the name it was typed over.
 private struct NameField: View {
     let label: String
     let name: String
     let commit: (String) -> Void
+    /// DEBUG's `-name-draft-switch`: a tap on another row, as the panel
+    /// sends it. Nil where there is no other row to tap.
+    var tapAnotherRow: (() -> Void)? = nil
     @State private var draft: String?
+    /// The commit for the name the draft was typed over, kept from its first
+    /// keystroke: by the time `name` changes, `commit` is the next name's.
+    @State private var draftCommit: ((String) -> Void)?
+    @FocusState private var focused: Bool
 
     var body: some View {
         HStack(spacing: 4) {
             Text(label).font(BTheme.Font.ui(11)).foregroundStyle(BTheme.textDim)
-            TextField("", text: Binding(get: { draft ?? name }, set: { draft = $0 }))
+            TextField("", text: Binding(get: { draft ?? name }, set: { typed in
+                if draft == nil { draftCommit = commit }
+                draft = typed
+            }))
                 .textFieldStyle(.plain)
                 .font(BTheme.Font.mono(11))
                 .foregroundStyle(BTheme.text)
@@ -432,15 +474,98 @@ private struct NameField: View {
                 .autocorrectionDisabled()
                 .textInputAutocapitalization(.never)
                 .submitLabel(.done)
-                .onSubmit {
-                    if let draft, draft != name { commit(draft) }
-                    draft = nil
-                }
+                .focused($focused)
+                .onSubmit { end() }
+                .onChange(of: focused) { _, now in if !now { end() } }
         }
         .padding(.horizontal, 6)
         .frame(height: 22)
         .background(BTheme.field)
         .clipShape(RoundedRectangle(cornerRadius: BTheme.Metric.corner))
-        .onChange(of: name) { _, _ in draft = nil }
+        .onChange(of: name) { old, new in
+            // The name changed under an edit (another row tapped): the edit
+            // goes to the name it was typed over first, then the field shows
+            // the new one.
+            let sent = NameDraft(text: draft).ending(over: old)
+            let target = draftCommit
+            draft = nil
+            draftCommit = nil
+            if let sent, let target { target(sent) }
+            #if DEBUG
+            if Self.drafted {
+                print("[bk] name-draft: the panel's name became '\(new)', which the field shows"
+                      + (sent.map { "; the edit typed over '\(old)' was sent as '\($0)' first" } ?? ""))
+            }
+            #endif
+        }
+        // The panel closed under the edit: Blender applies it, as it does
+        // when its region goes away under a text field.
+        .onDisappear { end() }
+        #if DEBUG
+        .task { await typeAndLeaveIfRequested() }
+        #endif
     }
+
+    private func end() {
+        let sent = NameDraft(text: draft).ending(over: name)
+        let target = draftCommit ?? commit
+        draft = nil
+        draftCommit = nil
+        if let sent { target(sent) }
+    }
+
+    #if DEBUG
+    /// Once per launch, for the first Name field shown.
+    nonisolated(unsafe) private static var drafted = false
+
+    /// `-name-draft <text>`: the first Name field on screen takes focus, gets
+    /// `text` typed into its draft and then loses focus without Return — what
+    /// a tap elsewhere does to it — through the field's own focus state, so
+    /// `onChange(of: focused)` ends the edit as it would for a finger. Prints
+    /// whether the field took focus, the draft after it lost it, and the name
+    /// the panel then holds (Blender's, mirrored back), which the field shows.
+    ///
+    /// `-name-draft-switch <text>`: the same, but instead of losing focus the
+    /// field stays focused and the panel gets a tap on another group's row
+    /// (`tapAnotherRow`), the case round 4's review found dropping the edit.
+    private func typeAndLeaveIfRequested() async {
+        let args = ProcessInfo.processInfo.arguments
+        let switching = args.contains("-name-draft-switch")
+        guard label == "Name", !Self.drafted,
+              let i = args.firstIndex(of: switching ? "-name-draft-switch" : "-name-draft"), i + 1 < args.count
+        else { return }
+        Self.drafted = true
+        let typed = args[i + 1]
+        try? await Task.sleep(nanoseconds: 1_000_000_000)
+        focused = true
+        try? await Task.sleep(nanoseconds: 400_000_000)
+        draftCommit = commit
+        draft = typed
+        if switching {
+            print("[bk] name-draft: focused \(focused); typed '\(typed)' over '\(name)'; tapping another row")
+            guard let tapAnotherRow else {
+                print("[bk] name-draft: there is no other row to tap")
+                fflush(stdout)
+                return
+            }
+            tapAnotherRow()
+            try? await Task.sleep(nanoseconds: 1_500_000_000)
+            // `name` here is this copy's, from before the tap; the draft is
+            // the field's own state.
+            print("[bk] name-draft: after the tap its draft is "
+                  + (draft.map { "still '\($0)'" } ?? "gone") + ", focused \(focused)")
+            fflush(stdout)
+            return
+        }
+        print("[bk] name-draft: focused \(focused); typed '\(typed)' over '\(name)'; the field shows '\(draft ?? name)'")
+        try? await Task.sleep(nanoseconds: 400_000_000)
+        focused = false
+        try? await Task.sleep(nanoseconds: 1_000_000_000)
+        // `name` here is this copy's, from before the rename came back; the
+        // draft is the field's own state.
+        print("[bk] name-draft: after the field lost focus its draft is "
+              + (draft.map { "still '\($0)'" } ?? "gone: the edit ended and was sent"))
+        fflush(stdout)
+    }
+    #endif
 }

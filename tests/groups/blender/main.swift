@@ -49,7 +49,12 @@ if args.count == 1 {
     block("DESELECT_LEFT", GroupsBpy.selectGroup("Left", select: false, object: object))
     block("REMOVE_GROUP_RIGHT", GroupsBpy.removeGroup("Right", object: object))
     block("REMOVE_ALL_GROUPS", GroupsBpy.removeAllGroups(object: object))
+    // The position fallback the viewport's selection goes through on a mesh
+    // it cannot name by index (`Bpy.selectVertices`), at the left two
+    // columns of the 4 x 4 grid.
+    print("### SELECT_VERTICES\n\(Bpy.selectVertices(of: object, at: (0...4).flatMap { j in [-1, -0.5].map { SIMD3<Float>(Float($0), Float(j) * 0.5 - 1, 0) } }))\n#--")
     print("### WEIGHT\n\(GroupsBpy.setWeight(0.25))\n#--")
+    print("### WEIGHT.undo\n\(GroupsBpy.weightUndo ?? "-")\n#--")
     print("### WEIGHT_PAST\n\(GroupsBpy.setWeight(-3))\n#--")
 
     block("ADD_KEY", GroupsBpy.addKey(fromMix: false, object: object))

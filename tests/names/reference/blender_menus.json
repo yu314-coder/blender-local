@@ -1,0 +1,9896 @@
+{
+ "OBJECT": {
+  "TOPBAR_MT_blender": {
+   "label": "Blender",
+   "items": [
+    [
+     "op",
+     "Splash Screen",
+     "wm.splash"
+    ],
+    [
+     "op",
+     "About Blender",
+     "wm.splash_about"
+    ],
+    [
+     "op",
+     "Install Application Template...",
+     "preferences.app_template_install"
+    ],
+    [
+     "menu",
+     "System",
+     "TOPBAR_MT_blender_system"
+    ]
+   ]
+  },
+  "TOPBAR_MT_blender_system": {
+   "label": "System",
+   "items": [
+    [
+     "op",
+     "Reload Scripts",
+     "script.reload"
+    ],
+    [
+     "op",
+     "Memory Statistics",
+     "wm.memory_statistics"
+    ],
+    [
+     "op",
+     "Debug Menu",
+     "wm.debug_menu"
+    ],
+    [
+     "enum",
+     "Redraw Timer",
+     "wm.redraw_timer:type"
+    ],
+    [
+     "op",
+     "Clean Up Space Data",
+     "screen.spacedata_cleanup"
+    ],
+    [
+     "op",
+     "Clean Up Operator Presets",
+     "wm.operator_presets_cleanup"
+    ]
+   ]
+  },
+  "TOPBAR_MT_edit": {
+   "label": "Edit",
+   "items": [
+    [
+     "op",
+     "Undo",
+     "ed.undo"
+    ],
+    [
+     "op",
+     "Redo",
+     "ed.redo"
+    ],
+    [
+     "menu",
+     "TOPBAR_MT_undo_history",
+     "TOPBAR_MT_undo_history"
+    ],
+    [
+     "op",
+     "Adjust Last Operation...",
+     "screen.redo_last"
+    ],
+    [
+     "op",
+     "Repeat Last",
+     "screen.repeat_last"
+    ],
+    [
+     "op",
+     "Repeat History...",
+     "screen.repeat_history"
+    ],
+    [
+     "op",
+     "Menu Search...",
+     "wm.search_menu"
+    ],
+    [
+     "op",
+     "Rename Active Item...",
+     "wm.call_panel"
+    ],
+    [
+     "op",
+     "Batch Rename...",
+     "wm.batch_rename"
+    ],
+    [
+     "prop",
+     "lock_object_mode",
+     "ToolSettings.lock_object_mode"
+    ],
+    [
+     "op",
+     "Preferences...",
+     "screen.userpref_show"
+    ]
+   ]
+  },
+  "TOPBAR_MT_edit_armature_add": {
+   "label": "Armature",
+   "items": [
+    [
+     "op",
+     "Single Bone",
+     "armature.bone_primitive_add"
+    ]
+   ]
+  },
+  "TOPBAR_MT_edit_curve_add": {
+   "label": "Add",
+   "items": [
+    [
+     "op",
+     "B\u00e9zier",
+     "curve.primitive_bezier_curve_add"
+    ],
+    [
+     "op",
+     "Circle",
+     "curve.primitive_bezier_circle_add"
+    ],
+    [
+     "op",
+     "Nurbs Curve",
+     "curve.primitive_nurbs_curve_add"
+    ],
+    [
+     "op",
+     "Nurbs Circle",
+     "curve.primitive_nurbs_circle_add"
+    ],
+    [
+     "op",
+     "Path",
+     "curve.primitive_nurbs_path_add"
+    ],
+    [
+     "op",
+     "Empty Hair",
+     "object.curves_empty_hair_add"
+    ],
+    [
+     "op",
+     "Fur",
+     "object.quick_fur"
+    ]
+   ]
+  },
+  "TOPBAR_MT_editor_menus": {
+   "label": "",
+   "items": [
+    [
+     "menu",
+     "Blender",
+     "TOPBAR_MT_blender"
+    ],
+    [
+     "menu",
+     "File",
+     "TOPBAR_MT_file"
+    ],
+    [
+     "menu",
+     "Edit",
+     "TOPBAR_MT_edit"
+    ],
+    [
+     "menu",
+     "Render",
+     "TOPBAR_MT_render"
+    ],
+    [
+     "menu",
+     "Window",
+     "TOPBAR_MT_window"
+    ],
+    [
+     "menu",
+     "Help",
+     "TOPBAR_MT_help"
+    ]
+   ]
+  },
+  "TOPBAR_MT_file": {
+   "label": "File",
+   "items": [
+    [
+     "menu",
+     "New",
+     "TOPBAR_MT_file_new"
+    ],
+    [
+     "op",
+     "Open...",
+     "wm.open_mainfile"
+    ],
+    [
+     "menu",
+     "TOPBAR_MT_file_open_recent",
+     "TOPBAR_MT_file_open_recent"
+    ],
+    [
+     "op",
+     "Revert",
+     "wm.revert_mainfile"
+    ],
+    [
+     "menu",
+     "Recover",
+     "TOPBAR_MT_file_recover"
+    ],
+    [
+     "op",
+     "Save",
+     "wm.save_mainfile"
+    ],
+    [
+     "op",
+     "Save As...",
+     "wm.save_as_mainfile"
+    ],
+    [
+     "op",
+     "Save Copy...",
+     "wm.save_as_mainfile"
+    ],
+    [
+     "op",
+     "Save Incremental",
+     "wm.save_mainfile"
+    ],
+    [
+     "op",
+     "Link...",
+     "wm.link"
+    ],
+    [
+     "op",
+     "Append...",
+     "wm.append"
+    ],
+    [
+     "menu",
+     "Data Previews",
+     "TOPBAR_MT_file_previews"
+    ],
+    [
+     "menu",
+     "Import",
+     "TOPBAR_MT_file_import"
+    ],
+    [
+     "menu",
+     "Export",
+     "TOPBAR_MT_file_export"
+    ],
+    [
+     "op",
+     "Export All Collections",
+     "wm.collection_export_all"
+    ],
+    [
+     "menu",
+     "External Data",
+     "TOPBAR_MT_file_external_data"
+    ],
+    [
+     "menu",
+     "Clean Up",
+     "TOPBAR_MT_file_cleanup"
+    ],
+    [
+     "menu",
+     "Defaults",
+     "TOPBAR_MT_file_defaults"
+    ],
+    [
+     "op",
+     "Quit",
+     "wm.quit_blender"
+    ]
+   ]
+  },
+  "TOPBAR_MT_file_cleanup": {
+   "label": "Clean Up",
+   "items": [
+    [
+     "op",
+     "Purge Unused Data...",
+     "outliner.orphans_purge"
+    ],
+    [
+     "op",
+     "Manage Unused Data...",
+     "outliner.orphans_manage"
+    ]
+   ]
+  },
+  "TOPBAR_MT_file_context_menu": {
+   "label": "File",
+   "items": [
+    [
+     "menu",
+     "New",
+     "TOPBAR_MT_file_new"
+    ],
+    [
+     "op",
+     "Open...",
+     "wm.open_mainfile"
+    ],
+    [
+     "menu",
+     "TOPBAR_MT_file_open_recent",
+     "TOPBAR_MT_file_open_recent"
+    ],
+    [
+     "op",
+     "Link...",
+     "wm.link"
+    ],
+    [
+     "op",
+     "Append...",
+     "wm.append"
+    ],
+    [
+     "menu",
+     "Import",
+     "TOPBAR_MT_file_import"
+    ],
+    [
+     "menu",
+     "Export",
+     "TOPBAR_MT_file_export"
+    ],
+    [
+     "op",
+     "Preferences...",
+     "screen.userpref_show"
+    ]
+   ]
+  },
+  "TOPBAR_MT_file_defaults": {
+   "label": "Defaults",
+   "items": [
+    [
+     "op",
+     "Save Startup File",
+     "wm.save_homefile"
+    ],
+    [
+     "op",
+     "Load Factory Settings",
+     "wm.read_factory_settings"
+    ]
+   ]
+  },
+  "TOPBAR_MT_file_export": {
+   "label": "Export",
+   "items": [
+    [
+     "op",
+     "Alembic (.abc)",
+     "wm.alembic_export"
+    ],
+    [
+     "op",
+     "Universal Scene Description (.usd*)",
+     "wm.usd_export"
+    ],
+    [
+     "op",
+     "Grease Pencil as SVG",
+     "wm.grease_pencil_export_svg"
+    ],
+    [
+     "op",
+     "Grease Pencil as PDF",
+     "wm.grease_pencil_export_pdf"
+    ],
+    [
+     "op",
+     "Wavefront (.obj)",
+     "wm.obj_export"
+    ],
+    [
+     "op",
+     "Stanford PLY (.ply)",
+     "wm.ply_export"
+    ],
+    [
+     "op",
+     "STL (.stl)",
+     "wm.stl_export"
+    ],
+    [
+     "op",
+     "Motion Capture (.bvh)",
+     "export_anim.bvh"
+    ],
+    [
+     "op",
+     "FBX (.fbx)",
+     "export_scene.fbx"
+    ],
+    [
+     "op",
+     "glTF 2.0 (.glb/.gltf)",
+     "export_scene.gltf"
+    ]
+   ]
+  },
+  "TOPBAR_MT_file_external_data": {
+   "label": "External Data",
+   "items": [
+    [
+     "op",
+     "Automatically Pack Resources",
+     "file.autopack_toggle"
+    ],
+    [
+     "op",
+     "Pack Resources",
+     "file.pack_all"
+    ],
+    [
+     "op",
+     "Unpack Resources",
+     "file.unpack_all"
+    ],
+    [
+     "op",
+     "Pack Linked Libraries",
+     "file.pack_libraries"
+    ],
+    [
+     "op",
+     "Unpack Linked Libraries",
+     "file.unpack_libraries"
+    ],
+    [
+     "op",
+     "Make Paths Relative",
+     "file.make_paths_relative"
+    ],
+    [
+     "op",
+     "Make Paths Absolute",
+     "file.make_paths_absolute"
+    ],
+    [
+     "op",
+     "Report Missing Files",
+     "file.report_missing_files"
+    ],
+    [
+     "op",
+     "Find Missing Files...",
+     "file.find_missing_files"
+    ]
+   ]
+  },
+  "TOPBAR_MT_file_import": {
+   "label": "Import",
+   "items": [
+    [
+     "op",
+     "Alembic (.abc)",
+     "wm.alembic_import"
+    ],
+    [
+     "op",
+     "Universal Scene Description (.usd*)",
+     "wm.usd_import"
+    ],
+    [
+     "op",
+     "SVG as Grease Pencil",
+     "wm.grease_pencil_import_svg"
+    ],
+    [
+     "op",
+     "Wavefront (.obj)",
+     "wm.obj_import"
+    ],
+    [
+     "op",
+     "Stanford PLY (.ply)",
+     "wm.ply_import"
+    ],
+    [
+     "op",
+     "STL (.stl)",
+     "wm.stl_import"
+    ],
+    [
+     "op",
+     "FBX (.fbx)",
+     "wm.fbx_import"
+    ],
+    [
+     "op",
+     "SVG as Curves (.svg)",
+     "import_curve.svg"
+    ],
+    [
+     "op",
+     "Motion Capture (.bvh)",
+     "import_anim.bvh"
+    ],
+    [
+     "op",
+     "FBX (.fbx) (Legacy)",
+     "import_scene.fbx"
+    ],
+    [
+     "op",
+     "glTF 2.0 (.glb/.gltf)",
+     "import_scene.gltf"
+    ]
+   ]
+  },
+  "TOPBAR_MT_file_new": {
+   "label": "New File",
+   "items": [
+    [
+     "op",
+     "General",
+     "wm.read_homefile"
+    ],
+    [
+     "op",
+     "2D Animation",
+     "wm.read_homefile"
+    ],
+    [
+     "op",
+     "Sculpting",
+     "wm.read_homefile"
+    ],
+    [
+     "op",
+     "Storyboarding",
+     "wm.read_homefile"
+    ],
+    [
+     "op",
+     "VFX",
+     "wm.read_homefile"
+    ],
+    [
+     "op",
+     "Video Editing",
+     "wm.read_homefile"
+    ]
+   ]
+  },
+  "TOPBAR_MT_file_previews": {
+   "label": "Data Previews",
+   "items": [
+    [
+     "op",
+     "Refresh Data-Block Previews",
+     "wm.previews_ensure"
+    ],
+    [
+     "op",
+     "Batch-Generate Previews...",
+     "wm.previews_batch_generate"
+    ],
+    [
+     "op",
+     "Clear Data-Block Previews...",
+     "wm.previews_clear"
+    ],
+    [
+     "op",
+     "Batch-Clear Previews...",
+     "wm.previews_batch_clear"
+    ]
+   ]
+  },
+  "TOPBAR_MT_file_recover": {
+   "label": "Recover",
+   "items": [
+    [
+     "op",
+     "Last Session",
+     "wm.recover_last_session"
+    ],
+    [
+     "op",
+     "Auto Save...",
+     "wm.recover_auto_save"
+    ]
+   ]
+  },
+  "TOPBAR_MT_help": {
+   "label": "Help",
+   "items": [
+    [
+     "op",
+     "Manual",
+     "wm.url_open_preset"
+    ],
+    [
+     "op",
+     "Support",
+     "wm.url_open"
+    ],
+    [
+     "op",
+     "User Communities",
+     "wm.url_open"
+    ],
+    [
+     "op",
+     "Get Involved",
+     "wm.url_open"
+    ],
+    [
+     "op",
+     "Release Notes",
+     "wm.url_open_preset"
+    ],
+    [
+     "op",
+     "Report a Bug",
+     "wm.url_open_preset"
+    ],
+    [
+     "op",
+     "Save System Info...",
+     "wm.sysinfo"
+    ]
+   ]
+  },
+  "TOPBAR_MT_render": {
+   "label": "Render",
+   "items": [
+    [
+     "op",
+     "Render Image",
+     "render.render"
+    ],
+    [
+     "op",
+     "Render Animation",
+     "render.render"
+    ],
+    [
+     "op",
+     "Render Audio...",
+     "sound.mixdown"
+    ],
+    [
+     "op",
+     "View Render",
+     "render.view_show"
+    ],
+    [
+     "op",
+     "View Animation",
+     "render.play_rendered_anim"
+    ],
+    [
+     "prop",
+     "Lock Interface",
+     "RenderSettings.use_lock_interface"
+    ]
+   ]
+  },
+  "TOPBAR_MT_templates_more": {
+   "label": "Templates",
+   "items": [
+    [
+     "op",
+     "Video Editing",
+     "wm.read_homefile"
+    ]
+   ]
+  },
+  "TOPBAR_MT_window": {
+   "label": "Window",
+   "items": [
+    [
+     "op",
+     "New Window",
+     "wm.window_new"
+    ],
+    [
+     "op",
+     "New Main Window",
+     "wm.window_new_main"
+    ],
+    [
+     "op",
+     "Toggle Window Fullscreen",
+     "wm.window_fullscreen_toggle"
+    ],
+    [
+     "op",
+     "Next Workspace",
+     "screen.workspace_cycle"
+    ],
+    [
+     "op",
+     "Previous Workspace",
+     "screen.workspace_cycle"
+    ],
+    [
+     "prop",
+     "show_statusbar",
+     "Screen.show_statusbar"
+    ],
+    [
+     "op",
+     "Save Screenshot...",
+     "screen.screenshot"
+    ],
+    [
+     "op",
+     "Save Screenshot (Editor)...",
+     "screen.screenshot_area"
+    ]
+   ]
+  },
+  "TOPBAR_MT_workspace_menu": {
+   "label": "Workspace",
+   "items": [
+    [
+     "op",
+     "Duplicate",
+     "workspace.duplicate"
+    ],
+    [
+     "op",
+     "Delete",
+     "workspace.delete"
+    ],
+    [
+     "op",
+     "Reorder to Front",
+     "workspace.reorder_to_front"
+    ],
+    [
+     "op",
+     "Reorder to Back",
+     "workspace.reorder_to_back"
+    ],
+    [
+     "op",
+     "Previous Workspace",
+     "screen.workspace_cycle"
+    ],
+    [
+     "op",
+     "Next Workspace",
+     "screen.workspace_cycle"
+    ],
+    [
+     "op",
+     "Delete Other Workspaces",
+     "workspace.delete_all_others"
+    ]
+   ]
+  },
+  "VIEW3D_MT_add": {
+   "label": "Add",
+   "items": [
+    [
+     "menu",
+     "Mesh",
+     "VIEW3D_MT_mesh_add"
+    ],
+    [
+     "menu",
+     "Curve",
+     "VIEW3D_MT_curve_add"
+    ],
+    [
+     "menu",
+     "Surface",
+     "VIEW3D_MT_surface_add"
+    ],
+    [
+     "menu",
+     "Metaball",
+     "VIEW3D_MT_metaball_add"
+    ],
+    [
+     "op",
+     "Text",
+     "object.text_add"
+    ],
+    [
+     "op",
+     "Point Cloud",
+     "object.pointcloud_random_add"
+    ],
+    [
+     "menu",
+     "Volume",
+     "VIEW3D_MT_volume_add"
+    ],
+    [
+     "menu",
+     "Grease Pencil",
+     "VIEW3D_MT_grease_pencil_add"
+    ],
+    [
+     "op",
+     "Armature",
+     "object.armature_add"
+    ],
+    [
+     "menu",
+     "Lattice",
+     "VIEW3D_MT_lattice_add"
+    ],
+    [
+     "menu",
+     "Empty",
+     "VIEW3D_MT_empty_add"
+    ],
+    [
+     "menu",
+     "Image",
+     "VIEW3D_MT_image_add"
+    ],
+    [
+     "menu",
+     "Light",
+     "VIEW3D_MT_light_add"
+    ],
+    [
+     "menu",
+     "Light Probe",
+     "VIEW3D_MT_lightprobe_add"
+    ],
+    [
+     "op",
+     "Camera",
+     "object.camera_add"
+    ],
+    [
+     "op",
+     "Speaker",
+     "object.speaker_add"
+    ],
+    [
+     "enum",
+     "Force Field",
+     "object.effector_add:type"
+    ],
+    [
+     "enum",
+     "Collection Instance",
+     "object.collection_instance_add:collection"
+    ]
+   ]
+  },
+  "VIEW3D_MT_add_object": {
+   "label": "Add Primitive",
+   "items": [
+    [
+     "op",
+     "Add Cube",
+     "wm.tool_set_by_id"
+    ],
+    [
+     "op",
+     "Add Cylinder",
+     "wm.tool_set_by_id"
+    ],
+    [
+     "op",
+     "Add Cone",
+     "wm.tool_set_by_id"
+    ],
+    [
+     "op",
+     "Add UV Sphere",
+     "wm.tool_set_by_id"
+    ],
+    [
+     "op",
+     "Add Ico Sphere",
+     "wm.tool_set_by_id"
+    ]
+   ]
+  },
+  "VIEW3D_MT_armature_add": {
+   "label": "Armature",
+   "items": [
+    [
+     "op",
+     "Single Bone",
+     "object.armature_add"
+    ]
+   ]
+  },
+  "VIEW3D_MT_armature_context_menu": {
+   "label": "Armature",
+   "items": [
+    [
+     "error",
+     "'NoneType' object has no attribute 'data'",
+     ""
+    ]
+   ]
+  },
+  "VIEW3D_MT_bone_collections": {
+   "label": "Bone Collections",
+   "items": [
+    [
+     "op",
+     "Move to Collection",
+     "armature.move_to_collection"
+    ],
+    [
+     "op",
+     "Assign to Collection",
+     "armature.assign_to_collection"
+    ],
+    [
+     "op",
+     "Show All",
+     "armature.collection_show_all"
+    ],
+    [
+     "op",
+     "Assign to New Collection",
+     "armature.collection_create_and_assign"
+    ]
+   ]
+  },
+  "VIEW3D_MT_bone_options_disable": {
+   "label": "Disable Bone Options",
+   "items": [
+    [
+     "op",
+     "Display Wire",
+     "wm.context_collection_boolean_set"
+    ],
+    [
+     "error",
+     "'Self' object has no attribute 'type'",
+     ""
+    ]
+   ]
+  },
+  "VIEW3D_MT_bone_options_enable": {
+   "label": "Enable Bone Options",
+   "items": [
+    [
+     "op",
+     "Display Wire",
+     "wm.context_collection_boolean_set"
+    ],
+    [
+     "error",
+     "'Self' object has no attribute 'type'",
+     ""
+    ]
+   ]
+  },
+  "VIEW3D_MT_bone_options_toggle": {
+   "label": "Toggle Bone Options",
+   "items": [
+    [
+     "op",
+     "Display Wire",
+     "wm.context_collection_boolean_set"
+    ],
+    [
+     "error",
+     "'Self' object has no attribute 'type'",
+     ""
+    ]
+   ]
+  },
+  "VIEW3D_MT_brush_context_menu": {
+   "label": "Brush Specials",
+   "items": [
+    [
+     "error",
+     "'NoneType' object has no attribute 'type'",
+     ""
+    ]
+   ]
+  },
+  "VIEW3D_MT_camera_add": {
+   "label": "Camera",
+   "items": [
+    [
+     "op",
+     "Camera",
+     "object.camera_add"
+    ]
+   ]
+  },
+  "VIEW3D_MT_curve_add": {
+   "label": "Curve",
+   "items": [
+    [
+     "op",
+     "B\u00e9zier",
+     "curve.primitive_bezier_curve_add"
+    ],
+    [
+     "op",
+     "Circle",
+     "curve.primitive_bezier_circle_add"
+    ],
+    [
+     "op",
+     "Nurbs Curve",
+     "curve.primitive_nurbs_curve_add"
+    ],
+    [
+     "op",
+     "Nurbs Circle",
+     "curve.primitive_nurbs_circle_add"
+    ],
+    [
+     "op",
+     "Path",
+     "curve.primitive_nurbs_path_add"
+    ],
+    [
+     "op",
+     "Empty Hair",
+     "object.curves_empty_hair_add"
+    ],
+    [
+     "op",
+     "Fur",
+     "object.quick_fur"
+    ]
+   ]
+  },
+  "VIEW3D_MT_edit_armature": {
+   "label": "Armature",
+   "items": [
+    [
+     "error",
+     "'NoneType' object has no attribute 'data'",
+     ""
+    ]
+   ]
+  },
+  "VIEW3D_MT_edit_armature_delete": {
+   "label": "Delete",
+   "items": [
+    [
+     "op",
+     "Bones",
+     "armature.delete"
+    ],
+    [
+     "op",
+     "Dissolve Bones",
+     "armature.dissolve"
+    ]
+   ]
+  },
+  "VIEW3D_MT_edit_armature_names": {
+   "label": "Names",
+   "items": [
+    [
+     "op",
+     "Auto-Name Left/Right",
+     "armature.autoside_names"
+    ],
+    [
+     "op",
+     "Auto-Name Front/Back",
+     "armature.autoside_names"
+    ],
+    [
+     "op",
+     "Auto-Name Top/Bottom",
+     "armature.autoside_names"
+    ],
+    [
+     "op",
+     "Flip Names",
+     "armature.flip_names"
+    ]
+   ]
+  },
+  "VIEW3D_MT_edit_armature_parent": {
+   "label": "Parent",
+   "items": [
+    [
+     "op",
+     "Make",
+     "armature.parent_set"
+    ],
+    [
+     "op",
+     "Clear",
+     "armature.parent_clear"
+    ]
+   ]
+  },
+  "VIEW3D_MT_edit_armature_roll": {
+   "label": "Bone Roll",
+   "items": [
+    [
+     "enum",
+     "Recalculate Roll",
+     "armature.calculate_roll:type"
+    ],
+    [
+     "op",
+     "Set Roll",
+     "transform.transform"
+    ],
+    [
+     "op",
+     "Clear Roll",
+     "armature.roll_clear"
+    ]
+   ]
+  },
+  "VIEW3D_MT_edit_curve": {
+   "label": "Curve",
+   "items": [
+    [
+     "menu",
+     "Transform",
+     "VIEW3D_MT_transform"
+    ],
+    [
+     "menu",
+     "Mirror",
+     "VIEW3D_MT_mirror"
+    ],
+    [
+     "menu",
+     "Snap",
+     "VIEW3D_MT_snap"
+    ],
+    [
+     "op",
+     "Spin",
+     "curve.spin"
+    ],
+    [
+     "op",
+     "Add Duplicate",
+     "curve.duplicate_move"
+    ],
+    [
+     "op",
+     "Split",
+     "curve.split"
+    ],
+    [
+     "op",
+     "Separate",
+     "curve.separate"
+    ],
+    [
+     "op",
+     "Toggle Cyclic",
+     "curve.cyclic_toggle"
+    ],
+    [
+     "enum",
+     "Set Spline Type",
+     "curve.spline_type_set:type"
+    ],
+    [
+     "menu",
+     "Show/Hide",
+     "VIEW3D_MT_edit_curve_showhide"
+    ],
+    [
+     "menu",
+     "Clean Up",
+     "VIEW3D_MT_edit_curve_clean"
+    ],
+    [
+     "menu",
+     "Delete",
+     "VIEW3D_MT_edit_curve_delete"
+    ]
+   ]
+  },
+  "VIEW3D_MT_edit_curve_clean": {
+   "label": "Clean Up",
+   "items": [
+    [
+     "op",
+     "Decimate Curve",
+     "curve.decimate"
+    ]
+   ]
+  },
+  "VIEW3D_MT_edit_curve_context_menu": {
+   "label": "Curve",
+   "items": [
+    [
+     "op",
+     "Subdivide",
+     "curve.subdivide"
+    ],
+    [
+     "op",
+     "Extrude Curve and Move",
+     "curve.extrude_move"
+    ],
+    [
+     "op",
+     "Make Segment",
+     "curve.make_segment"
+    ],
+    [
+     "op",
+     "Add Duplicate",
+     "curve.duplicate_move"
+    ],
+    [
+     "op",
+     "Radius",
+     "transform.transform"
+    ],
+    [
+     "op",
+     "Tilt",
+     "transform.tilt"
+    ],
+    [
+     "op",
+     "Clear Tilt",
+     "curve.tilt_clear"
+    ],
+    [
+     "op",
+     "Smooth",
+     "curve.smooth"
+    ],
+    [
+     "op",
+     "Smooth Curve Tilt",
+     "curve.smooth_tilt"
+    ],
+    [
+     "op",
+     "Smooth Curve Radius",
+     "curve.smooth_radius"
+    ],
+    [
+     "menu",
+     "Mirror",
+     "VIEW3D_MT_mirror"
+    ],
+    [
+     "menu",
+     "Snap",
+     "VIEW3D_MT_snap"
+    ],
+    [
+     "enum",
+     "Set Spline Type",
+     "curve.spline_type_set:type"
+    ],
+    [
+     "enum",
+     "Set Handle Type",
+     "curve.handle_type_set:type"
+    ],
+    [
+     "op",
+     "Toggle Cyclic",
+     "curve.cyclic_toggle"
+    ],
+    [
+     "op",
+     "Switch Direction",
+     "curve.switch_direction"
+    ],
+    [
+     "op",
+     "Recalculate Handles",
+     "curve.normals_make_consistent"
+    ],
+    [
+     "op",
+     "Set Goal Weight",
+     "curve.spline_weight_set"
+    ],
+    [
+     "op",
+     "Set Curve Radius",
+     "curve.radius_set"
+    ],
+    [
+     "op",
+     "Split",
+     "curve.split"
+    ],
+    [
+     "op",
+     "Decimate Curve",
+     "curve.decimate"
+    ],
+    [
+     "op",
+     "Separate",
+     "curve.separate"
+    ],
+    [
+     "op",
+     "Dissolve Vertices",
+     "curve.dissolve_verts"
+    ],
+    [
+     "op",
+     "Delete Segment",
+     "curve.delete"
+    ],
+    [
+     "op",
+     "Delete Point",
+     "curve.delete"
+    ]
+   ]
+  },
+  "VIEW3D_MT_edit_curve_ctrlpoints": {
+   "label": "Control Points",
+   "items": [
+    [
+     "error",
+     "'NoneType' object has no attribute 'type'",
+     ""
+    ]
+   ]
+  },
+  "VIEW3D_MT_edit_curve_delete": {
+   "label": "Delete",
+   "items": [
+    [
+     "op",
+     "Vertices",
+     "curve.delete:type=VERT"
+    ],
+    [
+     "op",
+     "Segments",
+     "curve.delete:type=SEGMENT"
+    ],
+    [
+     "op",
+     "Dissolve Vertices",
+     "curve.dissolve_verts"
+    ]
+   ]
+  },
+  "VIEW3D_MT_edit_curve_segments": {
+   "label": "Segments",
+   "items": [
+    [
+     "op",
+     "Subdivide",
+     "curve.subdivide"
+    ],
+    [
+     "op",
+     "Switch Direction",
+     "curve.switch_direction"
+    ]
+   ]
+  },
+  "VIEW3D_MT_edit_curve_showhide": {
+   "label": "Show/Hide",
+   "items": [
+    [
+     "error",
+     "'Self' object has no attribute '_operator_name'",
+     ""
+    ]
+   ]
+  },
+  "VIEW3D_MT_edit_curves": {
+   "label": "Curves",
+   "items": [
+    [
+     "menu",
+     "Transform",
+     "VIEW3D_MT_transform"
+    ],
+    [
+     "menu",
+     "Mirror",
+     "VIEW3D_MT_mirror"
+    ],
+    [
+     "menu",
+     "Snap",
+     "VIEW3D_MT_snap"
+    ],
+    [
+     "op",
+     "Duplicate",
+     "curves.duplicate_move"
+    ],
+    [
+     "op",
+     "Extrude Curve and Move",
+     "curves.extrude_move"
+    ],
+    [
+     "op",
+     "Set Attribute",
+     "curves.attribute_set"
+    ],
+    [
+     "enum",
+     "Set Curve Type",
+     "curves.curve_type_set:type"
+    ],
+    [
+     "op",
+     "Toggle Cyclic",
+     "curves.cyclic_toggle"
+    ],
+    [
+     "op",
+     "Separate",
+     "curves.separate"
+    ],
+    [
+     "op",
+     "Delete",
+     "curves.delete"
+    ]
+   ]
+  },
+  "VIEW3D_MT_edit_curves_add": {
+   "label": "Add",
+   "items": [
+    [
+     "op",
+     "B\u00e9zier",
+     "curves.add_bezier"
+    ],
+    [
+     "op",
+     "Circle",
+     "curves.add_circle"
+    ]
+   ]
+  },
+  "VIEW3D_MT_edit_curves_context_menu": {
+   "label": "Curves",
+   "items": [
+    [
+     "op",
+     "Subdivide",
+     "curves.subdivide"
+    ],
+    [
+     "op",
+     "Extrude Curve and Move",
+     "curves.extrude_move"
+    ],
+    [
+     "menu",
+     "Mirror",
+     "VIEW3D_MT_mirror"
+    ],
+    [
+     "menu",
+     "Snap",
+     "VIEW3D_MT_snap"
+    ],
+    [
+     "enum",
+     "Set Curve Type",
+     "curves.curve_type_set:type"
+    ],
+    [
+     "enum",
+     "Set Handle Type",
+     "curves.handle_type_set:type"
+    ],
+    [
+     "op",
+     "Toggle Cyclic",
+     "curves.cyclic_toggle"
+    ],
+    [
+     "op",
+     "Switch Direction",
+     "curves.switch_direction"
+    ],
+    [
+     "op",
+     "Separate",
+     "curves.separate"
+    ],
+    [
+     "op",
+     "Delete",
+     "curves.delete"
+    ],
+    [
+     "op",
+     "Split",
+     "curves.split"
+    ]
+   ]
+  },
+  "VIEW3D_MT_edit_curves_control_points": {
+   "label": "Control Points",
+   "items": [
+    [
+     "op",
+     "Extrude Curve and Move",
+     "curves.extrude_move"
+    ],
+    [
+     "enum",
+     "Set Handle Type",
+     "curves.handle_type_set:type"
+    ]
+   ]
+  },
+  "VIEW3D_MT_edit_curves_segments": {
+   "label": "Segments",
+   "items": [
+    [
+     "op",
+     "Subdivide",
+     "curves.subdivide"
+    ],
+    [
+     "op",
+     "Switch Direction",
+     "curves.switch_direction"
+    ]
+   ]
+  },
+  "VIEW3D_MT_edit_curves_select_more_less": {
+   "label": "Select More/Less",
+   "items": [
+    [
+     "op",
+     "More",
+     "curves.select_more"
+    ],
+    [
+     "op",
+     "Less",
+     "curves.select_less"
+    ]
+   ]
+  },
+  "VIEW3D_MT_edit_font": {
+   "label": "Text",
+   "items": [
+    [
+     "op",
+     "Cut",
+     "font.text_cut"
+    ],
+    [
+     "op",
+     "Copy",
+     "font.text_copy"
+    ],
+    [
+     "op",
+     "Paste",
+     "font.text_paste"
+    ],
+    [
+     "op",
+     "Paste File",
+     "font.text_paste_from_file"
+    ],
+    [
+     "op",
+     "To Uppercase",
+     "font.case_set"
+    ],
+    [
+     "op",
+     "To Lowercase",
+     "font.case_set"
+    ],
+    [
+     "op",
+     "FONT_OT_text_insert_unicode",
+     "FONT_OT_text_insert_unicode"
+    ],
+    [
+     "menu",
+     "Special Characters",
+     "VIEW3D_MT_edit_font_chars"
+    ],
+    [
+     "op",
+     "Toggle Bold",
+     "font.style_toggle"
+    ],
+    [
+     "op",
+     "Toggle Italic",
+     "font.style_toggle"
+    ],
+    [
+     "op",
+     "Toggle Underline",
+     "font.style_toggle"
+    ],
+    [
+     "op",
+     "Toggle Small Caps",
+     "font.style_toggle"
+    ],
+    [
+     "menu",
+     "Kerning",
+     "VIEW3D_MT_edit_font_kerning"
+    ],
+    [
+     "menu",
+     "Delete",
+     "VIEW3D_MT_edit_font_delete"
+    ]
+   ]
+  },
+  "VIEW3D_MT_edit_font_chars": {
+   "label": "Special Characters",
+   "items": [
+    [
+     "op",
+     "Copyright \u00a9",
+     "font.text_insert"
+    ],
+    [
+     "op",
+     "Registered Trademark \u00ae",
+     "font.text_insert"
+    ],
+    [
+     "op",
+     "Degree \u00b0",
+     "font.text_insert"
+    ],
+    [
+     "op",
+     "Multiplication \u00d7",
+     "font.text_insert"
+    ],
+    [
+     "op",
+     "Circle \u2022",
+     "font.text_insert"
+    ],
+    [
+     "op",
+     "Superscript \u00b9",
+     "font.text_insert"
+    ],
+    [
+     "op",
+     "Superscript \u00b2",
+     "font.text_insert"
+    ],
+    [
+     "op",
+     "Superscript \u00b3",
+     "font.text_insert"
+    ],
+    [
+     "op",
+     "Guillemet \u00bb",
+     "font.text_insert"
+    ],
+    [
+     "op",
+     "Guillemet \u00ab",
+     "font.text_insert"
+    ],
+    [
+     "op",
+     "Per Mille \u2030",
+     "font.text_insert"
+    ],
+    [
+     "op",
+     "Euro \u20ac",
+     "font.text_insert"
+    ],
+    [
+     "op",
+     "Florin \u0192",
+     "font.text_insert"
+    ],
+    [
+     "op",
+     "Pound \u00a3",
+     "font.text_insert"
+    ],
+    [
+     "op",
+     "Yen \u00a5",
+     "font.text_insert"
+    ],
+    [
+     "op",
+     "German Eszett \u00df",
+     "font.text_insert"
+    ],
+    [
+     "op",
+     "Inverted Question Mark \u00bf",
+     "font.text_insert"
+    ],
+    [
+     "op",
+     "Inverted Exclamation Mark \u00a1",
+     "font.text_insert"
+    ]
+   ]
+  },
+  "VIEW3D_MT_edit_font_context_menu": {
+   "label": "Text",
+   "items": [
+    [
+     "op",
+     "Cut",
+     "font.text_cut"
+    ],
+    [
+     "op",
+     "Copy",
+     "font.text_copy"
+    ],
+    [
+     "op",
+     "Paste",
+     "font.text_paste"
+    ],
+    [
+     "op",
+     "Select All",
+     "font.select_all"
+    ],
+    [
+     "menu",
+     "Text",
+     "VIEW3D_MT_edit_font"
+    ]
+   ]
+  },
+  "VIEW3D_MT_edit_font_delete": {
+   "label": "Delete",
+   "items": [
+    [
+     "op",
+     "Previous Character",
+     "font.delete"
+    ],
+    [
+     "op",
+     "Next Character",
+     "font.delete"
+    ],
+    [
+     "op",
+     "Previous Word",
+     "font.delete"
+    ],
+    [
+     "op",
+     "Next Word",
+     "font.delete"
+    ]
+   ]
+  },
+  "VIEW3D_MT_edit_font_kerning": {
+   "label": "Kerning",
+   "items": [
+    [
+     "error",
+     "'Mesh' object has no attribute 'edit_format'",
+     ""
+    ]
+   ]
+  },
+  "VIEW3D_MT_edit_greasepencil": {
+   "label": "Grease Pencil",
+   "items": [
+    [
+     "menu",
+     "Transform",
+     "VIEW3D_MT_transform"
+    ],
+    [
+     "menu",
+     "Mirror",
+     "VIEW3D_MT_mirror"
+    ],
+    [
+     "menu",
+     "Snap",
+     "GREASE_PENCIL_MT_snap"
+    ],
+    [
+     "menu",
+     "Active Layer",
+     "GREASE_PENCIL_MT_layer_active"
+    ],
+    [
+     "menu",
+     "Animation",
+     "VIEW3D_MT_edit_greasepencil_animation"
+    ],
+    [
+     "op",
+     "Interpolate Sequence",
+     "grease_pencil.interpolate_sequence"
+    ],
+    [
+     "op",
+     "Duplicate",
+     "grease_pencil.duplicate_move"
+    ],
+    [
+     "op",
+     "Split",
+     "grease_pencil.stroke_split"
+    ],
+    [
+     "op",
+     "Copy",
+     "grease_pencil.copy"
+    ],
+    [
+     "op",
+     "Paste",
+     "grease_pencil.paste"
+    ],
+    [
+     "op",
+     "Paste by Layer",
+     "grease_pencil.paste"
+    ],
+    [
+     "menu",
+     "Show/Hide",
+     "VIEW3D_MT_edit_greasepencil_showhide"
+    ],
+    [
+     "enum",
+     "Separate",
+     "grease_pencil.separate:mode"
+    ],
+    [
+     "menu",
+     "Clean Up",
+     "VIEW3D_MT_edit_greasepencil_cleanup"
+    ],
+    [
+     "op",
+     "Outline",
+     "grease_pencil.outline"
+    ],
+    [
+     "menu",
+     "Delete",
+     "VIEW3D_MT_edit_greasepencil_delete"
+    ]
+   ]
+  },
+  "VIEW3D_MT_edit_greasepencil_animation": {
+   "label": "Animation",
+   "items": [
+    [
+     "op",
+     "Insert Blank Keyframe (Active Layer)",
+     "grease_pencil.insert_blank_frame"
+    ],
+    [
+     "op",
+     "Insert Blank Keyframe (All Layers)",
+     "grease_pencil.insert_blank_frame"
+    ],
+    [
+     "op",
+     "Duplicate Active Keyframe (Active Layer)",
+     "grease_pencil.frame_duplicate"
+    ],
+    [
+     "op",
+     "Duplicate Active Keyframe (All Layers)",
+     "grease_pencil.frame_duplicate"
+    ],
+    [
+     "op",
+     "Delete Active Keyframe (Active Layer)",
+     "grease_pencil.active_frame_delete"
+    ],
+    [
+     "op",
+     "Delete Active Keyframe (All Layers)",
+     "grease_pencil.active_frame_delete"
+    ]
+   ]
+  },
+  "VIEW3D_MT_edit_greasepencil_cleanup": {
+   "label": "Clean Up",
+   "items": [
+    [
+     "op",
+     "Clean Loose Points...",
+     "grease_pencil.clean_loose"
+    ],
+    [
+     "op",
+     "Delete Duplicate Frames",
+     "grease_pencil.frame_clean_duplicate"
+    ],
+    [
+     "op",
+     "Merge by Distance",
+     "grease_pencil.stroke_merge_by_distance"
+    ],
+    [
+     "op",
+     "Reproject Strokes...",
+     "grease_pencil.reproject"
+    ],
+    [
+     "op",
+     "Remove Fill Guides",
+     "grease_pencil.remove_fill_guides"
+    ]
+   ]
+  },
+  "VIEW3D_MT_edit_greasepencil_delete": {
+   "label": "Delete",
+   "items": [
+    [
+     "op",
+     "Points",
+     "grease_pencil.delete"
+    ],
+    [
+     "op",
+     "Only Strokes",
+     "grease_pencil.delete"
+    ],
+    [
+     "op",
+     "Only Fills",
+     "grease_pencil.delete"
+    ],
+    [
+     "op",
+     "Dissolve",
+     "grease_pencil.dissolve:type=POINTS"
+    ],
+    [
+     "op",
+     "Dissolve Between",
+     "grease_pencil.dissolve:type=BETWEEN"
+    ],
+    [
+     "op",
+     "Dissolve Unselect",
+     "grease_pencil.dissolve:type=UNSELECT"
+    ],
+    [
+     "op",
+     "Delete Active Keyframe (Active Layer)",
+     "grease_pencil.delete_frame"
+    ],
+    [
+     "op",
+     "Delete Active Keyframes (All Layers)",
+     "grease_pencil.delete_frame"
+    ]
+   ]
+  },
+  "VIEW3D_MT_edit_greasepencil_point": {
+   "label": "Point",
+   "items": [
+    [
+     "op",
+     "Extrude",
+     "grease_pencil.extrude_move"
+    ],
+    [
+     "op",
+     "Smooth",
+     "grease_pencil.stroke_smooth"
+    ],
+    [
+     "menu",
+     "Vertex Groups",
+     "VIEW3D_MT_greasepencil_vertex_group"
+    ],
+    [
+     "enum",
+     "Set Handle Type",
+     "grease_pencil.set_handle_type:type"
+    ],
+    [
+     "enum",
+     "Set Corner Type",
+     "grease_pencil.set_corner_type:corner_type"
+    ]
+   ]
+  },
+  "VIEW3D_MT_edit_greasepencil_showhide": {
+   "label": "Show/Hide",
+   "items": [
+    [
+     "op",
+     "Show All Layers",
+     "grease_pencil.layer_reveal"
+    ],
+    [
+     "op",
+     "Hide Active Layer",
+     "grease_pencil.layer_hide"
+    ],
+    [
+     "op",
+     "Hide Inactive Layers",
+     "grease_pencil.layer_hide"
+    ]
+   ]
+  },
+  "VIEW3D_MT_edit_greasepencil_stroke": {
+   "label": "Stroke",
+   "items": [
+    [
+     "op",
+     "Subdivide",
+     "grease_pencil.stroke_subdivide"
+    ],
+    [
+     "op",
+     "Subdivide and Smooth",
+     "grease_pencil.stroke_subdivide_smooth"
+    ],
+    [
+     "menu",
+     "Simplify Stroke",
+     "GREASE_PENCIL_MT_stroke_simplify"
+    ],
+    [
+     "op",
+     "Outline",
+     "grease_pencil.outline"
+    ],
+    [
+     "enum",
+     "Join",
+     "grease_pencil.join_selection:type"
+    ],
+    [
+     "menu",
+     "Move to Layer",
+     "GREASE_PENCIL_MT_move_to_layer"
+    ],
+    [
+     "menu",
+     "Assign Material",
+     "VIEW3D_MT_grease_pencil_assign_material"
+    ],
+    [
+     "op",
+     "Set Active Material",
+     "grease_pencil.set_active_material"
+    ],
+    [
+     "enum",
+     "Arrange",
+     "grease_pencil.reorder:direction"
+    ],
+    [
+     "op",
+     "Close",
+     "grease_pencil.cyclical_set"
+    ],
+    [
+     "op",
+     "Toggle Cyclic",
+     "grease_pencil.cyclical_set"
+    ],
+    [
+     "enum",
+     "Set Caps",
+     "grease_pencil.caps_set:type"
+    ],
+    [
+     "op",
+     "Switch Direction",
+     "grease_pencil.stroke_switch_direction"
+    ],
+    [
+     "op",
+     "Set Start Point",
+     "grease_pencil.set_start_point"
+    ],
+    [
+     "op",
+     "Set Uniform Thickness",
+     "grease_pencil.set_uniform_thickness"
+    ],
+    [
+     "op",
+     "Set Uniform Opacity",
+     "grease_pencil.set_uniform_opacity"
+    ],
+    [
+     "prop",
+     "Scale Thickness",
+     "GPencilSculptSettings.use_scale_thickness"
+    ],
+    [
+     "enum",
+     "Convert Type",
+     "grease_pencil.convert_curve_type:type"
+    ],
+    [
+     "op",
+     "Set Resolution",
+     "grease_pencil.set_curve_resolution"
+    ],
+    [
+     "enum",
+     "Set Stroke Type",
+     "grease_pencil.set_stroke_type:type"
+    ],
+    [
+     "op",
+     "Reset UVs",
+     "grease_pencil.reset_uvs"
+    ],
+    [
+     "op",
+     "Join Fills",
+     "grease_pencil.join_fills"
+    ],
+    [
+     "op",
+     "Separate Fills",
+     "grease_pencil.separate_fills"
+    ]
+   ]
+  },
+  "VIEW3D_MT_edit_lattice": {
+   "label": "Lattice",
+   "items": [
+    [
+     "menu",
+     "Transform",
+     "VIEW3D_MT_transform"
+    ],
+    [
+     "menu",
+     "Mirror",
+     "VIEW3D_MT_mirror"
+    ],
+    [
+     "menu",
+     "Snap",
+     "VIEW3D_MT_snap"
+    ],
+    [
+     "enum",
+     "Flip (Distortion Free)",
+     "lattice.flip:axis"
+    ],
+    [
+     "op",
+     "Make Regular",
+     "lattice.make_regular"
+    ],
+    [
+     "op",
+     "Make Vertex Parent",
+     "object.vertex_parent_set"
+    ]
+   ]
+  },
+  "VIEW3D_MT_edit_lattice_context_menu": {
+   "label": "Lattice",
+   "items": [
+    [
+     "menu",
+     "Mirror",
+     "VIEW3D_MT_mirror"
+    ],
+    [
+     "enum",
+     "Flip (Distortion Free)",
+     "lattice.flip:axis"
+    ],
+    [
+     "menu",
+     "Snap",
+     "VIEW3D_MT_snap"
+    ],
+    [
+     "op",
+     "Make Regular",
+     "lattice.make_regular"
+    ]
+   ]
+  },
+  "VIEW3D_MT_edit_mesh": {
+   "label": "Mesh",
+   "items": [
+    [
+     "menu",
+     "Transform",
+     "VIEW3D_MT_transform"
+    ],
+    [
+     "menu",
+     "Mirror",
+     "VIEW3D_MT_mirror"
+    ],
+    [
+     "menu",
+     "Snap",
+     "VIEW3D_MT_snap"
+    ],
+    [
+     "op",
+     "Duplicate",
+     "mesh.duplicate_move"
+    ],
+    [
+     "menu",
+     "Extrude",
+     "VIEW3D_MT_edit_mesh_extrude"
+    ],
+    [
+     "menu",
+     "Merge",
+     "VIEW3D_MT_edit_mesh_merge"
+    ],
+    [
+     "menu",
+     "Split",
+     "VIEW3D_MT_edit_mesh_split"
+    ],
+    [
+     "enum",
+     "Separate",
+     "mesh.separate:type"
+    ],
+    [
+     "op",
+     "Bisect",
+     "mesh.bisect"
+    ],
+    [
+     "op",
+     "Knife Project",
+     "mesh.knife_project"
+    ],
+    [
+     "op",
+     "Knife Topology Tool",
+     "mesh.knife_tool"
+    ],
+    [
+     "op",
+     "Convex Hull",
+     "mesh.convex_hull"
+    ],
+    [
+     "op",
+     "Symmetrize",
+     "mesh.symmetrize"
+    ],
+    [
+     "op",
+     "Snap to Symmetry",
+     "mesh.symmetry_snap"
+    ],
+    [
+     "menu",
+     "Normals",
+     "VIEW3D_MT_edit_mesh_normals"
+    ],
+    [
+     "menu",
+     "Shading",
+     "VIEW3D_MT_edit_mesh_shading"
+    ],
+    [
+     "menu",
+     "Weights",
+     "VIEW3D_MT_edit_mesh_weights"
+    ],
+    [
+     "op",
+     "Set Attribute",
+     "mesh.attribute_set"
+    ],
+    [
+     "enum",
+     "Sort Elements",
+     "mesh.sort_elements:type"
+    ],
+    [
+     "menu",
+     "Show/Hide",
+     "VIEW3D_MT_edit_mesh_showhide"
+    ],
+    [
+     "menu",
+     "Clean Up",
+     "VIEW3D_MT_edit_mesh_clean"
+    ],
+    [
+     "menu",
+     "Delete",
+     "VIEW3D_MT_edit_mesh_delete"
+    ]
+   ]
+  },
+  "VIEW3D_MT_edit_mesh_clean": {
+   "label": "Clean Up",
+   "items": [
+    [
+     "op",
+     "Delete Loose",
+     "mesh.delete_loose"
+    ],
+    [
+     "op",
+     "Decimate Geometry",
+     "mesh.decimate"
+    ],
+    [
+     "op",
+     "Degenerate Dissolve",
+     "mesh.dissolve_degenerate"
+    ],
+    [
+     "op",
+     "Limited Dissolve",
+     "mesh.dissolve_limited"
+    ],
+    [
+     "op",
+     "Make Planar Faces",
+     "mesh.face_make_planar"
+    ],
+    [
+     "op",
+     "Split Non-Planar Faces",
+     "mesh.vert_connect_nonplanar"
+    ],
+    [
+     "op",
+     "Split Concave Faces",
+     "mesh.vert_connect_concave"
+    ],
+    [
+     "op",
+     "Merge by Distance",
+     "mesh.remove_doubles"
+    ],
+    [
+     "op",
+     "Fill Holes",
+     "mesh.fill_holes"
+    ]
+   ]
+  },
+  "VIEW3D_MT_edit_mesh_context_menu": {
+   "label": "",
+   "items": [
+    [
+     "label",
+     "Vertex",
+     ""
+    ],
+    [
+     "op",
+     "Subdivide",
+     "mesh.subdivide"
+    ],
+    [
+     "op",
+     "Extrude Vertices",
+     "mesh.extrude_vertices_move"
+    ],
+    [
+     "op",
+     "Bevel Vertices",
+     "mesh.bevel"
+    ],
+    [
+     "op",
+     "Push/Pull",
+     "transform.push_pull"
+    ],
+    [
+     "op",
+     "Shrink/Fatten",
+     "transform.shrink_fatten"
+    ],
+    [
+     "op",
+     "Shear",
+     "transform.shear"
+    ],
+    [
+     "op",
+     "Slide Vertices",
+     "transform.vert_slide"
+    ],
+    [
+     "op",
+     "Randomize Vertices",
+     "transform.vertex_random"
+    ],
+    [
+     "op",
+     "Smooth Vertices",
+     "mesh.vertices_smooth"
+    ],
+    [
+     "op",
+     "Smooth Laplacian",
+     "mesh.vertices_smooth_laplacian"
+    ],
+    [
+     "menu",
+     "Mirror Vertices",
+     "VIEW3D_MT_mirror"
+    ],
+    [
+     "menu",
+     "Snap Vertices",
+     "VIEW3D_MT_snap"
+    ],
+    [
+     "op",
+     "Vertex Crease",
+     "transform.vert_crease"
+    ],
+    [
+     "op",
+     "Split",
+     "mesh.split"
+    ],
+    [
+     "enum",
+     "Separate",
+     "mesh.separate:type"
+    ],
+    [
+     "op",
+     "Dissolve Vertices",
+     "mesh.dissolve_verts"
+    ],
+    [
+     "op",
+     "Delete Vertices",
+     "mesh.delete"
+    ]
+   ]
+  },
+  "VIEW3D_MT_edit_mesh_delete": {
+   "label": "Delete",
+   "items": [
+    [
+     "op",
+     "Vertices",
+     "mesh.delete:type=VERT"
+    ],
+    [
+     "op",
+     "Edges",
+     "mesh.delete:type=EDGE"
+    ],
+    [
+     "op",
+     "Faces",
+     "mesh.delete:type=FACE"
+    ],
+    [
+     "op",
+     "Only Edges & Faces",
+     "mesh.delete:type=EDGE_FACE"
+    ],
+    [
+     "op",
+     "Only Faces",
+     "mesh.delete:type=ONLY_FACE"
+    ],
+    [
+     "op",
+     "Dissolve Vertices",
+     "mesh.dissolve_verts"
+    ],
+    [
+     "op",
+     "Dissolve Edges",
+     "mesh.dissolve_edges"
+    ],
+    [
+     "op",
+     "Dissolve Faces",
+     "mesh.dissolve_faces"
+    ],
+    [
+     "op",
+     "Limited Dissolve",
+     "mesh.dissolve_limited"
+    ],
+    [
+     "op",
+     "Collapse Edges & Faces",
+     "mesh.edge_collapse"
+    ],
+    [
+     "op",
+     "Edge Loops",
+     "mesh.delete_edgeloop"
+    ]
+   ]
+  },
+  "VIEW3D_MT_edit_mesh_edges": {
+   "label": "Edge",
+   "items": [
+    [
+     "op",
+     "Extrude Edges",
+     "mesh.extrude_edges_move"
+    ],
+    [
+     "op",
+     "Bevel Edges",
+     "mesh.bevel"
+    ],
+    [
+     "op",
+     "Bridge Edge Loops",
+     "mesh.bridge_edge_loops"
+    ],
+    [
+     "op",
+     "Screw",
+     "mesh.screw"
+    ],
+    [
+     "op",
+     "Subdivide",
+     "mesh.subdivide"
+    ],
+    [
+     "op",
+     "Subdivide Edge-Ring",
+     "mesh.subdivide_edgering"
+    ],
+    [
+     "op",
+     "Un-Subdivide",
+     "mesh.unsubdivide"
+    ],
+    [
+     "op",
+     "Rotate Edge CW",
+     "mesh.edge_rotate"
+    ],
+    [
+     "op",
+     "Rotate Edge CCW",
+     "mesh.edge_rotate"
+    ],
+    [
+     "op",
+     "Edge Slide",
+     "transform.edge_slide"
+    ],
+    [
+     "op",
+     "Loop Cut and Slide",
+     "mesh.loopcut_slide"
+    ],
+    [
+     "op",
+     "Offset Edge Slide",
+     "mesh.offset_edge_loops_slide"
+    ],
+    [
+     "op",
+     "Edge Bevel Weight",
+     "transform.edge_bevelweight"
+    ],
+    [
+     "op",
+     "Edge Crease",
+     "transform.edge_crease"
+    ],
+    [
+     "op",
+     "Mark Seam",
+     "mesh.mark_seam"
+    ],
+    [
+     "op",
+     "Clear Seam",
+     "mesh.mark_seam"
+    ],
+    [
+     "op",
+     "Mark Sharp",
+     "mesh.mark_sharp"
+    ],
+    [
+     "op",
+     "Clear Sharp",
+     "mesh.mark_sharp"
+    ],
+    [
+     "op",
+     "Mark Sharp from Vertices",
+     "mesh.mark_sharp"
+    ],
+    [
+     "op",
+     "Clear Sharp from Vertices",
+     "mesh.mark_sharp"
+    ],
+    [
+     "op",
+     "Set Sharpness by Angle",
+     "mesh.set_sharpness_by_angle"
+    ],
+    [
+     "op",
+     "Mark Freestyle Edge",
+     "mesh.mark_freestyle_edge"
+    ],
+    [
+     "op",
+     "Clear Freestyle Edge",
+     "mesh.mark_freestyle_edge"
+    ]
+   ]
+  },
+  "VIEW3D_MT_edit_mesh_extrude": {
+   "label": "Extrude",
+   "items": [
+    [
+     "op",
+     "Extrude Repeat",
+     "mesh.extrude_repeat"
+    ],
+    [
+     "op",
+     "Spin",
+     "mesh.spin"
+    ]
+   ]
+  },
+  "VIEW3D_MT_edit_mesh_faces": {
+   "label": "Face",
+   "items": [
+    [
+     "op",
+     "Extrude Faces",
+     "view3d.edit_mesh_extrude_move_normal"
+    ],
+    [
+     "op",
+     "Extrude Faces Along Normals",
+     "view3d.edit_mesh_extrude_move_shrink_fatten"
+    ],
+    [
+     "op",
+     "Extrude Individual Faces",
+     "mesh.extrude_faces_move"
+    ],
+    [
+     "op",
+     "Inset Faces",
+     "mesh.inset"
+    ],
+    [
+     "op",
+     "Poke Faces",
+     "mesh.poke"
+    ],
+    [
+     "op",
+     "Triangulate Faces",
+     "mesh.quads_convert_to_tris"
+    ],
+    [
+     "op",
+     "Triangles to Quads",
+     "mesh.tris_convert_to_quads"
+    ],
+    [
+     "op",
+     "Solidify Faces",
+     "mesh.solidify"
+    ],
+    [
+     "op",
+     "Wireframe",
+     "mesh.wireframe"
+    ],
+    [
+     "op",
+     "Fill",
+     "mesh.fill"
+    ],
+    [
+     "op",
+     "Grid Fill",
+     "mesh.fill_grid"
+    ],
+    [
+     "op",
+     "Beautify Faces",
+     "mesh.beautify_fill"
+    ],
+    [
+     "op",
+     "Intersect (Knife)",
+     "mesh.intersect"
+    ],
+    [
+     "op",
+     "Intersect (Boolean)",
+     "mesh.intersect_boolean"
+    ],
+    [
+     "op",
+     "Weld Edges into Faces",
+     "mesh.face_split_by_edges"
+    ],
+    [
+     "op",
+     "Shade Smooth",
+     "mesh.faces_shade_smooth"
+    ],
+    [
+     "op",
+     "Shade Flat",
+     "mesh.faces_shade_flat"
+    ],
+    [
+     "menu",
+     "Face Data",
+     "VIEW3D_MT_edit_mesh_faces_data"
+    ]
+   ]
+  },
+  "VIEW3D_MT_edit_mesh_faces_data": {
+   "label": "Face Data",
+   "items": [
+    [
+     "op",
+     "Rotate Colors",
+     "mesh.colors_rotate"
+    ],
+    [
+     "op",
+     "Reverse Colors",
+     "mesh.colors_reverse"
+    ],
+    [
+     "op",
+     "Rotate UVs",
+     "mesh.uvs_rotate"
+    ],
+    [
+     "op",
+     "Reverse UVs",
+     "mesh.uvs_reverse"
+    ],
+    [
+     "op",
+     "Flip Quad Tessellation",
+     "mesh.flip_quad_tessellation"
+    ],
+    [
+     "op",
+     "Mark Freestyle Face",
+     "mesh.mark_freestyle_face"
+    ],
+    [
+     "op",
+     "Clear Freestyle Face",
+     "mesh.mark_freestyle_face"
+    ]
+   ]
+  },
+  "VIEW3D_MT_edit_mesh_merge": {
+   "label": "Merge",
+   "items": [
+    [
+     "op",
+     "At Center",
+     "mesh.merge:type=CENTER"
+    ],
+    [
+     "op",
+     "At Cursor",
+     "mesh.merge:type=CURSOR"
+    ],
+    [
+     "op",
+     "Collapse",
+     "mesh.merge:type=COLLAPSE"
+    ],
+    [
+     "op",
+     "At First",
+     "mesh.merge:type=FIRST"
+    ],
+    [
+     "op",
+     "At Last",
+     "mesh.merge:type=LAST"
+    ],
+    [
+     "op",
+     "By Distance",
+     "mesh.remove_doubles"
+    ]
+   ]
+  },
+  "VIEW3D_MT_edit_mesh_normals": {
+   "label": "Normals",
+   "items": [
+    [
+     "op",
+     "Flip",
+     "mesh.flip_normals"
+    ],
+    [
+     "op",
+     "Recalculate Outside",
+     "mesh.normals_make_consistent"
+    ],
+    [
+     "op",
+     "Recalculate Inside",
+     "mesh.normals_make_consistent"
+    ],
+    [
+     "op",
+     "Set from Faces",
+     "mesh.set_normals_from_faces"
+    ],
+    [
+     "op",
+     "Rotate...",
+     "transform.rotate_normal"
+    ],
+    [
+     "op",
+     "Point to Target...",
+     "mesh.point_normals"
+    ],
+    [
+     "op",
+     "Merge",
+     "mesh.merge_normals"
+    ],
+    [
+     "op",
+     "Split",
+     "mesh.split_normals"
+    ],
+    [
+     "menu",
+     "Average",
+     "VIEW3D_MT_edit_mesh_normals_average"
+    ],
+    [
+     "op",
+     "Copy Vector",
+     "mesh.normals_tools"
+    ],
+    [
+     "op",
+     "Paste Vector",
+     "mesh.normals_tools"
+    ],
+    [
+     "op",
+     "Smooth Vectors",
+     "mesh.smooth_normals"
+    ],
+    [
+     "op",
+     "Reset Vectors",
+     "mesh.normals_tools"
+    ],
+    [
+     "menu",
+     "Select by Face Strength",
+     "VIEW3D_MT_edit_mesh_normals_select_strength"
+    ],
+    [
+     "menu",
+     "Set Face Strength",
+     "VIEW3D_MT_edit_mesh_normals_set_strength"
+    ]
+   ]
+  },
+  "VIEW3D_MT_edit_mesh_normals_average": {
+   "label": "Average",
+   "items": [
+    [
+     "op",
+     "Custom Normal",
+     "mesh.average_normals"
+    ],
+    [
+     "op",
+     "Face Area",
+     "mesh.average_normals"
+    ],
+    [
+     "op",
+     "Corner Angle",
+     "mesh.average_normals"
+    ]
+   ]
+  },
+  "VIEW3D_MT_edit_mesh_normals_select_strength": {
+   "label": "Select by Face Strength",
+   "items": [
+    [
+     "op",
+     "Weak",
+     "mesh.mod_weighted_strength"
+    ],
+    [
+     "op",
+     "Medium",
+     "mesh.mod_weighted_strength"
+    ],
+    [
+     "op",
+     "Strong",
+     "mesh.mod_weighted_strength"
+    ]
+   ]
+  },
+  "VIEW3D_MT_edit_mesh_normals_set_strength": {
+   "label": "Set Face Strength",
+   "items": [
+    [
+     "op",
+     "Weak",
+     "mesh.mod_weighted_strength"
+    ],
+    [
+     "op",
+     "Medium",
+     "mesh.mod_weighted_strength"
+    ],
+    [
+     "op",
+     "Strong",
+     "mesh.mod_weighted_strength"
+    ]
+   ]
+  },
+  "VIEW3D_MT_edit_mesh_select_by_trait": {
+   "label": "Select All by Trait",
+   "items": [
+    [
+     "op",
+     "Non Manifold",
+     "mesh.select_non_manifold"
+    ],
+    [
+     "op",
+     "Loose Geometry",
+     "mesh.select_loose"
+    ],
+    [
+     "op",
+     "Interior Faces",
+     "mesh.select_interior_faces"
+    ],
+    [
+     "op",
+     "Faces by Sides",
+     "mesh.select_face_by_sides"
+    ],
+    [
+     "op",
+     "Poles by Count",
+     "mesh.select_by_pole_count"
+    ],
+    [
+     "op",
+     "Ungrouped Vertices",
+     "mesh.select_ungrouped"
+    ]
+   ]
+  },
+  "VIEW3D_MT_edit_mesh_select_linked": {
+   "label": "Select Linked",
+   "items": [
+    [
+     "op",
+     "Linked",
+     "mesh.select_linked"
+    ],
+    [
+     "op",
+     "Shortest Path",
+     "mesh.shortest_path_select"
+    ],
+    [
+     "op",
+     "Linked Flat Faces",
+     "mesh.faces_select_linked_flat"
+    ]
+   ]
+  },
+  "VIEW3D_MT_edit_mesh_select_loops": {
+   "label": "Select Loops",
+   "items": [
+    [
+     "op",
+     "Edge Loops",
+     "mesh.select_edge_loop_multi"
+    ],
+    [
+     "op",
+     "Edge Rings",
+     "mesh.select_edge_ring_multi"
+    ],
+    [
+     "op",
+     "Boundary Loops",
+     "mesh.select_boundary_loop_multi"
+    ],
+    [
+     "op",
+     "Loop Inner-Region",
+     "mesh.loop_to_region"
+    ],
+    [
+     "op",
+     "Boundary of Selected",
+     "mesh.region_to_loop"
+    ]
+   ]
+  },
+  "VIEW3D_MT_edit_mesh_select_mode": {
+   "label": "Mesh Select Mode",
+   "items": [
+    [
+     "op",
+     "Vertex",
+     "mesh.select_mode"
+    ],
+    [
+     "op",
+     "Edge",
+     "mesh.select_mode"
+    ],
+    [
+     "op",
+     "Face",
+     "mesh.select_mode"
+    ]
+   ]
+  },
+  "VIEW3D_MT_edit_mesh_select_more_less": {
+   "label": "Select More/Less",
+   "items": [
+    [
+     "op",
+     "More",
+     "mesh.select_more"
+    ],
+    [
+     "op",
+     "Less",
+     "mesh.select_less"
+    ],
+    [
+     "op",
+     "Next Active",
+     "mesh.select_next_item"
+    ],
+    [
+     "op",
+     "Previous Active",
+     "mesh.select_prev_item"
+    ]
+   ]
+  },
+  "VIEW3D_MT_edit_mesh_select_similar": {
+   "label": "Select Similar",
+   "items": [
+    [
+     "op",
+     "Normal",
+     "mesh.select_similar:type=VERT_NORMAL"
+    ],
+    [
+     "op",
+     "Amount of Adjacent Faces",
+     "mesh.select_similar:type=VERT_FACES"
+    ],
+    [
+     "op",
+     "Vertex Groups",
+     "mesh.select_similar:type=VERT_GROUPS"
+    ],
+    [
+     "op",
+     "Amount of Connecting Edges",
+     "mesh.select_similar:type=VERT_EDGES"
+    ],
+    [
+     "op",
+     "Vertex Crease",
+     "mesh.select_similar:type=VERT_CREASE"
+    ],
+    [
+     "op",
+     "Length",
+     "mesh.select_similar:type=EDGE_LENGTH"
+    ],
+    [
+     "op",
+     "Direction",
+     "mesh.select_similar:type=EDGE_DIR"
+    ],
+    [
+     "op",
+     "Amount of Faces Around an Edge",
+     "mesh.select_similar:type=EDGE_FACES"
+    ],
+    [
+     "op",
+     "Face Angles",
+     "mesh.select_similar:type=EDGE_FACE_ANGLE"
+    ],
+    [
+     "op",
+     "Crease",
+     "mesh.select_similar:type=EDGE_CREASE"
+    ],
+    [
+     "op",
+     "Bevel",
+     "mesh.select_similar:type=EDGE_BEVEL"
+    ],
+    [
+     "op",
+     "Seam",
+     "mesh.select_similar:type=EDGE_SEAM"
+    ],
+    [
+     "op",
+     "Sharpness",
+     "mesh.select_similar:type=EDGE_SHARP"
+    ],
+    [
+     "op",
+     "Freestyle Edge Marks",
+     "mesh.select_similar:type=EDGE_FREESTYLE"
+    ],
+    [
+     "op",
+     "Material",
+     "mesh.select_similar:type=FACE_MATERIAL"
+    ],
+    [
+     "op",
+     "Area",
+     "mesh.select_similar:type=FACE_AREA"
+    ],
+    [
+     "op",
+     "Polygon Sides",
+     "mesh.select_similar:type=FACE_SIDES"
+    ],
+    [
+     "op",
+     "Perimeter",
+     "mesh.select_similar:type=FACE_PERIMETER"
+    ],
+    [
+     "op",
+     "Normal",
+     "mesh.select_similar:type=FACE_NORMAL"
+    ],
+    [
+     "op",
+     "Coplanar",
+     "mesh.select_similar:type=FACE_COPLANAR"
+    ],
+    [
+     "op",
+     "Flat/Smooth",
+     "mesh.select_similar:type=FACE_SMOOTH"
+    ],
+    [
+     "op",
+     "Freestyle Face Marks",
+     "mesh.select_similar:type=FACE_FREESTYLE"
+    ],
+    [
+     "op",
+     "Face Regions",
+     "mesh.select_similar_region"
+    ]
+   ]
+  },
+  "VIEW3D_MT_edit_mesh_shading": {
+   "label": "Shading",
+   "items": [
+    [
+     "op",
+     "Smooth Faces",
+     "mesh.faces_shade_smooth"
+    ],
+    [
+     "op",
+     "Flat Faces",
+     "mesh.faces_shade_flat"
+    ],
+    [
+     "op",
+     "Smooth Edges",
+     "mesh.mark_sharp"
+    ],
+    [
+     "op",
+     "Sharp Edges",
+     "mesh.mark_sharp"
+    ],
+    [
+     "op",
+     "Smooth Vertices",
+     "mesh.mark_sharp"
+    ],
+    [
+     "op",
+     "Sharp Vertices",
+     "mesh.mark_sharp"
+    ]
+   ]
+  },
+  "VIEW3D_MT_edit_mesh_showhide": {
+   "label": "Show/Hide",
+   "items": [
+    [
+     "error",
+     "'Self' object has no attribute '_operator_name'",
+     ""
+    ]
+   ]
+  },
+  "VIEW3D_MT_edit_mesh_split": {
+   "label": "Split",
+   "items": [
+    [
+     "op",
+     "Selection",
+     "mesh.split"
+    ],
+    [
+     "op",
+     "Faces by Edges",
+     "mesh.edge_split:type=EDGE"
+    ],
+    [
+     "op",
+     "Faces & Edges by Vertices",
+     "mesh.edge_split:type=VERT"
+    ]
+   ]
+  },
+  "VIEW3D_MT_edit_mesh_vertices": {
+   "label": "Vertex",
+   "items": [
+    [
+     "op",
+     "Extrude Vertices",
+     "mesh.extrude_vertices_move"
+    ],
+    [
+     "op",
+     "Extrude to Cursor or Add",
+     "mesh.dupli_extrude_cursor"
+    ],
+    [
+     "op",
+     "Bevel Vertices",
+     "mesh.bevel"
+    ],
+    [
+     "op",
+     "New Edge/Face from Vertices",
+     "mesh.edge_face_add"
+    ],
+    [
+     "op",
+     "Connect Vertex Path",
+     "mesh.vert_connect_path"
+    ],
+    [
+     "op",
+     "Connect Vertex Pairs",
+     "mesh.vert_connect"
+    ],
+    [
+     "op",
+     "Rip Vertices",
+     "mesh.rip_move"
+    ],
+    [
+     "op",
+     "Rip Vertices and Fill",
+     "mesh.rip_move"
+    ],
+    [
+     "op",
+     "Rip Vertices and Extend",
+     "mesh.rip_edge_move"
+    ],
+    [
+     "op",
+     "Slide Vertices",
+     "transform.vert_slide"
+    ],
+    [
+     "op",
+     "Smooth Vertices",
+     "mesh.vertices_smooth"
+    ],
+    [
+     "op",
+     "Smooth Vertices (Laplacian)",
+     "mesh.vertices_smooth_laplacian"
+    ],
+    [
+     "op",
+     "Vertex Crease",
+     "transform.vert_crease"
+    ],
+    [
+     "op",
+     "Blend from Shape",
+     "mesh.blend_from_shape"
+    ],
+    [
+     "op",
+     "Propagate to Shapes",
+     "mesh.shape_propagate_to_all"
+    ],
+    [
+     "menu",
+     "Vertex Groups",
+     "VIEW3D_MT_vertex_group"
+    ],
+    [
+     "menu",
+     "Hooks",
+     "VIEW3D_MT_hook"
+    ],
+    [
+     "op",
+     "Make Vertex Parent",
+     "object.vertex_parent_set"
+    ]
+   ]
+  },
+  "VIEW3D_MT_edit_mesh_weights": {
+   "label": "Weights",
+   "items": [
+    [
+     "op",
+     "Normalize All",
+     "object.vertex_group_normalize_all"
+    ],
+    [
+     "op",
+     "Normalize",
+     "object.vertex_group_normalize"
+    ],
+    [
+     "op",
+     "Mirror",
+     "object.vertex_group_mirror"
+    ],
+    [
+     "op",
+     "Invert",
+     "object.vertex_group_invert"
+    ],
+    [
+     "op",
+     "Clean",
+     "object.vertex_group_clean"
+    ],
+    [
+     "op",
+     "Quantize",
+     "object.vertex_group_quantize"
+    ],
+    [
+     "op",
+     "Levels",
+     "object.vertex_group_levels"
+    ],
+    [
+     "op",
+     "Smooth",
+     "object.vertex_group_smooth"
+    ],
+    [
+     "op",
+     "Limit Total",
+     "object.vertex_group_limit_total"
+    ],
+    [
+     "menu",
+     "Locks",
+     "VIEW3D_MT_paint_weight_lock"
+    ]
+   ]
+  },
+  "VIEW3D_MT_edit_meta": {
+   "label": "Metaball",
+   "items": [
+    [
+     "menu",
+     "Transform",
+     "VIEW3D_MT_transform"
+    ],
+    [
+     "menu",
+     "Mirror",
+     "VIEW3D_MT_mirror"
+    ],
+    [
+     "menu",
+     "Snap",
+     "VIEW3D_MT_snap"
+    ],
+    [
+     "op",
+     "Duplicate Metaball Elements",
+     "mball.duplicate_metaelems"
+    ],
+    [
+     "menu",
+     "Show/Hide",
+     "VIEW3D_MT_edit_meta_showhide"
+    ],
+    [
+     "op",
+     "Delete",
+     "mball.delete_metaelems"
+    ]
+   ]
+  },
+  "VIEW3D_MT_edit_meta_showhide": {
+   "label": "Show/Hide",
+   "items": [
+    [
+     "op",
+     "Reveal Hidden",
+     "mball.reveal_metaelems"
+    ],
+    [
+     "op",
+     "Hide Selected",
+     "mball.hide_metaelems"
+    ],
+    [
+     "op",
+     "Hide Unselected",
+     "mball.hide_metaelems"
+    ]
+   ]
+  },
+  "VIEW3D_MT_edit_metaball_context_menu": {
+   "label": "Metaball",
+   "items": [
+    [
+     "op",
+     "Duplicate",
+     "mball.duplicate_move"
+    ],
+    [
+     "menu",
+     "Mirror",
+     "VIEW3D_MT_mirror"
+    ],
+    [
+     "menu",
+     "Snap",
+     "VIEW3D_MT_snap"
+    ],
+    [
+     "op",
+     "Delete",
+     "mball.delete_metaelems"
+    ]
+   ]
+  },
+  "VIEW3D_MT_edit_pointcloud": {
+   "label": "Point Cloud",
+   "items": [
+    [
+     "menu",
+     "Transform",
+     "VIEW3D_MT_transform"
+    ],
+    [
+     "op",
+     "Duplicate",
+     "pointcloud.duplicate_move"
+    ],
+    [
+     "op",
+     "Set Attribute",
+     "pointcloud.attribute_set"
+    ],
+    [
+     "op",
+     "Delete",
+     "pointcloud.delete"
+    ],
+    [
+     "op",
+     "Separate",
+     "pointcloud.separate"
+    ]
+   ]
+  },
+  "VIEW3D_MT_edit_surface": {
+   "label": "Surface",
+   "items": [
+    [
+     "menu",
+     "Transform",
+     "VIEW3D_MT_transform"
+    ],
+    [
+     "menu",
+     "Mirror",
+     "VIEW3D_MT_mirror"
+    ],
+    [
+     "menu",
+     "Snap",
+     "VIEW3D_MT_snap"
+    ],
+    [
+     "op",
+     "Spin",
+     "curve.spin"
+    ],
+    [
+     "op",
+     "Add Duplicate",
+     "curve.duplicate_move"
+    ],
+    [
+     "op",
+     "Split",
+     "curve.split"
+    ],
+    [
+     "op",
+     "Separate",
+     "curve.separate"
+    ],
+    [
+     "op",
+     "Toggle Cyclic",
+     "curve.cyclic_toggle"
+    ],
+    [
+     "enum",
+     "Set Spline Type",
+     "curve.spline_type_set:type"
+    ],
+    [
+     "menu",
+     "Show/Hide",
+     "VIEW3D_MT_edit_curve_showhide"
+    ],
+    [
+     "menu",
+     "Clean Up",
+     "VIEW3D_MT_edit_curve_clean"
+    ],
+    [
+     "menu",
+     "Delete",
+     "VIEW3D_MT_edit_curve_delete"
+    ]
+   ]
+  },
+  "VIEW3D_MT_editor_menus": {
+   "label": "",
+   "items": [
+    [
+     "menu",
+     "View",
+     "VIEW3D_MT_view"
+    ],
+    [
+     "menu",
+     "Select",
+     "VIEW3D_MT_select_object"
+    ],
+    [
+     "menu",
+     "Add",
+     "VIEW3D_MT_add"
+    ],
+    [
+     "menu",
+     "Object",
+     "VIEW3D_MT_object"
+    ]
+   ]
+  },
+  "VIEW3D_MT_empty_add": {
+   "label": "Empty",
+   "items": [
+    [
+     "op",
+     "Plain Axes",
+     "object.empty_add"
+    ],
+    [
+     "op",
+     "Arrows",
+     "object.empty_add"
+    ],
+    [
+     "op",
+     "Single Arrow",
+     "object.empty_add"
+    ],
+    [
+     "op",
+     "Circle",
+     "object.empty_add"
+    ],
+    [
+     "op",
+     "Cube",
+     "object.empty_add"
+    ],
+    [
+     "op",
+     "Sphere",
+     "object.empty_add"
+    ],
+    [
+     "op",
+     "Cone",
+     "object.empty_add"
+    ]
+   ]
+  },
+  "VIEW3D_MT_face_sets": {
+   "label": "Face Sets",
+   "items": [
+    [
+     "op",
+     "Face Set from Masked",
+     "sculpt.face_sets_create"
+    ],
+    [
+     "op",
+     "Face Set from Visible",
+     "sculpt.face_sets_create"
+    ],
+    [
+     "op",
+     "Face Set from Edit Mode Selection",
+     "sculpt.face_sets_create"
+    ],
+    [
+     "menu",
+     "Initialize Face Sets",
+     "VIEW3D_MT_face_sets_init"
+    ],
+    [
+     "op",
+     "Grow Face Set",
+     "sculpt.face_set_edit"
+    ],
+    [
+     "op",
+     "Shrink Face Set",
+     "sculpt.face_set_edit"
+    ],
+    [
+     "op",
+     "Expand Face Set by Topology",
+     "sculpt.expand"
+    ],
+    [
+     "op",
+     "Expand Active Face Set",
+     "sculpt.expand"
+    ],
+    [
+     "op",
+     "Extract Face Set",
+     "sculpt.face_set_extract"
+    ],
+    [
+     "op",
+     "Randomize Colors",
+     "sculpt.face_sets_randomize_colors"
+    ]
+   ]
+  },
+  "VIEW3D_MT_face_sets_init": {
+   "label": "Face Sets Init",
+   "items": [
+    [
+     "op",
+     "By Loose Parts",
+     "sculpt.face_sets_init"
+    ],
+    [
+     "op",
+     "By Face Set Boundaries",
+     "sculpt.face_sets_init"
+    ],
+    [
+     "op",
+     "By Materials",
+     "sculpt.face_sets_init"
+    ],
+    [
+     "op",
+     "By Normals",
+     "sculpt.face_sets_init"
+    ],
+    [
+     "op",
+     "By UV Seams",
+     "sculpt.face_sets_init"
+    ],
+    [
+     "op",
+     "By Edge Creases",
+     "sculpt.face_sets_init"
+    ],
+    [
+     "op",
+     "By Edge Bevel Weight",
+     "sculpt.face_sets_init"
+    ],
+    [
+     "op",
+     "By Sharp Edges",
+     "sculpt.face_sets_init"
+    ]
+   ]
+  },
+  "VIEW3D_MT_grease_pencil_add": {
+   "label": "Grease Pencil",
+   "items": [
+    [
+     "op",
+     "Blank",
+     "object.grease_pencil_add"
+    ],
+    [
+     "op",
+     "Stroke",
+     "object.grease_pencil_add"
+    ],
+    [
+     "op",
+     "Monkey",
+     "object.grease_pencil_add"
+    ],
+    [
+     "op",
+     "Scene Line Art",
+     "object.grease_pencil_add"
+    ],
+    [
+     "op",
+     "Collection Line Art",
+     "object.grease_pencil_add"
+    ],
+    [
+     "op",
+     "Object Line Art",
+     "object.grease_pencil_add"
+    ]
+   ]
+  },
+  "VIEW3D_MT_grease_pencil_assign_material": {
+   "label": "Assign Material",
+   "items": [
+    [
+     "op",
+     "Material",
+     "grease_pencil.stroke_material_set"
+    ]
+   ]
+  },
+  "VIEW3D_MT_grease_pencil_sculpt_automasking_pie": {
+   "label": "Automasking",
+   "items": [
+    [
+     "prop",
+     "Stroke",
+     "GPencilSculptSettings.use_automasking_stroke"
+    ],
+    [
+     "prop",
+     "Layer",
+     "GPencilSculptSettings.use_automasking_layer_stroke"
+    ],
+    [
+     "prop",
+     "Material",
+     "GPencilSculptSettings.use_automasking_material_stroke"
+    ],
+    [
+     "prop",
+     "Active Layer",
+     "GPencilSculptSettings.use_automasking_layer_active"
+    ],
+    [
+     "prop",
+     "Active Material",
+     "GPencilSculptSettings.use_automasking_material_active"
+    ]
+   ]
+  },
+  "VIEW3D_MT_greasepencil_edit_context_menu": {
+   "label": "",
+   "items": [
+    [
+     "label",
+     "Point",
+     ""
+    ],
+    [
+     "op",
+     "Subdivide",
+     "grease_pencil.stroke_subdivide"
+    ],
+    [
+     "op",
+     "Subdivide and Smooth",
+     "grease_pencil.stroke_subdivide_smooth"
+    ],
+    [
+     "op",
+     "Simplify",
+     "grease_pencil.stroke_simplify"
+    ],
+    [
+     "op",
+     "Outline",
+     "grease_pencil.outline"
+    ],
+    [
+     "enum",
+     "Set Stroke Type",
+     "grease_pencil.set_stroke_type:type"
+    ],
+    [
+     "op",
+     "To Sphere",
+     "transform.tosphere"
+    ],
+    [
+     "op",
+     "Shear",
+     "transform.shear"
+    ],
+    [
+     "op",
+     "Bend",
+     "transform.bend"
+    ],
+    [
+     "op",
+     "Push/Pull",
+     "transform.push_pull"
+    ],
+    [
+     "op",
+     "Shrink/Fatten",
+     "transform.transform"
+    ],
+    [
+     "op",
+     "Smooth Points",
+     "grease_pencil.stroke_smooth"
+    ],
+    [
+     "op",
+     "Set Start Point",
+     "grease_pencil.set_start_point"
+    ],
+    [
+     "enum",
+     "Set Corner Type",
+     "grease_pencil.set_corner_type:corner_type"
+    ],
+    [
+     "menu",
+     "Mirror",
+     "VIEW3D_MT_mirror"
+    ],
+    [
+     "op",
+     "Copy",
+     "grease_pencil.copy"
+    ],
+    [
+     "op",
+     "Paste",
+     "grease_pencil.paste"
+    ],
+    [
+     "op",
+     "Duplicate",
+     "grease_pencil.duplicate_move"
+    ],
+    [
+     "op",
+     "Extrude",
+     "grease_pencil.extrude_move"
+    ],
+    [
+     "op",
+     "Split",
+     "grease_pencil.stroke_split"
+    ],
+    [
+     "op",
+     "Separate",
+     "grease_pencil.separate"
+    ],
+    [
+     "op",
+     "Dissolve",
+     "grease_pencil.dissolve:type=POINTS"
+    ],
+    [
+     "op",
+     "Dissolve Between",
+     "grease_pencil.dissolve:type=BETWEEN"
+    ],
+    [
+     "op",
+     "Dissolve Unselect",
+     "grease_pencil.dissolve:type=UNSELECT"
+    ],
+    [
+     "enum",
+     "Convert Type",
+     "grease_pencil.convert_curve_type:type"
+    ]
+   ]
+  },
+  "VIEW3D_MT_greasepencil_material_active": {
+   "label": "Active Material",
+   "items": [
+    [
+     "op",
+     "Material",
+     "grease_pencil.set_material"
+    ]
+   ]
+  },
+  "VIEW3D_MT_greasepencil_vertex_group": {
+   "label": "Vertex Groups",
+   "items": [
+    [
+     "op",
+     "Add New Group",
+     "object.vertex_group_add"
+    ]
+   ]
+  },
+  "VIEW3D_MT_hook": {
+   "label": "Hooks",
+   "items": [
+    [
+     "op",
+     "Hook to New Object",
+     "object.hook_add_newob"
+    ],
+    [
+     "op",
+     "Hook to Selected Object",
+     "object.hook_add_selob"
+    ],
+    [
+     "op",
+     "Hook to Selected Object Bone",
+     "object.hook_add_selob"
+    ]
+   ]
+  },
+  "VIEW3D_MT_image_add": {
+   "label": "Add Image",
+   "items": [
+    [
+     "op",
+     "Reference...",
+     "object.empty_image_add"
+    ],
+    [
+     "op",
+     "Background...",
+     "object.empty_image_add"
+    ],
+    [
+     "op",
+     "Mesh Plane...",
+     "image.import_as_mesh_planes"
+    ],
+    [
+     "op",
+     "Empty Image",
+     "object.empty_add"
+    ]
+   ]
+  },
+  "VIEW3D_MT_lattice_add": {
+   "label": "Lattice",
+   "items": [
+    [
+     "op",
+     "Lattice",
+     "object.add"
+    ],
+    [
+     "op",
+     "Lattice Deform Selected",
+     "object.lattice_add_to_selected"
+    ]
+   ]
+  },
+  "VIEW3D_MT_light_add": {
+   "label": "Light",
+   "items": [
+    [
+     "op",
+     "Point",
+     "object.light_add:type=POINT"
+    ],
+    [
+     "op",
+     "Sun",
+     "object.light_add:type=SUN"
+    ],
+    [
+     "op",
+     "Spot",
+     "object.light_add:type=SPOT"
+    ],
+    [
+     "op",
+     "Area",
+     "object.light_add:type=AREA"
+    ]
+   ]
+  },
+  "VIEW3D_MT_lightprobe_add": {
+   "label": "Light Probe",
+   "items": [
+    [
+     "op",
+     "Sphere",
+     "object.lightprobe_add:type=SPHERE"
+    ],
+    [
+     "op",
+     "Plane",
+     "object.lightprobe_add:type=PLANE"
+    ],
+    [
+     "op",
+     "Volume",
+     "object.lightprobe_add:type=VOLUME"
+    ]
+   ]
+  },
+  "VIEW3D_MT_make_links": {
+   "label": "Link/Transfer Data",
+   "items": [
+    [
+     "enum",
+     "Link Objects to Scene",
+     "object.make_links_scene:scene"
+    ],
+    [
+     "op",
+     "Link Object Data",
+     "object.make_links_data:type=OBDATA"
+    ],
+    [
+     "op",
+     "Link Materials",
+     "object.make_links_data:type=MATERIAL"
+    ],
+    [
+     "op",
+     "Link Animation Data",
+     "object.make_links_data:type=ANIMATION"
+    ],
+    [
+     "op",
+     "Link Collections",
+     "object.make_links_data:type=GROUPS"
+    ],
+    [
+     "op",
+     "Link Instance Collection",
+     "object.make_links_data:type=DUPLICOLLECTION"
+    ],
+    [
+     "op",
+     "Link Fonts to Text",
+     "object.make_links_data:type=FONTS"
+    ],
+    [
+     "op",
+     "Copy Modifiers",
+     "object.make_links_data:type=MODIFIERS"
+    ],
+    [
+     "op",
+     "Copy Constraints",
+     "object.make_links_data:type=CONSTRAINTS"
+    ],
+    [
+     "op",
+     "Copy Grease Pencil Effects",
+     "object.make_links_data:type=EFFECTS"
+    ],
+    [
+     "op",
+     "Copy Light Linking",
+     "object.make_links_data:type=LIGHT_LINKING"
+    ],
+    [
+     "op",
+     "Copy Shadow Linking",
+     "object.make_links_data:type=SHADOW_LINKING"
+    ],
+    [
+     "op",
+     "Copy UV Maps",
+     "object.join_uvs"
+    ],
+    [
+     "op",
+     "Transfer Mesh Data",
+     "object.data_transfer"
+    ],
+    [
+     "op",
+     "Transfer Mesh Data Layout",
+     "object.datalayout_transfer"
+    ],
+    [
+     "enum",
+     "Link Receivers to Emitter",
+     "object.light_linking_receivers_link:link_state"
+    ],
+    [
+     "enum",
+     "Link Blockers to Emitter",
+     "object.light_linking_blockers_link:link_state"
+    ]
+   ]
+  },
+  "VIEW3D_MT_make_single_user": {
+   "label": "Make Single User",
+   "items": [
+    [
+     "op",
+     "Object",
+     "object.make_single_user"
+    ],
+    [
+     "op",
+     "Object & Data",
+     "object.make_single_user"
+    ],
+    [
+     "op",
+     "Object & Data & Materials",
+     "object.make_single_user"
+    ],
+    [
+     "op",
+     "Materials",
+     "object.make_single_user"
+    ],
+    [
+     "op",
+     "Object Animation",
+     "object.make_single_user"
+    ],
+    [
+     "op",
+     "Object Data Animation",
+     "object.make_single_user"
+    ]
+   ]
+  },
+  "VIEW3D_MT_mask": {
+   "label": "Mask",
+   "items": [
+    [
+     "op",
+     "Fill Mask",
+     "paint.mask_flood_fill"
+    ],
+    [
+     "op",
+     "Clear Mask",
+     "paint.mask_flood_fill"
+    ],
+    [
+     "op",
+     "Invert Mask",
+     "paint.mask_flood_fill"
+    ],
+    [
+     "op",
+     "Box Mask",
+     "paint.mask_box_gesture"
+    ],
+    [
+     "op",
+     "Lasso Mask",
+     "paint.mask_lasso_gesture"
+    ],
+    [
+     "op",
+     "Line Mask",
+     "paint.mask_line_gesture"
+    ],
+    [
+     "op",
+     "Polyline Mask",
+     "paint.mask_polyline_gesture"
+    ],
+    [
+     "op",
+     "Smooth Mask",
+     "sculpt.mask_filter"
+    ],
+    [
+     "op",
+     "Sharpen Mask",
+     "sculpt.mask_filter"
+    ],
+    [
+     "op",
+     "Grow Mask",
+     "sculpt.mask_filter"
+    ],
+    [
+     "op",
+     "Shrink Mask",
+     "sculpt.mask_filter"
+    ],
+    [
+     "op",
+     "Increase Contrast",
+     "sculpt.mask_filter"
+    ],
+    [
+     "op",
+     "Decrease Contrast",
+     "sculpt.mask_filter"
+    ],
+    [
+     "op",
+     "Expand Mask by Topology",
+     "sculpt.expand"
+    ],
+    [
+     "op",
+     "Expand Mask by Normals",
+     "sculpt.expand"
+    ],
+    [
+     "op",
+     "Mask Extract",
+     "sculpt.paint_mask_extract"
+    ],
+    [
+     "op",
+     "Mask Slice",
+     "sculpt.paint_mask_slice"
+    ],
+    [
+     "op",
+     "Mask Slice and Fill Holes",
+     "sculpt.paint_mask_slice"
+    ],
+    [
+     "op",
+     "Mask Slice to New Object",
+     "sculpt.paint_mask_slice"
+    ],
+    [
+     "op",
+     "Mask from Cavity",
+     "sculpt.mask_from_cavity"
+    ],
+    [
+     "op",
+     "Mask from Mesh Boundary",
+     "sculpt.mask_from_boundary"
+    ],
+    [
+     "op",
+     "Mask from Face Sets Boundary",
+     "sculpt.mask_from_boundary"
+    ],
+    [
+     "op",
+     "Mask by Color",
+     "sculpt.mask_by_color"
+    ],
+    [
+     "menu",
+     "Random Mask",
+     "VIEW3D_MT_random_mask"
+    ]
+   ]
+  },
+  "VIEW3D_MT_mesh_add": {
+   "label": "Mesh",
+   "items": [
+    [
+     "op",
+     "Plane",
+     "mesh.primitive_plane_add"
+    ],
+    [
+     "op",
+     "Cube",
+     "mesh.primitive_cube_add"
+    ],
+    [
+     "op",
+     "Circle",
+     "mesh.primitive_circle_add"
+    ],
+    [
+     "op",
+     "UV Sphere",
+     "mesh.primitive_uv_sphere_add"
+    ],
+    [
+     "op",
+     "Ico Sphere",
+     "mesh.primitive_ico_sphere_add"
+    ],
+    [
+     "op",
+     "Cylinder",
+     "mesh.primitive_cylinder_add"
+    ],
+    [
+     "op",
+     "Cone",
+     "mesh.primitive_cone_add"
+    ],
+    [
+     "op",
+     "Torus",
+     "mesh.primitive_torus_add"
+    ],
+    [
+     "op",
+     "Grid",
+     "mesh.primitive_grid_add"
+    ],
+    [
+     "op",
+     "Monkey",
+     "mesh.primitive_monkey_add"
+    ]
+   ]
+  },
+  "VIEW3D_MT_metaball_add": {
+   "label": "Metaball",
+   "items": [
+    [
+     "op",
+     "Ball",
+     "object.metaball_add:type=BALL"
+    ],
+    [
+     "op",
+     "Capsule",
+     "object.metaball_add:type=CAPSULE"
+    ],
+    [
+     "op",
+     "Plane",
+     "object.metaball_add:type=PLANE"
+    ],
+    [
+     "op",
+     "Ellipsoid",
+     "object.metaball_add:type=ELLIPSOID"
+    ],
+    [
+     "op",
+     "Cube",
+     "object.metaball_add:type=CUBE"
+    ]
+   ]
+  },
+  "VIEW3D_MT_mirror": {
+   "label": "Mirror",
+   "items": [
+    [
+     "op",
+     "Interactive Mirror",
+     "transform.mirror"
+    ],
+    [
+     "op",
+     "X Global",
+     "transform.mirror"
+    ],
+    [
+     "error",
+     "'Props' object does not support item assignment",
+     ""
+    ]
+   ]
+  },
+  "VIEW3D_MT_object": {
+   "label": "Object",
+   "items": [
+    [
+     "menu",
+     "Transform",
+     "VIEW3D_MT_transform_object"
+    ],
+    [
+     "enum",
+     "Set Origin",
+     "object.origin_set:type"
+    ],
+    [
+     "menu",
+     "Mirror",
+     "VIEW3D_MT_mirror"
+    ],
+    [
+     "menu",
+     "Clear",
+     "VIEW3D_MT_object_clear"
+    ],
+    [
+     "menu",
+     "Apply",
+     "VIEW3D_MT_object_apply"
+    ],
+    [
+     "menu",
+     "Snap",
+     "VIEW3D_MT_snap"
+    ],
+    [
+     "op",
+     "Duplicate Objects",
+     "object.duplicate_move"
+    ],
+    [
+     "op",
+     "Duplicate Linked",
+     "object.duplicate_move_linked"
+    ],
+    [
+     "op",
+     "Join",
+     "object.join"
+    ],
+    [
+     "op",
+     "Copy Objects",
+     "view3d.copybuffer"
+    ],
+    [
+     "op",
+     "Paste Objects",
+     "view3d.pastebuffer"
+    ],
+    [
+     "menu",
+     "Asset",
+     "VIEW3D_MT_object_asset"
+    ],
+    [
+     "menu",
+     "Collection",
+     "VIEW3D_MT_object_collection"
+    ],
+    [
+     "menu",
+     "Library Override",
+     "VIEW3D_MT_object_liboverride"
+    ],
+    [
+     "menu",
+     "Relations",
+     "VIEW3D_MT_object_relations"
+    ],
+    [
+     "menu",
+     "Parent",
+     "VIEW3D_MT_object_parent"
+    ],
+    [
+     "menu",
+     "Modifiers",
+     "VIEW3D_MT_object_modifiers"
+    ],
+    [
+     "menu",
+     "Constraints",
+     "VIEW3D_MT_object_constraints"
+    ],
+    [
+     "menu",
+     "Track",
+     "VIEW3D_MT_object_track"
+    ],
+    [
+     "menu",
+     "Link/Transfer Data",
+     "VIEW3D_MT_make_links"
+    ],
+    [
+     "op",
+     "Shade Smooth",
+     "object.shade_smooth"
+    ],
+    [
+     "op",
+     "Shade Auto Smooth",
+     "object.shade_auto_smooth"
+    ],
+    [
+     "op",
+     "Shade Flat",
+     "object.shade_flat"
+    ],
+    [
+     "menu",
+     "Animation",
+     "VIEW3D_MT_object_animation"
+    ],
+    [
+     "menu",
+     "Rigid Body",
+     "VIEW3D_MT_object_rigid_body"
+    ],
+    [
+     "menu",
+     "Quick Effects",
+     "VIEW3D_MT_object_quick_effects"
+    ],
+    [
+     "menu",
+     "Convert",
+     "VIEW3D_MT_object_convert"
+    ],
+    [
+     "menu",
+     "Show/Hide",
+     "VIEW3D_MT_object_showhide"
+    ],
+    [
+     "menu",
+     "Clean Up",
+     "VIEW3D_MT_object_cleanup"
+    ],
+    [
+     "op",
+     "Delete",
+     "object.delete"
+    ],
+    [
+     "op",
+     "Delete Global",
+     "object.delete"
+    ]
+   ]
+  },
+  "VIEW3D_MT_object_animation": {
+   "label": "Animation",
+   "items": [
+    [
+     "menu",
+     "In-Betweens",
+     "VIEW3D_MT_pose_slide"
+    ],
+    [
+     "op",
+     "Insert Keyframe",
+     "anim.keyframe_insert"
+    ],
+    [
+     "op",
+     "Insert Keyframe with Keying Set...",
+     "anim.keyframe_insert_menu"
+    ],
+    [
+     "op",
+     "Delete Keyframes...",
+     "anim.keyframe_delete_v3d"
+    ],
+    [
+     "op",
+     "Clear Keyframes...",
+     "anim.keyframe_clear_v3d"
+    ],
+    [
+     "op",
+     "Change Keying Set...",
+     "anim.keying_set_active_set"
+    ],
+    [
+     "op",
+     "Bake Action...",
+     "nla.bake"
+    ],
+    [
+     "op",
+     "Bake Object Transform to Grease Pencil...",
+     "grease_pencil.bake_grease_pencil_animation"
+    ],
+    [
+     "op",
+     "Replace Action",
+     "anim.replace_action"
+    ],
+    [
+     "op",
+     "Replace with New Action",
+     "anim.replace_action_new"
+    ]
+   ]
+  },
+  "VIEW3D_MT_object_apply": {
+   "label": "Apply",
+   "items": [
+    [
+     "op",
+     "Location",
+     "object.transform_apply"
+    ],
+    [
+     "op",
+     "Rotation",
+     "object.transform_apply"
+    ],
+    [
+     "op",
+     "Scale",
+     "object.transform_apply"
+    ],
+    [
+     "op",
+     "All Transforms",
+     "object.transform_apply"
+    ],
+    [
+     "op",
+     "Rotation & Scale",
+     "object.transform_apply"
+    ],
+    [
+     "op",
+     "Location to Deltas",
+     "object.transforms_to_deltas"
+    ],
+    [
+     "op",
+     "Rotation to Deltas",
+     "object.transforms_to_deltas"
+    ],
+    [
+     "op",
+     "Scale to Deltas",
+     "object.transforms_to_deltas"
+    ],
+    [
+     "op",
+     "All Transforms to Deltas",
+     "object.transforms_to_deltas"
+    ],
+    [
+     "op",
+     "Animated Transforms to Deltas",
+     "object.anim_transforms_to_deltas"
+    ],
+    [
+     "op",
+     "Visual Transform",
+     "object.visual_transform_apply"
+    ],
+    [
+     "op",
+     "Visual Geometry to Mesh",
+     "object.convert"
+    ],
+    [
+     "op",
+     "Visual Geometry to Objects",
+     "object.visual_geometry_to_objects"
+    ],
+    [
+     "op",
+     "Make Instances Real",
+     "object.duplicates_make_real"
+    ],
+    [
+     "op",
+     "Parent Inverse",
+     "object.parent_inverse_apply"
+    ]
+   ]
+  },
+  "VIEW3D_MT_object_asset": {
+   "label": "Asset",
+   "items": [
+    [
+     "op",
+     "Mark as Asset",
+     "asset.mark"
+    ],
+    [
+     "op",
+     "Clear Asset",
+     "asset.clear"
+    ],
+    [
+     "op",
+     "Clear Asset (Set Fake User)",
+     "asset.clear"
+    ]
+   ]
+  },
+  "VIEW3D_MT_object_cleanup": {
+   "label": "Clean Up",
+   "items": [
+    [
+     "op",
+     "Clean Vertex Group Weights",
+     "object.vertex_group_clean"
+    ],
+    [
+     "op",
+     "Limit Total Vertex Groups",
+     "object.vertex_group_limit_total"
+    ],
+    [
+     "op",
+     "Remove Unused Material Slots",
+     "object.material_slot_remove_unused"
+    ],
+    [
+     "op",
+     "Remove All Materials",
+     "object.material_slot_remove_all"
+    ]
+   ]
+  },
+  "VIEW3D_MT_object_clear": {
+   "label": "Clear",
+   "items": [
+    [
+     "op",
+     "Location",
+     "object.location_clear"
+    ],
+    [
+     "op",
+     "Rotation",
+     "object.rotation_clear"
+    ],
+    [
+     "op",
+     "Scale",
+     "object.scale_clear"
+    ],
+    [
+     "op",
+     "Origin",
+     "object.origin_clear"
+    ]
+   ]
+  },
+  "VIEW3D_MT_object_collection": {
+   "label": "Collection",
+   "items": [
+    [
+     "menu",
+     "OBJECT_MT_move_to_collection",
+     "OBJECT_MT_move_to_collection"
+    ],
+    [
+     "menu",
+     "OBJECT_MT_link_to_collection",
+     "OBJECT_MT_link_to_collection"
+    ],
+    [
+     "op",
+     "Create New Collection",
+     "collection.create"
+    ],
+    [
+     "op",
+     "Remove from Collection",
+     "collection.objects_remove"
+    ],
+    [
+     "op",
+     "Remove from All Collections",
+     "collection.objects_remove_all"
+    ],
+    [
+     "op",
+     "Add Selected to Active Object's Collection",
+     "collection.objects_add_active"
+    ],
+    [
+     "op",
+     "Remove Selected from Active Collection",
+     "collection.objects_remove_active"
+    ]
+   ]
+  },
+  "VIEW3D_MT_object_constraints": {
+   "label": "Constraints",
+   "items": [
+    [
+     "op",
+     "Add Constraint (with Targets)",
+     "object.constraint_add_with_targets"
+    ],
+    [
+     "op",
+     "Copy Constraints to Selected Objects",
+     "object.constraints_copy"
+    ],
+    [
+     "op",
+     "Clear Object Constraints",
+     "object.constraints_clear"
+    ]
+   ]
+  },
+  "VIEW3D_MT_object_context_menu": {
+   "label": "Object",
+   "items": [
+    [
+     "op",
+     "Shade Smooth",
+     "object.shade_smooth"
+    ],
+    [
+     "op",
+     "Shade Auto Smooth",
+     "object.shade_auto_smooth"
+    ],
+    [
+     "op",
+     "Shade Flat",
+     "object.shade_flat"
+    ],
+    [
+     "op",
+     "Join",
+     "object.join"
+    ],
+    [
+     "enum",
+     "Convert To",
+     "object.convert:target"
+    ],
+    [
+     "enum",
+     "Set Origin",
+     "object.origin_set:type"
+    ],
+    [
+     "op",
+     "Copy Objects",
+     "view3d.copybuffer"
+    ],
+    [
+     "op",
+     "Paste Objects",
+     "view3d.pastebuffer"
+    ],
+    [
+     "op",
+     "Duplicate Objects",
+     "object.duplicate_move"
+    ],
+    [
+     "op",
+     "Duplicate Linked",
+     "object.duplicate_move_linked"
+    ],
+    [
+     "op",
+     "Rename Active Object...",
+     "wm.call_panel"
+    ],
+    [
+     "menu",
+     "Mirror",
+     "VIEW3D_MT_mirror"
+    ],
+    [
+     "menu",
+     "Snap",
+     "VIEW3D_MT_snap"
+    ],
+    [
+     "menu",
+     "Parent",
+     "VIEW3D_MT_object_parent"
+    ],
+    [
+     "menu",
+     "OBJECT_MT_move_to_collection",
+     "OBJECT_MT_move_to_collection"
+    ],
+    [
+     "op",
+     "Insert Keyframe",
+     "anim.keyframe_insert"
+    ],
+    [
+     "op",
+     "Insert Keyframe with Keying Set...",
+     "anim.keyframe_insert_menu"
+    ],
+    [
+     "op",
+     "Delete",
+     "object.delete"
+    ]
+   ]
+  },
+  "VIEW3D_MT_object_convert": {
+   "label": "Convert",
+   "items": [
+    [
+     "op",
+     "Curve",
+     "object.convert:target=CURVE"
+    ],
+    [
+     "op",
+     "Mesh",
+     "object.convert:target=MESH"
+    ],
+    [
+     "op",
+     "Point Cloud",
+     "object.convert:target=POINTCLOUD"
+    ],
+    [
+     "op",
+     "Curves",
+     "object.convert:target=CURVES"
+    ],
+    [
+     "op",
+     "Grease Pencil",
+     "object.convert:target=GREASEPENCIL"
+    ]
+   ]
+  },
+  "VIEW3D_MT_object_liboverride": {
+   "label": "Library Override",
+   "items": [
+    [
+     "op",
+     "Make",
+     "object.make_override_library"
+    ],
+    [
+     "op",
+     "Reset",
+     "object.reset_override_library"
+    ],
+    [
+     "op",
+     "Clear",
+     "object.clear_override_library"
+    ]
+   ]
+  },
+  "VIEW3D_MT_object_mode_pie": {
+   "label": "Mode",
+   "items": [
+    [
+     "op",
+     "Object Mode",
+     "object.mode_set:mode=OBJECT"
+    ],
+    [
+     "op",
+     "Edit Mode",
+     "object.mode_set:mode=EDIT"
+    ],
+    [
+     "op",
+     "Pose Mode",
+     "object.mode_set:mode=POSE"
+    ],
+    [
+     "op",
+     "Sculpt Mode",
+     "object.mode_set:mode=SCULPT"
+    ],
+    [
+     "op",
+     "Vertex Paint",
+     "object.mode_set:mode=VERTEX_PAINT"
+    ],
+    [
+     "op",
+     "Weight Paint",
+     "object.mode_set:mode=WEIGHT_PAINT"
+    ],
+    [
+     "op",
+     "Texture Paint",
+     "object.mode_set:mode=TEXTURE_PAINT"
+    ],
+    [
+     "op",
+     "Particle Edit",
+     "object.mode_set:mode=PARTICLE_EDIT"
+    ],
+    [
+     "op",
+     "Edit Mode",
+     "object.mode_set:mode=EDIT_GPENCIL"
+    ],
+    [
+     "op",
+     "Sculpt Mode",
+     "object.mode_set:mode=SCULPT_GREASE_PENCIL"
+    ],
+    [
+     "op",
+     "Draw Mode",
+     "object.mode_set:mode=PAINT_GREASE_PENCIL"
+    ],
+    [
+     "op",
+     "Weight Paint",
+     "object.mode_set:mode=WEIGHT_GREASE_PENCIL"
+    ],
+    [
+     "op",
+     "Vertex Paint",
+     "object.mode_set:mode=VERTEX_GREASE_PENCIL"
+    ],
+    [
+     "op",
+     "Sculpt Mode",
+     "object.mode_set:mode=SCULPT_CURVES"
+    ]
+   ]
+  },
+  "VIEW3D_MT_object_modifiers": {
+   "label": "Modifiers",
+   "items": [
+    [
+     "menu",
+     "Add Modifier",
+     "OBJECT_MT_modifier_add"
+    ],
+    [
+     "op",
+     "Copy Modifiers to Selected Objects",
+     "object.modifiers_copy_to_selected"
+    ],
+    [
+     "op",
+     "Clear Object Modifiers",
+     "object.modifiers_clear"
+    ]
+   ]
+  },
+  "VIEW3D_MT_object_parent": {
+   "label": "Parent",
+   "items": [
+    [
+     "op",
+     "Object",
+     "object.parent_set:type=OBJECT"
+    ],
+    [
+     "op",
+     "Armature Deform",
+     "object.parent_set:type=ARMATURE"
+    ],
+    [
+     "op",
+     "   With Empty Groups",
+     "object.parent_set:type=ARMATURE_NAME"
+    ],
+    [
+     "op",
+     "   With Automatic Weights",
+     "object.parent_set:type=ARMATURE_AUTO"
+    ],
+    [
+     "op",
+     "   With Envelope Weights",
+     "object.parent_set:type=ARMATURE_ENVELOPE"
+    ],
+    [
+     "op",
+     "Bone",
+     "object.parent_set:type=BONE"
+    ],
+    [
+     "op",
+     "Bone Relative",
+     "object.parent_set:type=BONE_RELATIVE"
+    ],
+    [
+     "op",
+     "Curve Deform",
+     "object.parent_set:type=CURVE"
+    ],
+    [
+     "op",
+     "Follow Path",
+     "object.parent_set:type=FOLLOW"
+    ],
+    [
+     "op",
+     "Path Constraint",
+     "object.parent_set:type=PATH_CONST"
+    ],
+    [
+     "op",
+     "Lattice Deform",
+     "object.parent_set:type=LATTICE"
+    ],
+    [
+     "op",
+     "Vertex",
+     "object.parent_set:type=VERTEX"
+    ],
+    [
+     "op",
+     "Vertex (Triangle)",
+     "object.parent_set:type=VERTEX_TRI"
+    ],
+    [
+     "op",
+     "Make Parent without Inverse",
+     "object.parent_no_inverse_set"
+    ],
+    [
+     "op",
+     "Make Parent without Inverse (Keep Transform)",
+     "object.parent_no_inverse_set"
+    ],
+    [
+     "op",
+     "Clear Parent",
+     "object.parent_clear:type=CLEAR"
+    ],
+    [
+     "op",
+     "Clear and Keep Transformation",
+     "object.parent_clear:type=CLEAR_KEEP_TRANSFORM"
+    ],
+    [
+     "op",
+     "Clear Parent Inverse",
+     "object.parent_clear:type=CLEAR_INVERSE"
+    ]
+   ]
+  },
+  "VIEW3D_MT_object_quick_effects": {
+   "label": "Quick Effects",
+   "items": [
+    [
+     "op",
+     "Quick Fur",
+     "object.quick_fur"
+    ],
+    [
+     "op",
+     "Quick Explode",
+     "object.quick_explode"
+    ],
+    [
+     "op",
+     "Quick Smoke",
+     "object.quick_smoke"
+    ],
+    [
+     "op",
+     "Quick Liquid",
+     "object.quick_liquid"
+    ]
+   ]
+  },
+  "VIEW3D_MT_object_relations": {
+   "label": "Relations",
+   "items": [
+    [
+     "op",
+     "Make Instance Face",
+     "object.make_dupli_face"
+    ],
+    [
+     "enum",
+     "Make Local",
+     "object.make_local:type"
+    ],
+    [
+     "menu",
+     "Make Single User",
+     "VIEW3D_MT_make_single_user"
+    ]
+   ]
+  },
+  "VIEW3D_MT_object_rigid_body": {
+   "label": "Rigid Body",
+   "items": [
+    [
+     "op",
+     "Add Active",
+     "rigidbody.objects_add"
+    ],
+    [
+     "op",
+     "Add Passive",
+     "rigidbody.objects_add"
+    ],
+    [
+     "op",
+     "Remove",
+     "rigidbody.objects_remove"
+    ],
+    [
+     "op",
+     "Change Shape",
+     "rigidbody.shape_change"
+    ],
+    [
+     "op",
+     "Calculate Mass",
+     "rigidbody.mass_calculate"
+    ],
+    [
+     "op",
+     "Copy from Active",
+     "rigidbody.object_settings_copy"
+    ],
+    [
+     "op",
+     "Apply Transformation",
+     "object.visual_transform_apply"
+    ],
+    [
+     "op",
+     "Bake to Keyframes",
+     "rigidbody.bake_to_keyframes"
+    ],
+    [
+     "op",
+     "Connect",
+     "rigidbody.connect"
+    ]
+   ]
+  },
+  "VIEW3D_MT_object_shading": {
+   "label": "Shading",
+   "items": [
+    [
+     "op",
+     "Smooth",
+     "object.shade_smooth"
+    ],
+    [
+     "op",
+     "Flat",
+     "object.shade_flat"
+    ]
+   ]
+  },
+  "VIEW3D_MT_object_showhide": {
+   "label": "Show/Hide",
+   "items": [
+    [
+     "op",
+     "Show Hidden Objects",
+     "object.hide_view_clear"
+    ],
+    [
+     "op",
+     "Hide Selected",
+     "object.hide_view_set"
+    ],
+    [
+     "op",
+     "Hide Unselected",
+     "object.hide_view_set"
+    ]
+   ]
+  },
+  "VIEW3D_MT_object_track": {
+   "label": "Track",
+   "items": [
+    [
+     "op",
+     "Damped Track Constraint",
+     "object.track_set:type=DAMPTRACK"
+    ],
+    [
+     "op",
+     "Track to Constraint",
+     "object.track_set:type=TRACKTO"
+    ],
+    [
+     "op",
+     "Lock Track Constraint",
+     "object.track_set:type=LOCKTRACK"
+    ],
+    [
+     "op",
+     "Clear Track",
+     "object.track_clear:type=CLEAR"
+    ],
+    [
+     "op",
+     "Clear and Keep Transformation (Clear Track)",
+     "object.track_clear:type=CLEAR_KEEP_TRANSFORM"
+    ]
+   ]
+  },
+  "VIEW3D_MT_orientations_pie": {
+   "label": "Orientation",
+   "items": [
+    [
+     "prop",
+     "type",
+     "TransformOrientationSlot.type"
+    ]
+   ]
+  },
+  "VIEW3D_MT_paint_grease_pencil": {
+   "label": "Draw",
+   "items": [
+    [
+     "menu",
+     "Active Layer",
+     "GREASE_PENCIL_MT_layer_active"
+    ],
+    [
+     "menu",
+     "Animation",
+     "VIEW3D_MT_edit_greasepencil_animation"
+    ],
+    [
+     "op",
+     "Interpolate Sequence",
+     "grease_pencil.interpolate_sequence"
+    ],
+    [
+     "menu",
+     "Show/Hide",
+     "VIEW3D_MT_edit_greasepencil_showhide"
+    ],
+    [
+     "menu",
+     "Clean Up",
+     "VIEW3D_MT_edit_greasepencil_cleanup"
+    ],
+    [
+     "op",
+     "Sample Color",
+     "paint.sample_color"
+    ]
+   ]
+  },
+  "VIEW3D_MT_paint_vertex": {
+   "label": "Paint",
+   "items": [
+    [
+     "op",
+     "Smooth Vertex Colors",
+     "paint.vertex_color_smooth"
+    ],
+    [
+     "op",
+     "Dirty Vertex Colors",
+     "paint.vertex_color_dirt"
+    ],
+    [
+     "op",
+     "Vertex Color from Weight",
+     "paint.vertex_color_from_weight"
+    ],
+    [
+     "op",
+     "Invert",
+     "paint.vertex_color_invert"
+    ],
+    [
+     "op",
+     "Levels",
+     "paint.vertex_color_levels"
+    ],
+    [
+     "op",
+     "Hue/Saturation/Value",
+     "paint.vertex_color_hsv"
+    ],
+    [
+     "op",
+     "Brightness/Contrast",
+     "paint.vertex_color_brightness_contrast"
+    ],
+    [
+     "op",
+     "Set Vertex Colors",
+     "paint.vertex_color_set"
+    ],
+    [
+     "op",
+     "Sample Color",
+     "paint.sample_color"
+    ]
+   ]
+  },
+  "VIEW3D_MT_paint_vertex_grease_pencil": {
+   "label": "Paint",
+   "items": [
+    [
+     "op",
+     "Set Color Attribute",
+     "grease_pencil.vertex_color_set"
+    ],
+    [
+     "op",
+     "Reset Vertex Color",
+     "grease_pencil.stroke_reset_vertex_color"
+    ],
+    [
+     "op",
+     "Invert",
+     "grease_pencil.vertex_color_invert"
+    ],
+    [
+     "op",
+     "Levels",
+     "grease_pencil.vertex_color_levels"
+    ],
+    [
+     "op",
+     "Hue/Saturation/Value",
+     "grease_pencil.vertex_color_hsv"
+    ],
+    [
+     "op",
+     "Brightness/Contrast",
+     "grease_pencil.vertex_color_brightness_contrast"
+    ],
+    [
+     "op",
+     "Sample Color",
+     "paint.sample_color"
+    ]
+   ]
+  },
+  "VIEW3D_MT_paint_weight": {
+   "label": "Weights",
+   "items": [
+    [
+     "error",
+     "'Self' object has no attribute 'draw_generic'",
+     ""
+    ]
+   ]
+  },
+  "VIEW3D_MT_paint_weight_lock": {
+   "label": "Vertex Group Locks",
+   "items": [
+    [
+     "op",
+     "Lock All",
+     "object.vertex_group_lock"
+    ],
+    [
+     "op",
+     "Lock Selected",
+     "object.vertex_group_lock"
+    ],
+    [
+     "op",
+     "Lock Unselected",
+     "object.vertex_group_lock"
+    ],
+    [
+     "op",
+     "Lock Only Selected",
+     "object.vertex_group_lock"
+    ],
+    [
+     "op",
+     "Lock Only Unselected",
+     "object.vertex_group_lock"
+    ],
+    [
+     "op",
+     "Unlock All",
+     "object.vertex_group_lock"
+    ],
+    [
+     "op",
+     "Unlock Selected",
+     "object.vertex_group_lock"
+    ],
+    [
+     "op",
+     "Unlock Unselected",
+     "object.vertex_group_lock"
+    ],
+    [
+     "op",
+     "Invert Locks",
+     "object.vertex_group_lock"
+    ]
+   ]
+  },
+  "VIEW3D_MT_particle": {
+   "label": "Particle",
+   "items": [
+    [
+     "op",
+     "Mirror",
+     "particle.mirror"
+    ],
+    [
+     "op",
+     "Remove Doubles",
+     "particle.remove_doubles"
+    ],
+    [
+     "op",
+     "Unify Length",
+     "particle.unify_length"
+    ],
+    [
+     "op",
+     "Rekey",
+     "particle.rekey"
+    ],
+    [
+     "op",
+     "Weight Set",
+     "particle.weight_set"
+    ],
+    [
+     "menu",
+     "Show/Hide",
+     "VIEW3D_MT_particle_showhide"
+    ],
+    [
+     "op",
+     "Delete",
+     "particle.delete"
+    ]
+   ]
+  },
+  "VIEW3D_MT_particle_context_menu": {
+   "label": "Particle",
+   "items": [
+    [
+     "op",
+     "Rekey",
+     "particle.rekey"
+    ],
+    [
+     "op",
+     "Delete",
+     "particle.delete"
+    ],
+    [
+     "op",
+     "Remove Doubles",
+     "particle.remove_doubles"
+    ],
+    [
+     "op",
+     "Unify Length",
+     "particle.unify_length"
+    ],
+    [
+     "op",
+     "Weight Set",
+     "particle.weight_set"
+    ],
+    [
+     "op",
+     "Mirror",
+     "particle.mirror"
+    ]
+   ]
+  },
+  "VIEW3D_MT_particle_showhide": {
+   "label": "Show/Hide",
+   "items": [
+    [
+     "error",
+     "'Self' object has no attribute '_operator_name'",
+     ""
+    ]
+   ]
+  },
+  "VIEW3D_MT_pivot_pie": {
+   "label": "Pivot Point",
+   "items": [
+    [
+     "prop",
+     "use_transform_pivot_point_align",
+     "ToolSettings.use_transform_pivot_point_align"
+    ]
+   ]
+  },
+  "VIEW3D_MT_pose": {
+   "label": "Pose",
+   "items": [
+    [
+     "menu",
+     "Transform",
+     "VIEW3D_MT_transform_armature"
+    ],
+    [
+     "menu",
+     "Clear Transform",
+     "VIEW3D_MT_pose_transform"
+    ],
+    [
+     "menu",
+     "Apply",
+     "VIEW3D_MT_pose_apply"
+    ],
+    [
+     "menu",
+     "Snap",
+     "VIEW3D_MT_snap"
+    ],
+    [
+     "menu",
+     "Animation",
+     "VIEW3D_MT_object_animation"
+    ],
+    [
+     "menu",
+     "Propagate",
+     "VIEW3D_MT_pose_propagate"
+    ],
+    [
+     "op",
+     "Copy Pose",
+     "pose.copy"
+    ],
+    [
+     "op",
+     "Paste Pose",
+     "pose.paste"
+    ],
+    [
+     "op",
+     "Paste Pose Flipped",
+     "pose.paste"
+    ],
+    [
+     "menu",
+     "Motion Paths",
+     "VIEW3D_MT_pose_motion"
+    ],
+    [
+     "menu",
+     "Bone Collections",
+     "VIEW3D_MT_bone_collections"
+    ],
+    [
+     "menu",
+     "Parent",
+     "VIEW3D_MT_object_parent"
+    ],
+    [
+     "menu",
+     "Inverse Kinematics",
+     "VIEW3D_MT_pose_ik"
+    ],
+    [
+     "menu",
+     "Constraints",
+     "VIEW3D_MT_pose_constraints"
+    ],
+    [
+     "menu",
+     "Names",
+     "VIEW3D_MT_pose_names"
+    ],
+    [
+     "op",
+     "Flip Quaternions",
+     "pose.quaternions_flip"
+    ],
+    [
+     "menu",
+     "Show/Hide",
+     "VIEW3D_MT_pose_showhide"
+    ],
+    [
+     "menu",
+     "Bone Settings",
+     "VIEW3D_MT_bone_options_toggle"
+    ],
+    [
+     "op",
+     "Create Pose Asset...",
+     "POSELIB.create_pose_asset"
+    ]
+   ]
+  },
+  "VIEW3D_MT_pose_apply": {
+   "label": "Apply",
+   "items": [
+    [
+     "op",
+     "Apply Pose as Rest Pose",
+     "pose.armature_apply"
+    ],
+    [
+     "op",
+     "Apply Selected as Rest Pose",
+     "pose.armature_apply"
+    ],
+    [
+     "op",
+     "Apply Visual Transform to Pose",
+     "pose.visual_transform_apply"
+    ],
+    [
+     "op",
+     "Assign Custom Property Values as Default",
+     "object.assign_property_defaults"
+    ]
+   ]
+  },
+  "VIEW3D_MT_pose_constraints": {
+   "label": "Constraints",
+   "items": [
+    [
+     "op",
+     "Add (with Targets)...",
+     "pose.constraint_add_with_targets"
+    ],
+    [
+     "op",
+     "Copy Constraints to Selected Bones",
+     "pose.constraints_copy"
+    ],
+    [
+     "op",
+     "Clear Pose Constraints",
+     "pose.constraints_clear"
+    ]
+   ]
+  },
+  "VIEW3D_MT_pose_context_menu": {
+   "label": "Pose",
+   "items": [
+    [
+     "op",
+     "Insert Keyframe",
+     "anim.keyframe_insert"
+    ],
+    [
+     "op",
+     "Insert Keyframe with Keying Set...",
+     "anim.keyframe_insert_menu"
+    ],
+    [
+     "op",
+     "Copy Pose",
+     "pose.copy"
+    ],
+    [
+     "op",
+     "Paste Pose",
+     "pose.paste"
+    ],
+    [
+     "op",
+     "Paste X-Flipped Pose",
+     "pose.paste"
+    ],
+    [
+     "op",
+     "Rename Active Bone...",
+     "wm.call_panel"
+    ],
+    [
+     "op",
+     "Push Pose from Breakdown",
+     "pose.push"
+    ],
+    [
+     "op",
+     "Relax Pose to Breakdown",
+     "pose.relax"
+    ],
+    [
+     "op",
+     "Pose Breakdowner",
+     "pose.breakdown"
+    ],
+    [
+     "op",
+     "Blend to Neighbor",
+     "pose.blend_to_neighbor"
+    ],
+    [
+     "op",
+     "Calculate Motion Paths",
+     "pose.paths_calculate"
+    ],
+    [
+     "op",
+     "Clear Motion Paths",
+     "pose.paths_clear"
+    ],
+    [
+     "op",
+     "Update Armature Motion Paths",
+     "pose.paths_update"
+    ],
+    [
+     "op",
+     "Update All Motion Paths",
+     "object.paths_update_visible"
+    ],
+    [
+     "op",
+     "Hide Selected",
+     "pose.hide"
+    ],
+    [
+     "op",
+     "Reveal Selected",
+     "pose.reveal"
+    ],
+    [
+     "op",
+     "Clear User Transforms",
+     "pose.user_transforms_clear"
+    ]
+   ]
+  },
+  "VIEW3D_MT_pose_ik": {
+   "label": "Inverse Kinematics",
+   "items": [
+    [
+     "op",
+     "Add IK to Bone",
+     "pose.ik_add"
+    ],
+    [
+     "op",
+     "Remove IK",
+     "pose.ik_clear"
+    ]
+   ]
+  },
+  "VIEW3D_MT_pose_modify": {
+   "label": "Modify Pose Asset",
+   "items": [
+    [
+     "op",
+     "Replace",
+     "poselib.asset_modify"
+    ],
+    [
+     "op",
+     "Add Selected Bones",
+     "poselib.asset_modify"
+    ],
+    [
+     "op",
+     "Remove Selected Bones",
+     "poselib.asset_modify"
+    ]
+   ]
+  },
+  "VIEW3D_MT_pose_motion": {
+   "label": "Motion Paths",
+   "items": [
+    [
+     "op",
+     "Calculate",
+     "pose.paths_calculate"
+    ],
+    [
+     "op",
+     "Clear",
+     "pose.paths_clear"
+    ]
+   ]
+  },
+  "VIEW3D_MT_pose_names": {
+   "label": "Names",
+   "items": [
+    [
+     "op",
+     "Auto-Name Left/Right",
+     "pose.autoside_names"
+    ],
+    [
+     "op",
+     "Auto-Name Front/Back",
+     "pose.autoside_names"
+    ],
+    [
+     "op",
+     "Auto-Name Top/Bottom",
+     "pose.autoside_names"
+    ],
+    [
+     "op",
+     "Flip Names",
+     "pose.flip_names"
+    ]
+   ]
+  },
+  "VIEW3D_MT_pose_propagate": {
+   "label": "Propagate",
+   "items": [
+    [
+     "op",
+     "To Next Keyframe",
+     "pose.propagate"
+    ],
+    [
+     "op",
+     "To Last Keyframe (Make Cyclic)",
+     "pose.propagate"
+    ],
+    [
+     "op",
+     "On Selected Keyframes",
+     "pose.propagate"
+    ],
+    [
+     "op",
+     "On Selected Markers",
+     "pose.propagate"
+    ]
+   ]
+  },
+  "VIEW3D_MT_pose_showhide": {
+   "label": "Show/Hide",
+   "items": [
+    [
+     "error",
+     "'Self' object has no attribute '_operator_name'",
+     ""
+    ]
+   ]
+  },
+  "VIEW3D_MT_pose_slide": {
+   "label": "In-Betweens",
+   "items": [
+    [
+     "op",
+     "Blend Pose with Rest Pose",
+     "pose.blend_with_rest"
+    ],
+    [
+     "op",
+     "Push Pose from Breakdown",
+     "pose.push"
+    ],
+    [
+     "op",
+     "Relax Pose to Breakdown",
+     "pose.relax"
+    ],
+    [
+     "op",
+     "Pose Breakdowner",
+     "pose.breakdown"
+    ],
+    [
+     "op",
+     "Blend to Neighbor",
+     "pose.blend_to_neighbor"
+    ]
+   ]
+  },
+  "VIEW3D_MT_pose_transform": {
+   "label": "Clear Transform",
+   "items": [
+    [
+     "op",
+     "All",
+     "pose.transforms_clear"
+    ],
+    [
+     "op",
+     "Location",
+     "pose.loc_clear"
+    ],
+    [
+     "op",
+     "Rotation",
+     "pose.rot_clear"
+    ],
+    [
+     "op",
+     "Scale",
+     "pose.scale_clear"
+    ],
+    [
+     "op",
+     "Reset Unkeyed",
+     "pose.user_transforms_clear"
+    ]
+   ]
+  },
+  "VIEW3D_MT_proportional_editing_falloff_pie": {
+   "label": "Proportional Editing Falloff",
+   "items": [
+    [
+     "prop",
+     "proportional_edit_falloff",
+     "ToolSettings.proportional_edit_falloff"
+    ]
+   ]
+  },
+  "VIEW3D_MT_random_mask": {
+   "label": "Random Mask",
+   "items": [
+    [
+     "op",
+     "Per Vertex",
+     "sculpt.mask_init"
+    ],
+    [
+     "op",
+     "Per Face Set",
+     "sculpt.mask_init"
+    ],
+    [
+     "op",
+     "Per Loose Part",
+     "sculpt.mask_init"
+    ]
+   ]
+  },
+  "VIEW3D_MT_sculpt": {
+   "label": "Sculpt",
+   "items": [
+    [
+     "menu",
+     "Transform",
+     "VIEW3D_MT_sculpt_transform"
+    ],
+    [
+     "op",
+     "Toggle Visibility",
+     "sculpt.face_set_change_visibility"
+    ],
+    [
+     "op",
+     "Hide Active Face Set",
+     "sculpt.face_set_change_visibility"
+    ],
+    [
+     "op",
+     "Show All",
+     "paint.hide_show_all"
+    ],
+    [
+     "op",
+     "Invert Visible",
+     "paint.visibility_invert"
+    ],
+    [
+     "op",
+     "Hide Masked",
+     "paint.hide_show_masked"
+    ],
+    [
+     "op",
+     "Grow Visibility",
+     "paint.visibility_filter"
+    ],
+    [
+     "op",
+     "Shrink Visibility",
+     "paint.visibility_filter"
+    ],
+    [
+     "menu",
+     "Show/Hide",
+     "VIEW3D_MT_sculpt_showhide"
+    ],
+    [
+     "op",
+     "Fair Positions",
+     "sculpt.face_set_edit"
+    ],
+    [
+     "op",
+     "Fair Tangency",
+     "sculpt.face_set_edit"
+    ],
+    [
+     "op",
+     "Line Project",
+     "sculpt.project_line_gesture"
+    ],
+    [
+     "menu",
+     "Trim/Add",
+     "VIEW3D_MT_sculpt_trim"
+    ],
+    [
+     "menu",
+     "Add Primitive",
+     "VIEW3D_MT_add_object"
+    ],
+    [
+     "op",
+     "Smooth",
+     "sculpt.mesh_filter"
+    ],
+    [
+     "op",
+     "Surface Smooth",
+     "sculpt.mesh_filter"
+    ],
+    [
+     "op",
+     "Inflate",
+     "sculpt.mesh_filter"
+    ],
+    [
+     "op",
+     "Relax Topology",
+     "sculpt.mesh_filter"
+    ],
+    [
+     "op",
+     "Relax Face Sets",
+     "sculpt.mesh_filter"
+    ],
+    [
+     "op",
+     "Sharpen",
+     "sculpt.mesh_filter"
+    ],
+    [
+     "op",
+     "Enhance Details",
+     "sculpt.mesh_filter"
+    ],
+    [
+     "op",
+     "Erase Multires Displacement",
+     "sculpt.mesh_filter"
+    ],
+    [
+     "op",
+     "Randomize",
+     "sculpt.mesh_filter"
+    ],
+    [
+     "op",
+     "Set Vertex Color",
+     "sculpt.color_filter"
+    ],
+    [
+     "op",
+     "Sample Color",
+     "paint.sample_color"
+    ],
+    [
+     "menu",
+     "Set Pivot",
+     "VIEW3D_MT_sculpt_set_pivot"
+    ],
+    [
+     "op",
+     "Rebuild BVH",
+     "sculpt.optimize"
+    ],
+    [
+     "error",
+     "'NoneType' object has no attribute 'use_dynamic_topology_sculpting'",
+     ""
+    ]
+   ]
+  },
+  "VIEW3D_MT_sculpt_automasking_pie": {
+   "label": "Automasking",
+   "items": [
+    [
+     "prop",
+     "Topology",
+     "MeshAutomaskingSettings.use_automasking_topology"
+    ],
+    [
+     "prop",
+     "Face Sets",
+     "MeshAutomaskingSettings.use_automasking_face_sets"
+    ],
+    [
+     "prop",
+     "Mesh Boundary",
+     "MeshAutomaskingSettings.use_automasking_boundary_edges"
+    ],
+    [
+     "prop",
+     "Face Sets Boundary",
+     "MeshAutomaskingSettings.use_automasking_boundary_face_sets"
+    ],
+    [
+     "prop",
+     "Cavity",
+     "MeshAutomaskingSettings.use_automasking_cavity"
+    ],
+    [
+     "prop",
+     "Cavity (Inverted)",
+     "MeshAutomaskingSettings.use_automasking_cavity_inverted"
+    ],
+    [
+     "prop",
+     "Area Normal",
+     "MeshAutomaskingSettings.use_automasking_start_normal"
+    ],
+    [
+     "prop",
+     "View Normal",
+     "MeshAutomaskingSettings.use_automasking_view_normal"
+    ]
+   ]
+  },
+  "VIEW3D_MT_sculpt_curves": {
+   "label": "Curves",
+   "items": [
+    [
+     "op",
+     "Snap to Deformed Surface",
+     "curves.snap_curves_to_surface"
+    ],
+    [
+     "op",
+     "Snap to Nearest Surface",
+     "curves.snap_curves_to_surface"
+    ],
+    [
+     "op",
+     "Convert to Particle System",
+     "curves.convert_to_particle_system"
+    ]
+   ]
+  },
+  "VIEW3D_MT_sculpt_face_sets_edit_pie": {
+   "label": "Face Sets Edit",
+   "items": [
+    [
+     "op",
+     "Face Set from Masked",
+     "sculpt.face_sets_create"
+    ],
+    [
+     "op",
+     "Face Set from Visible",
+     "sculpt.face_sets_create"
+    ],
+    [
+     "op",
+     "Invert Visible",
+     "paint.visibility_invert"
+    ],
+    [
+     "op",
+     "Show All",
+     "paint.hide_show_all"
+    ]
+   ]
+  },
+  "VIEW3D_MT_sculpt_mask_edit_pie": {
+   "label": "Mask Edit",
+   "items": [
+    [
+     "op",
+     "Invert Mask",
+     "paint.mask_flood_fill"
+    ],
+    [
+     "op",
+     "Clear Mask",
+     "paint.mask_flood_fill"
+    ],
+    [
+     "op",
+     "Smooth Mask",
+     "sculpt.mask_filter"
+    ],
+    [
+     "op",
+     "Sharpen Mask",
+     "sculpt.mask_filter"
+    ],
+    [
+     "op",
+     "Grow Mask",
+     "sculpt.mask_filter"
+    ],
+    [
+     "op",
+     "Shrink Mask",
+     "sculpt.mask_filter"
+    ],
+    [
+     "op",
+     "Increase Contrast",
+     "sculpt.mask_filter"
+    ],
+    [
+     "op",
+     "Decrease Contrast",
+     "sculpt.mask_filter"
+    ]
+   ]
+  },
+  "VIEW3D_MT_sculpt_set_pivot": {
+   "label": "Sculpt Set Pivot",
+   "items": [
+    [
+     "op",
+     "Pivot to Origin",
+     "sculpt.set_pivot_position"
+    ],
+    [
+     "op",
+     "Pivot to Unmasked",
+     "sculpt.set_pivot_position"
+    ],
+    [
+     "op",
+     "Pivot to Mask Border",
+     "sculpt.set_pivot_position"
+    ],
+    [
+     "op",
+     "Pivot to Active Vertex",
+     "sculpt.set_pivot_position"
+    ],
+    [
+     "op",
+     "Pivot to Surface Under Cursor",
+     "sculpt.set_pivot_position"
+    ]
+   ]
+  },
+  "VIEW3D_MT_sculpt_showhide": {
+   "label": "Show/Hide",
+   "items": [
+    [
+     "op",
+     "Box Hide",
+     "paint.hide_show"
+    ],
+    [
+     "op",
+     "Lasso Hide",
+     "paint.hide_show_lasso_gesture"
+    ],
+    [
+     "op",
+     "Line Hide",
+     "paint.hide_show_line_gesture"
+    ],
+    [
+     "op",
+     "Polyline Hide",
+     "paint.hide_show_polyline_gesture"
+    ],
+    [
+     "op",
+     "Box Show",
+     "paint.hide_show"
+    ],
+    [
+     "op",
+     "Lasso Show",
+     "paint.hide_show_lasso_gesture"
+    ],
+    [
+     "op",
+     "Line Show",
+     "paint.hide_show_line_gesture"
+    ],
+    [
+     "op",
+     "Polyline Show",
+     "paint.hide_show_polyline_gesture"
+    ]
+   ]
+  },
+  "VIEW3D_MT_sculpt_transform": {
+   "label": "Transform",
+   "items": [
+    [
+     "op",
+     "Move",
+     "transform.translate"
+    ],
+    [
+     "op",
+     "Rotate",
+     "transform.rotate"
+    ],
+    [
+     "op",
+     "Scale",
+     "transform.resize"
+    ],
+    [
+     "op",
+     "To Sphere",
+     "sculpt.mesh_filter"
+    ]
+   ]
+  },
+  "VIEW3D_MT_sculpt_trim": {
+   "label": "Trim/Add",
+   "items": [
+    [
+     "op",
+     "Box Trim",
+     "sculpt.trim_box_gesture"
+    ],
+    [
+     "op",
+     "Lasso Trim",
+     "sculpt.trim_lasso_gesture"
+    ],
+    [
+     "op",
+     "Line Trim",
+     "sculpt.trim_line_gesture"
+    ],
+    [
+     "op",
+     "Polyline Trim",
+     "sculpt.trim_polyline_gesture"
+    ],
+    [
+     "op",
+     "Box Add",
+     "sculpt.trim_box_gesture"
+    ],
+    [
+     "op",
+     "Lasso Add",
+     "sculpt.trim_lasso_gesture"
+    ],
+    [
+     "op",
+     "Polyline Add",
+     "sculpt.trim_polyline_gesture"
+    ]
+   ]
+  },
+  "VIEW3D_MT_select_edit_armature": {
+   "label": "Select",
+   "items": [
+    [
+     "op",
+     "All",
+     "armature.select_all"
+    ],
+    [
+     "op",
+     "None",
+     "armature.select_all"
+    ],
+    [
+     "op",
+     "Invert",
+     "armature.select_all"
+    ],
+    [
+     "op",
+     "Box Select",
+     "view3d.select_box"
+    ],
+    [
+     "op",
+     "Circle Select",
+     "view3d.select_circle"
+    ],
+    [
+     "enum",
+     "Lasso Select",
+     "view3d.select_lasso:mode"
+    ],
+    [
+     "op",
+     "Select Mirror",
+     "armature.select_mirror"
+    ],
+    [
+     "op",
+     "More",
+     "armature.select_more"
+    ],
+    [
+     "op",
+     "Less",
+     "armature.select_less"
+    ],
+    [
+     "op",
+     "Select Linked",
+     "armature.select_linked"
+    ],
+    [
+     "enum",
+     "Select Similar",
+     "armature.select_similar:type"
+    ],
+    [
+     "op",
+     "Select Pattern...",
+     "object.select_pattern"
+    ],
+    [
+     "op",
+     "Parent",
+     "armature.select_hierarchy"
+    ],
+    [
+     "op",
+     "Child",
+     "armature.select_hierarchy"
+    ],
+    [
+     "op",
+     "Extend Parent",
+     "armature.select_hierarchy"
+    ],
+    [
+     "op",
+     "Extend Child",
+     "armature.select_hierarchy"
+    ]
+   ]
+  },
+  "VIEW3D_MT_select_edit_curve": {
+   "label": "Select",
+   "items": [
+    [
+     "op",
+     "All",
+     "curve.select_all"
+    ],
+    [
+     "op",
+     "None",
+     "curve.select_all"
+    ],
+    [
+     "op",
+     "Invert",
+     "curve.select_all"
+    ],
+    [
+     "op",
+     "Box Select",
+     "view3d.select_box"
+    ],
+    [
+     "op",
+     "Circle Select",
+     "view3d.select_circle"
+    ],
+    [
+     "enum",
+     "Lasso Select",
+     "view3d.select_lasso:mode"
+    ],
+    [
+     "op",
+     "Select Random",
+     "curve.select_random"
+    ],
+    [
+     "op",
+     "Checker Deselect",
+     "curve.select_nth"
+    ],
+    [
+     "op",
+     "More",
+     "curve.select_more"
+    ],
+    [
+     "op",
+     "Less",
+     "curve.select_less"
+    ],
+    [
+     "op",
+     "Select Linked",
+     "curve.select_linked"
+    ],
+    [
+     "enum",
+     "Select Similar",
+     "curve.select_similar:type"
+    ],
+    [
+     "op",
+     "(De)select First",
+     "curve.de_select_first"
+    ],
+    [
+     "op",
+     "(De)select Last",
+     "curve.de_select_last"
+    ],
+    [
+     "op",
+     "Select Next",
+     "curve.select_next"
+    ],
+    [
+     "op",
+     "Select Previous",
+     "curve.select_previous"
+    ]
+   ]
+  },
+  "VIEW3D_MT_select_edit_curves": {
+   "label": "Select",
+   "items": [
+    [
+     "op",
+     "All",
+     "curves.select_all"
+    ],
+    [
+     "op",
+     "None",
+     "curves.select_all"
+    ],
+    [
+     "op",
+     "Invert",
+     "curves.select_all"
+    ],
+    [
+     "op",
+     "Select Random",
+     "curves.select_random"
+    ],
+    [
+     "menu",
+     "More/Less",
+     "VIEW3D_MT_edit_curves_select_more_less"
+    ],
+    [
+     "op",
+     "Select Linked",
+     "curves.select_linked"
+    ],
+    [
+     "op",
+     "Endpoints",
+     "curves.select_ends"
+    ]
+   ]
+  },
+  "VIEW3D_MT_select_edit_grease_pencil": {
+   "label": "Select",
+   "items": [
+    [
+     "op",
+     "All",
+     "grease_pencil.select_all"
+    ],
+    [
+     "op",
+     "None",
+     "grease_pencil.select_all"
+    ],
+    [
+     "op",
+     "Invert",
+     "grease_pencil.select_all"
+    ],
+    [
+     "op",
+     "Box Select",
+     "view3d.select_box"
+    ],
+    [
+     "op",
+     "Circle Select",
+     "view3d.select_circle"
+    ],
+    [
+     "enum",
+     "Lasso Select",
+     "view3d.select_lasso:mode"
+    ],
+    [
+     "op",
+     "Select Random",
+     "grease_pencil.select_random"
+    ],
+    [
+     "op",
+     "Select Alternate",
+     "grease_pencil.select_alternate"
+    ],
+    [
+     "op",
+     "More",
+     "grease_pencil.select_more"
+    ],
+    [
+     "op",
+     "Less",
+     "grease_pencil.select_less"
+    ],
+    [
+     "enum",
+     "By Stroke Type",
+     "grease_pencil.select_by_stroke_type:type"
+    ],
+    [
+     "enum",
+     "Select Similar",
+     "grease_pencil.select_similar:mode"
+    ],
+    [
+     "op",
+     "Select Fill",
+     "grease_pencil.select_fill"
+    ],
+    [
+     "op",
+     "Select Linked",
+     "grease_pencil.select_linked"
+    ],
+    [
+     "op",
+     "First",
+     "grease_pencil.select_ends"
+    ],
+    [
+     "op",
+     "Last",
+     "grease_pencil.select_ends"
+    ]
+   ]
+  },
+  "VIEW3D_MT_select_edit_lattice": {
+   "label": "Select",
+   "items": [
+    [
+     "op",
+     "All",
+     "lattice.select_all"
+    ],
+    [
+     "op",
+     "None",
+     "lattice.select_all"
+    ],
+    [
+     "op",
+     "Invert",
+     "lattice.select_all"
+    ],
+    [
+     "op",
+     "Box Select",
+     "view3d.select_box"
+    ],
+    [
+     "op",
+     "Circle Select",
+     "view3d.select_circle"
+    ],
+    [
+     "enum",
+     "Lasso Select",
+     "view3d.select_lasso:mode"
+    ],
+    [
+     "op",
+     "Select Mirror",
+     "lattice.select_mirror"
+    ],
+    [
+     "op",
+     "Select Random",
+     "lattice.select_random"
+    ],
+    [
+     "op",
+     "More",
+     "lattice.select_more"
+    ],
+    [
+     "op",
+     "Less",
+     "lattice.select_less"
+    ],
+    [
+     "op",
+     "Ungrouped Vertices",
+     "lattice.select_ungrouped"
+    ]
+   ]
+  },
+  "VIEW3D_MT_select_edit_mesh": {
+   "label": "Select",
+   "items": [
+    [
+     "op",
+     "All",
+     "mesh.select_all"
+    ],
+    [
+     "op",
+     "None",
+     "mesh.select_all"
+    ],
+    [
+     "op",
+     "Invert",
+     "mesh.select_all"
+    ],
+    [
+     "op",
+     "Box Select",
+     "view3d.select_box"
+    ],
+    [
+     "op",
+     "Circle Select",
+     "view3d.select_circle"
+    ],
+    [
+     "enum",
+     "Lasso Select",
+     "view3d.select_lasso:mode"
+    ],
+    [
+     "op",
+     "Select Mirror",
+     "mesh.select_mirror"
+    ],
+    [
+     "op",
+     "Select Random",
+     "mesh.select_random"
+    ],
+    [
+     "op",
+     "Checker Deselect",
+     "mesh.select_nth"
+    ],
+    [
+     "menu",
+     "More/Less",
+     "VIEW3D_MT_edit_mesh_select_more_less"
+    ],
+    [
+     "menu",
+     "Select Similar",
+     "VIEW3D_MT_edit_mesh_select_similar"
+    ],
+    [
+     "menu",
+     "Select All by Trait",
+     "VIEW3D_MT_edit_mesh_select_by_trait"
+    ],
+    [
+     "menu",
+     "Select Linked",
+     "VIEW3D_MT_edit_mesh_select_linked"
+    ],
+    [
+     "menu",
+     "Select Loops",
+     "VIEW3D_MT_edit_mesh_select_loops"
+    ],
+    [
+     "op",
+     "Sharp Edges",
+     "mesh.edges_select_sharp"
+    ],
+    [
+     "op",
+     "Side of Active",
+     "mesh.select_axis"
+    ],
+    [
+     "op",
+     "By Attribute",
+     "mesh.select_by_attribute"
+    ]
+   ]
+  },
+  "VIEW3D_MT_select_edit_metaball": {
+   "label": "Select",
+   "items": [
+    [
+     "op",
+     "All",
+     "mball.select_all"
+    ],
+    [
+     "op",
+     "None",
+     "mball.select_all"
+    ],
+    [
+     "op",
+     "Invert",
+     "mball.select_all"
+    ],
+    [
+     "op",
+     "Box Select",
+     "view3d.select_box"
+    ],
+    [
+     "op",
+     "Circle Select",
+     "view3d.select_circle"
+    ],
+    [
+     "enum",
+     "Lasso Select",
+     "view3d.select_lasso:mode"
+    ],
+    [
+     "op",
+     "Select Random",
+     "mball.select_random_metaelems"
+    ],
+    [
+     "enum",
+     "Select Similar",
+     "mball.select_similar:type"
+    ]
+   ]
+  },
+  "VIEW3D_MT_select_edit_pointcloud": {
+   "label": "Select",
+   "items": [
+    [
+     "op",
+     "All",
+     "pointcloud.select_all"
+    ],
+    [
+     "op",
+     "None",
+     "pointcloud.select_all"
+    ],
+    [
+     "op",
+     "Invert",
+     "pointcloud.select_all"
+    ],
+    [
+     "op",
+     "Select Random",
+     "pointcloud.select_random"
+    ]
+   ]
+  },
+  "VIEW3D_MT_select_edit_surface": {
+   "label": "Select",
+   "items": [
+    [
+     "op",
+     "All",
+     "curve.select_all"
+    ],
+    [
+     "op",
+     "None",
+     "curve.select_all"
+    ],
+    [
+     "op",
+     "Invert",
+     "curve.select_all"
+    ],
+    [
+     "op",
+     "Box Select",
+     "view3d.select_box"
+    ],
+    [
+     "op",
+     "Circle Select",
+     "view3d.select_circle"
+    ],
+    [
+     "enum",
+     "Lasso Select",
+     "view3d.select_lasso:mode"
+    ],
+    [
+     "op",
+     "Select Random",
+     "curve.select_random"
+    ],
+    [
+     "op",
+     "Checker Deselect",
+     "curve.select_nth"
+    ],
+    [
+     "op",
+     "More",
+     "curve.select_more"
+    ],
+    [
+     "op",
+     "Less",
+     "curve.select_less"
+    ],
+    [
+     "op",
+     "Select Linked",
+     "curve.select_linked"
+    ],
+    [
+     "enum",
+     "Select Similar",
+     "curve.select_similar:type"
+    ],
+    [
+     "op",
+     "Control Point Row",
+     "curve.select_row"
+    ]
+   ]
+  },
+  "VIEW3D_MT_select_edit_text": {
+   "label": "Select",
+   "items": [
+    [
+     "op",
+     "All",
+     "font.select_all"
+    ],
+    [
+     "op",
+     "Top",
+     "font.move_select"
+    ],
+    [
+     "op",
+     "Bottom",
+     "font.move_select"
+    ],
+    [
+     "op",
+     "Previous Block",
+     "font.move_select"
+    ],
+    [
+     "op",
+     "Next Block",
+     "font.move_select"
+    ],
+    [
+     "op",
+     "Line Begin",
+     "font.move_select"
+    ],
+    [
+     "op",
+     "Line End",
+     "font.move_select"
+    ],
+    [
+     "op",
+     "Previous Line",
+     "font.move_select"
+    ],
+    [
+     "op",
+     "Next Line",
+     "font.move_select"
+    ],
+    [
+     "op",
+     "Previous Word",
+     "font.move_select"
+    ],
+    [
+     "op",
+     "Next Word",
+     "font.move_select"
+    ]
+   ]
+  },
+  "VIEW3D_MT_select_object": {
+   "label": "Select",
+   "items": [
+    [
+     "op",
+     "All",
+     "object.select_all"
+    ],
+    [
+     "op",
+     "None",
+     "object.select_all"
+    ],
+    [
+     "op",
+     "Invert",
+     "object.select_all"
+    ],
+    [
+     "op",
+     "Box Select",
+     "view3d.select_box"
+    ],
+    [
+     "op",
+     "Circle Select",
+     "view3d.select_circle"
+    ],
+    [
+     "enum",
+     "Lasso Select",
+     "view3d.select_lasso:mode"
+    ],
+    [
+     "op",
+     "Select Active Camera",
+     "object.select_camera"
+    ],
+    [
+     "op",
+     "Select Mirror",
+     "object.select_mirror"
+    ],
+    [
+     "op",
+     "Select Random",
+     "object.select_random"
+    ],
+    [
+     "menu",
+     "More/Less",
+     "VIEW3D_MT_select_object_more_less"
+    ],
+    [
+     "enum",
+     "Select All by Type",
+     "object.select_by_type:type"
+    ],
+    [
+     "enum",
+     "Select Grouped",
+     "object.select_grouped:type"
+    ],
+    [
+     "enum",
+     "Select Linked",
+     "object.select_linked:type"
+    ],
+    [
+     "op",
+     "Select Pattern...",
+     "object.select_pattern"
+    ]
+   ]
+  },
+  "VIEW3D_MT_select_object_more_less": {
+   "label": "Select More/Less",
+   "items": [
+    [
+     "op",
+     "More",
+     "object.select_more"
+    ],
+    [
+     "op",
+     "Less",
+     "object.select_less"
+    ],
+    [
+     "op",
+     "Parent",
+     "object.select_hierarchy"
+    ],
+    [
+     "op",
+     "Child",
+     "object.select_hierarchy"
+    ],
+    [
+     "op",
+     "Extend Parent",
+     "object.select_hierarchy"
+    ],
+    [
+     "op",
+     "Extend Child",
+     "object.select_hierarchy"
+    ]
+   ]
+  },
+  "VIEW3D_MT_select_paint_mask": {
+   "label": "Select",
+   "items": [
+    [
+     "op",
+     "All",
+     "paint.face_select_all"
+    ],
+    [
+     "op",
+     "None",
+     "paint.face_select_all"
+    ],
+    [
+     "op",
+     "Invert",
+     "paint.face_select_all"
+    ],
+    [
+     "op",
+     "Box Select",
+     "view3d.select_box"
+    ],
+    [
+     "op",
+     "Circle Select",
+     "view3d.select_circle"
+    ],
+    [
+     "enum",
+     "Lasso Select",
+     "view3d.select_lasso:mode"
+    ],
+    [
+     "op",
+     "More",
+     "paint.face_select_more"
+    ],
+    [
+     "op",
+     "Less",
+     "paint.face_select_less"
+    ],
+    [
+     "op",
+     "Select Linked",
+     "paint.face_select_linked"
+    ],
+    [
+     "op",
+     "Reveal Hidden",
+     "paint.face_vert_reveal"
+    ],
+    [
+     "op",
+     "Hide Selected",
+     "paint.face_select_hide"
+    ],
+    [
+     "op",
+     "Hide Unselected",
+     "paint.face_select_hide"
+    ]
+   ]
+  },
+  "VIEW3D_MT_select_paint_mask_vertex": {
+   "label": "Select",
+   "items": [
+    [
+     "op",
+     "All",
+     "paint.vert_select_all"
+    ],
+    [
+     "op",
+     "None",
+     "paint.vert_select_all"
+    ],
+    [
+     "op",
+     "Invert",
+     "paint.vert_select_all"
+    ],
+    [
+     "op",
+     "Box Select",
+     "view3d.select_box"
+    ],
+    [
+     "op",
+     "Circle Select",
+     "view3d.select_circle"
+    ],
+    [
+     "enum",
+     "Lasso Select",
+     "view3d.select_lasso:mode"
+    ],
+    [
+     "op",
+     "More",
+     "paint.vert_select_more"
+    ],
+    [
+     "op",
+     "Less",
+     "paint.vert_select_less"
+    ],
+    [
+     "op",
+     "Select Linked",
+     "paint.vert_select_linked"
+    ],
+    [
+     "op",
+     "Ungrouped Vertices",
+     "paint.vert_select_ungrouped"
+    ],
+    [
+     "op",
+     "Reveal Hidden",
+     "paint.face_vert_reveal"
+    ],
+    [
+     "op",
+     "Hide Selected",
+     "paint.vert_select_hide"
+    ],
+    [
+     "op",
+     "Hide Unselected",
+     "paint.vert_select_hide"
+    ]
+   ]
+  },
+  "VIEW3D_MT_select_particle": {
+   "label": "Select",
+   "items": [
+    [
+     "op",
+     "All",
+     "particle.select_all"
+    ],
+    [
+     "op",
+     "None",
+     "particle.select_all"
+    ],
+    [
+     "op",
+     "Invert",
+     "particle.select_all"
+    ],
+    [
+     "op",
+     "Box Select",
+     "view3d.select_box"
+    ],
+    [
+     "op",
+     "Circle Select",
+     "view3d.select_circle"
+    ],
+    [
+     "enum",
+     "Lasso Select",
+     "view3d.select_lasso:mode"
+    ],
+    [
+     "op",
+     "Select Random",
+     "particle.select_random"
+    ],
+    [
+     "op",
+     "More",
+     "particle.select_more"
+    ],
+    [
+     "op",
+     "Less",
+     "particle.select_less"
+    ],
+    [
+     "op",
+     "Select Linked",
+     "particle.select_linked"
+    ],
+    [
+     "op",
+     "Roots",
+     "particle.select_roots"
+    ],
+    [
+     "op",
+     "Tips",
+     "particle.select_tips"
+    ]
+   ]
+  },
+  "VIEW3D_MT_select_pose": {
+   "label": "Select",
+   "items": [
+    [
+     "op",
+     "All",
+     "pose.select_all"
+    ],
+    [
+     "op",
+     "None",
+     "pose.select_all"
+    ],
+    [
+     "op",
+     "Invert",
+     "pose.select_all"
+    ],
+    [
+     "op",
+     "Box Select",
+     "view3d.select_box"
+    ],
+    [
+     "op",
+     "Circle Select",
+     "view3d.select_circle"
+    ],
+    [
+     "enum",
+     "Lasso Select",
+     "view3d.select_lasso:mode"
+    ],
+    [
+     "op",
+     "Select Mirror",
+     "pose.select_mirror"
+    ],
+    [
+     "menu",
+     "More/Less",
+     "VIEW3D_MT_select_pose_more_less"
+    ],
+    [
+     "enum",
+     "Select Grouped",
+     "pose.select_grouped:type"
+    ],
+    [
+     "op",
+     "Select Linked",
+     "pose.select_linked"
+    ],
+    [
+     "op",
+     "Select Pattern...",
+     "object.select_pattern"
+    ],
+    [
+     "menu",
+     "Bone Selection Set",
+     "POSE_MT_selection_sets_select"
+    ],
+    [
+     "op",
+     "Constraint Target",
+     "pose.select_constraint_target"
+    ]
+   ]
+  },
+  "VIEW3D_MT_select_pose_more_less": {
+   "label": "Select More/Less",
+   "items": [
+    [
+     "op",
+     "Parent",
+     "pose.select_hierarchy"
+    ],
+    [
+     "op",
+     "Child",
+     "pose.select_hierarchy"
+    ],
+    [
+     "op",
+     "Extend Parent",
+     "pose.select_hierarchy"
+    ],
+    [
+     "op",
+     "Extend Child",
+     "pose.select_hierarchy"
+    ]
+   ]
+  },
+  "VIEW3D_MT_select_sculpt_curves": {
+   "label": "Select",
+   "items": [
+    [
+     "op",
+     "All",
+     "curves.select_all"
+    ],
+    [
+     "op",
+     "None",
+     "curves.select_all"
+    ],
+    [
+     "op",
+     "Invert",
+     "curves.select_all"
+    ],
+    [
+     "op",
+     "Select Random",
+     "sculpt_curves.select_random"
+    ],
+    [
+     "op",
+     "Endpoints",
+     "curves.select_ends"
+    ],
+    [
+     "op",
+     "Grow Selection",
+     "sculpt_curves.select_grow"
+    ]
+   ]
+  },
+  "VIEW3D_MT_shading_ex_pie": {
+   "label": "Shading",
+   "items": [
+    [
+     "error",
+     "'NoneType' object has no attribute 'shading'",
+     ""
+    ]
+   ]
+  },
+  "VIEW3D_MT_shading_pie": {
+   "label": "Shading",
+   "items": [
+    [
+     "error",
+     "'NoneType' object has no attribute 'shading'",
+     ""
+    ]
+   ]
+  },
+  "VIEW3D_MT_snap": {
+   "label": "Snap",
+   "items": [
+    [
+     "op",
+     "Selection to Grid",
+     "view3d.snap_selected_to_grid"
+    ],
+    [
+     "op",
+     "Selection to Cursor",
+     "view3d.snap_selected_to_cursor"
+    ],
+    [
+     "op",
+     "Selection to Cursor (Keep Offset)",
+     "view3d.snap_selected_to_cursor"
+    ],
+    [
+     "op",
+     "Selection to Active",
+     "view3d.snap_selected_to_active"
+    ],
+    [
+     "op",
+     "Cursor to Selected",
+     "view3d.snap_cursor_to_selected"
+    ],
+    [
+     "op",
+     "Cursor to World Origin",
+     "view3d.snap_cursor_to_center"
+    ],
+    [
+     "op",
+     "Cursor to Grid",
+     "view3d.snap_cursor_to_grid"
+    ],
+    [
+     "op",
+     "Cursor to Active",
+     "view3d.snap_cursor_to_active"
+    ]
+   ]
+  },
+  "VIEW3D_MT_snap_pie": {
+   "label": "Snap",
+   "items": [
+    [
+     "op",
+     "Cursor to Grid",
+     "view3d.snap_cursor_to_grid"
+    ],
+    [
+     "op",
+     "Selection to Grid",
+     "view3d.snap_selected_to_grid"
+    ],
+    [
+     "op",
+     "Cursor to Selected",
+     "view3d.snap_cursor_to_selected"
+    ],
+    [
+     "op",
+     "Selection to Cursor",
+     "view3d.snap_selected_to_cursor"
+    ],
+    [
+     "op",
+     "Selection to Cursor (Keep Offset)",
+     "view3d.snap_selected_to_cursor"
+    ],
+    [
+     "op",
+     "Selection to Active",
+     "view3d.snap_selected_to_active"
+    ],
+    [
+     "op",
+     "Cursor to World Origin",
+     "view3d.snap_cursor_to_center"
+    ],
+    [
+     "op",
+     "Cursor to Active",
+     "view3d.snap_cursor_to_active"
+    ]
+   ]
+  },
+  "VIEW3D_MT_surface_add": {
+   "label": "Surface",
+   "items": [
+    [
+     "op",
+     "Nurbs Curve",
+     "surface.primitive_nurbs_surface_curve_add"
+    ],
+    [
+     "op",
+     "Nurbs Circle",
+     "surface.primitive_nurbs_surface_circle_add"
+    ],
+    [
+     "op",
+     "Nurbs Surface",
+     "surface.primitive_nurbs_surface_surface_add"
+    ],
+    [
+     "op",
+     "Nurbs Cylinder",
+     "surface.primitive_nurbs_surface_cylinder_add"
+    ],
+    [
+     "op",
+     "Nurbs Sphere",
+     "surface.primitive_nurbs_surface_sphere_add"
+    ],
+    [
+     "op",
+     "Nurbs Torus",
+     "surface.primitive_nurbs_surface_torus_add"
+    ]
+   ]
+  },
+  "VIEW3D_MT_tools_projectpaint_clone": {
+   "label": "Clone Layer",
+   "items": [
+    [
+     "op",
+     "UVMap",
+     "wm.context_set_int"
+    ]
+   ]
+  },
+  "VIEW3D_MT_tools_projectpaint_stencil": {
+   "label": "Mask Layer",
+   "items": [
+    [
+     "op",
+     "UVMap",
+     "wm.context_set_int"
+    ]
+   ]
+  },
+  "VIEW3D_MT_tools_projectpaint_uvlayer": {
+   "label": "Clone Layer",
+   "items": [
+    [
+     "op",
+     "UVMap",
+     "wm.context_set_int"
+    ]
+   ]
+  },
+  "VIEW3D_MT_transform": {
+   "label": "Transform",
+   "items": [
+    [
+     "op",
+     "Move",
+     "transform.translate"
+    ],
+    [
+     "op",
+     "Rotate",
+     "transform.rotate"
+    ],
+    [
+     "op",
+     "Scale",
+     "transform.resize"
+    ],
+    [
+     "op",
+     "To Sphere",
+     "transform.tosphere"
+    ],
+    [
+     "op",
+     "Shear",
+     "transform.shear"
+    ],
+    [
+     "op",
+     "Bend",
+     "transform.bend"
+    ],
+    [
+     "op",
+     "Push/Pull",
+     "transform.push_pull"
+    ]
+   ]
+  },
+  "VIEW3D_MT_transform_armature": {
+   "label": "Transform",
+   "items": [
+    [
+     "op",
+     "Move",
+     "transform.translate"
+    ],
+    [
+     "op",
+     "Rotate",
+     "transform.rotate"
+    ],
+    [
+     "op",
+     "Scale",
+     "transform.resize"
+    ],
+    [
+     "op",
+     "To Sphere",
+     "transform.tosphere"
+    ],
+    [
+     "op",
+     "Shear",
+     "transform.shear"
+    ],
+    [
+     "op",
+     "Bend",
+     "transform.bend"
+    ],
+    [
+     "op",
+     "Push/Pull",
+     "transform.push_pull"
+    ]
+   ]
+  },
+  "VIEW3D_MT_transform_gizmo_pie": {
+   "label": "View",
+   "items": [
+    [
+     "op",
+     "Move",
+     "view3d.transform_gizmo_set"
+    ],
+    [
+     "op",
+     "Rotate",
+     "view3d.transform_gizmo_set"
+    ],
+    [
+     "op",
+     "Scale",
+     "view3d.transform_gizmo_set"
+    ],
+    [
+     "prop",
+     "Show Gizmos",
+     "NoneType.show_gizmo"
+    ],
+    [
+     "op",
+     "All",
+     "view3d.transform_gizmo_set"
+    ]
+   ]
+  },
+  "VIEW3D_MT_transform_object": {
+   "label": "Transform",
+   "items": [
+    [
+     "op",
+     "Move",
+     "transform.translate"
+    ],
+    [
+     "op",
+     "Rotate",
+     "transform.rotate"
+    ],
+    [
+     "op",
+     "Scale",
+     "transform.resize"
+    ],
+    [
+     "op",
+     "To Sphere",
+     "transform.tosphere"
+    ],
+    [
+     "op",
+     "Shear",
+     "transform.shear"
+    ],
+    [
+     "op",
+     "Bend",
+     "transform.bend"
+    ],
+    [
+     "op",
+     "Push/Pull",
+     "transform.push_pull"
+    ],
+    [
+     "op",
+     "Move Texture Space",
+     "transform.translate"
+    ],
+    [
+     "op",
+     "Scale Texture Space",
+     "transform.resize"
+    ],
+    [
+     "op",
+     "Align to Transform Orientation",
+     "transform.transform"
+    ],
+    [
+     "op",
+     "Randomize Transform",
+     "object.randomize_transform"
+    ],
+    [
+     "op",
+     "Align Objects",
+     "object.align"
+    ]
+   ]
+  },
+  "VIEW3D_MT_uv_map": {
+   "label": "UV Mapping",
+   "items": [
+    [
+     "menu",
+     "Unwrap",
+     "IMAGE_MT_uvs_unwrap"
+    ],
+    [
+     "op",
+     "Project from View",
+     "uv.project_from_view"
+    ],
+    [
+     "op",
+     "Project from View (Bounds)",
+     "uv.project_from_view"
+    ],
+    [
+     "op",
+     "Mark Seam",
+     "mesh.mark_seam"
+    ],
+    [
+     "op",
+     "Clear Seam",
+     "mesh.mark_seam"
+    ],
+    [
+     "op",
+     "Reset",
+     "uv.reset"
+    ]
+   ]
+  },
+  "VIEW3D_MT_vertex_group": {
+   "label": "Vertex Groups",
+   "items": [
+    [
+     "op",
+     "Assign to New Group",
+     "object.vertex_group_assign_new"
+    ]
+   ]
+  },
+  "VIEW3D_MT_view": {
+   "label": "View",
+   "items": [
+    [
+     "prop",
+     "show_region_toolbar",
+     "NoneType.show_region_toolbar"
+    ],
+    [
+     "prop",
+     "show_region_ui",
+     "NoneType.show_region_ui"
+    ],
+    [
+     "prop",
+     "show_region_tool_header",
+     "NoneType.show_region_tool_header"
+    ],
+    [
+     "prop",
+     "show_region_asset_shelf",
+     "NoneType.show_region_asset_shelf"
+    ],
+    [
+     "prop",
+     "show_region_hud",
+     "NoneType.show_region_hud"
+    ],
+    [
+     "op",
+     "Frame Selected",
+     "view3d.view_selected"
+    ],
+    [
+     "error",
+     "'NoneType' object has no attribute 'region_quadviews'",
+     ""
+    ]
+   ]
+  },
+  "VIEW3D_MT_view_align": {
+   "label": "Align View",
+   "items": [
+    [
+     "menu",
+     "Align View to Active",
+     "VIEW3D_MT_view_align_selected"
+    ],
+    [
+     "op",
+     "Align Active Camera to View",
+     "view3d.camera_to_view"
+    ],
+    [
+     "op",
+     "Align Active Camera to Selected",
+     "view3d.camera_to_view_selected"
+    ],
+    [
+     "op",
+     "Center Cursor and Frame All",
+     "view3d.view_all"
+    ],
+    [
+     "op",
+     "Center View to Cursor",
+     "view3d.view_center_cursor"
+    ],
+    [
+     "op",
+     "View Lock to Active",
+     "view3d.view_lock_to_active"
+    ],
+    [
+     "op",
+     "View Lock Clear",
+     "view3d.view_lock_clear"
+    ]
+   ]
+  },
+  "VIEW3D_MT_view_align_selected": {
+   "label": "Align View to Active",
+   "items": [
+    [
+     "op",
+     "Top",
+     "view3d.view_axis"
+    ],
+    [
+     "op",
+     "Bottom",
+     "view3d.view_axis"
+    ],
+    [
+     "op",
+     "Front",
+     "view3d.view_axis"
+    ],
+    [
+     "op",
+     "Back",
+     "view3d.view_axis"
+    ],
+    [
+     "op",
+     "Right",
+     "view3d.view_axis"
+    ],
+    [
+     "op",
+     "Left",
+     "view3d.view_axis"
+    ]
+   ]
+  },
+  "VIEW3D_MT_view_cameras": {
+   "label": "Cameras",
+   "items": [
+    [
+     "op",
+     "Set Active Object as Camera",
+     "view3d.object_as_camera"
+    ],
+    [
+     "op",
+     "Active Camera",
+     "view3d.view_camera"
+    ],
+    [
+     "op",
+     "Frame Camera Bounds",
+     "view3d.view_center_camera"
+    ]
+   ]
+  },
+  "VIEW3D_MT_view_local": {
+   "label": "Local View",
+   "items": [
+    [
+     "op",
+     "Toggle Local View",
+     "view3d.localview"
+    ],
+    [
+     "op",
+     "Remove from Local View",
+     "view3d.localview_remove_from"
+    ]
+   ]
+  },
+  "VIEW3D_MT_view_navigation": {
+   "label": "Navigation",
+   "items": [
+    [
+     "op",
+     "Orbit Left",
+     "view3d.view_orbit:type=ORBITLEFT"
+    ],
+    [
+     "op",
+     "Orbit Right",
+     "view3d.view_orbit:type=ORBITRIGHT"
+    ],
+    [
+     "op",
+     "Orbit Up",
+     "view3d.view_orbit:type=ORBITUP"
+    ],
+    [
+     "op",
+     "Orbit Down",
+     "view3d.view_orbit:type=ORBITDOWN"
+    ],
+    [
+     "op",
+     "Orbit Opposite",
+     "view3d.view_orbit"
+    ],
+    [
+     "op",
+     "Roll Left",
+     "view3d.view_roll"
+    ],
+    [
+     "op",
+     "Roll Right",
+     "view3d.view_roll"
+    ],
+    [
+     "op",
+     "Pan Left",
+     "view3d.view_pan:type=PANLEFT"
+    ],
+    [
+     "op",
+     "Pan Right",
+     "view3d.view_pan:type=PANRIGHT"
+    ],
+    [
+     "op",
+     "Pan Up",
+     "view3d.view_pan:type=PANUP"
+    ],
+    [
+     "op",
+     "Pan Down",
+     "view3d.view_pan:type=PANDOWN"
+    ],
+    [
+     "op",
+     "Zoom In",
+     "view3d.zoom"
+    ],
+    [
+     "op",
+     "Zoom Out",
+     "view3d.zoom"
+    ],
+    [
+     "op",
+     "Zoom Region...",
+     "view3d.zoom_border"
+    ],
+    [
+     "op",
+     "Dolly View...",
+     "view3d.dolly"
+    ],
+    [
+     "op",
+     "Zoom Camera 1:1",
+     "view3d.zoom_camera_1_to_1"
+    ],
+    [
+     "op",
+     "Fly Navigation",
+     "view3d.fly"
+    ],
+    [
+     "op",
+     "Walk Navigation",
+     "view3d.walk"
+    ]
+   ]
+  },
+  "VIEW3D_MT_view_pie": {
+   "label": "View",
+   "items": [
+    [
+     "op",
+     "Left",
+     "view3d.view_axis:type=LEFT"
+    ],
+    [
+     "op",
+     "Right",
+     "view3d.view_axis:type=RIGHT"
+    ],
+    [
+     "op",
+     "Bottom",
+     "view3d.view_axis:type=BOTTOM"
+    ],
+    [
+     "op",
+     "Top",
+     "view3d.view_axis:type=TOP"
+    ],
+    [
+     "op",
+     "Front",
+     "view3d.view_axis:type=FRONT"
+    ],
+    [
+     "op",
+     "Back",
+     "view3d.view_axis:type=BACK"
+    ],
+    [
+     "op",
+     "View Camera",
+     "view3d.view_camera"
+    ],
+    [
+     "op",
+     "View Selected",
+     "view3d.view_selected"
+    ]
+   ]
+  },
+  "VIEW3D_MT_view_regions": {
+   "label": "View Regions",
+   "items": [
+    [
+     "op",
+     "Clipping Region...",
+     "view3d.clip_border"
+    ],
+    [
+     "op",
+     "Render Region...",
+     "view3d.render_border"
+    ],
+    [
+     "op",
+     "Clear Render Region",
+     "view3d.clear_render_border"
+    ]
+   ]
+  },
+  "VIEW3D_MT_view_viewpoint": {
+   "label": "Viewpoint",
+   "items": [
+    [
+     "op",
+     "Camera",
+     "view3d.view_camera"
+    ],
+    [
+     "op",
+     "Top",
+     "view3d.view_axis"
+    ],
+    [
+     "op",
+     "Bottom",
+     "view3d.view_axis"
+    ],
+    [
+     "op",
+     "Front",
+     "view3d.view_axis"
+    ],
+    [
+     "op",
+     "Back",
+     "view3d.view_axis"
+    ],
+    [
+     "op",
+     "Right",
+     "view3d.view_axis"
+    ],
+    [
+     "op",
+     "Left",
+     "view3d.view_axis"
+    ]
+   ]
+  },
+  "VIEW3D_MT_volume_add": {
+   "label": "Volume",
+   "items": [
+    [
+     "op",
+     "Import OpenVDB...",
+     "object.volume_import"
+    ],
+    [
+     "op",
+     "Empty",
+     "object.volume_add"
+    ]
+   ]
+  },
+  "VIEW3D_MT_weight_grease_pencil": {
+   "label": "Weights",
+   "items": [
+    [
+     "op",
+     "Normalize All",
+     "grease_pencil.vertex_group_normalize_all"
+    ],
+    [
+     "op",
+     "Normalize",
+     "grease_pencil.vertex_group_normalize"
+    ],
+    [
+     "op",
+     "Invert",
+     "grease_pencil.weight_invert"
+    ],
+    [
+     "op",
+     "Smooth",
+     "grease_pencil.vertex_group_smooth"
+    ],
+    [
+     "op",
+     "Sample Weight",
+     "grease_pencil.weight_sample"
+    ]
+   ]
+  },
+  "VIEW3D_MT_wpaint_vgroup_lock_pie": {
+   "label": "Vertex Group Locks",
+   "items": [
+    [
+     "op",
+     "Lock All",
+     "object.vertex_group_lock"
+    ],
+    [
+     "op",
+     "Unlock All",
+     "object.vertex_group_lock"
+    ],
+    [
+     "op",
+     "Unlock Selected",
+     "object.vertex_group_lock"
+    ],
+    [
+     "op",
+     "Lock Selected",
+     "object.vertex_group_lock"
+    ],
+    [
+     "op",
+     "Lock Unselected",
+     "object.vertex_group_lock"
+    ],
+    [
+     "op",
+     "Lock Only Selected",
+     "object.vertex_group_lock"
+    ],
+    [
+     "op",
+     "Lock Only Unselected",
+     "object.vertex_group_lock"
+    ],
+    [
+     "op",
+     "Invert Locks",
+     "object.vertex_group_lock"
+    ]
+   ]
+  }
+ },
+ "EDIT_MESH": {
+  "VIEW3D_MT_edit_mesh": {
+   "label": "Mesh",
+   "items": [
+    [
+     "menu",
+     "Transform",
+     "VIEW3D_MT_transform"
+    ],
+    [
+     "menu",
+     "Mirror",
+     "VIEW3D_MT_mirror"
+    ],
+    [
+     "menu",
+     "Snap",
+     "VIEW3D_MT_snap"
+    ],
+    [
+     "op",
+     "Duplicate",
+     "mesh.duplicate_move"
+    ],
+    [
+     "menu",
+     "Extrude",
+     "VIEW3D_MT_edit_mesh_extrude"
+    ],
+    [
+     "menu",
+     "Merge",
+     "VIEW3D_MT_edit_mesh_merge"
+    ],
+    [
+     "menu",
+     "Split",
+     "VIEW3D_MT_edit_mesh_split"
+    ],
+    [
+     "enum",
+     "Separate",
+     "mesh.separate:type"
+    ],
+    [
+     "op",
+     "Bisect",
+     "mesh.bisect"
+    ],
+    [
+     "op",
+     "Knife Project",
+     "mesh.knife_project"
+    ],
+    [
+     "op",
+     "Knife Topology Tool",
+     "mesh.knife_tool"
+    ],
+    [
+     "op",
+     "Convex Hull",
+     "mesh.convex_hull"
+    ],
+    [
+     "op",
+     "Symmetrize",
+     "mesh.symmetrize"
+    ],
+    [
+     "op",
+     "Snap to Symmetry",
+     "mesh.symmetry_snap"
+    ],
+    [
+     "menu",
+     "Normals",
+     "VIEW3D_MT_edit_mesh_normals"
+    ],
+    [
+     "menu",
+     "Shading",
+     "VIEW3D_MT_edit_mesh_shading"
+    ],
+    [
+     "menu",
+     "Weights",
+     "VIEW3D_MT_edit_mesh_weights"
+    ],
+    [
+     "op",
+     "Set Attribute",
+     "mesh.attribute_set"
+    ],
+    [
+     "enum",
+     "Sort Elements",
+     "mesh.sort_elements:type"
+    ],
+    [
+     "menu",
+     "Show/Hide",
+     "VIEW3D_MT_edit_mesh_showhide"
+    ],
+    [
+     "menu",
+     "Clean Up",
+     "VIEW3D_MT_edit_mesh_clean"
+    ],
+    [
+     "menu",
+     "Delete",
+     "VIEW3D_MT_edit_mesh_delete"
+    ]
+   ]
+  },
+  "VIEW3D_MT_edit_mesh_clean": {
+   "label": "Clean Up",
+   "items": [
+    [
+     "op",
+     "Delete Loose",
+     "mesh.delete_loose"
+    ],
+    [
+     "op",
+     "Decimate Geometry",
+     "mesh.decimate"
+    ],
+    [
+     "op",
+     "Degenerate Dissolve",
+     "mesh.dissolve_degenerate"
+    ],
+    [
+     "op",
+     "Limited Dissolve",
+     "mesh.dissolve_limited"
+    ],
+    [
+     "op",
+     "Make Planar Faces",
+     "mesh.face_make_planar"
+    ],
+    [
+     "op",
+     "Split Non-Planar Faces",
+     "mesh.vert_connect_nonplanar"
+    ],
+    [
+     "op",
+     "Split Concave Faces",
+     "mesh.vert_connect_concave"
+    ],
+    [
+     "op",
+     "Merge by Distance",
+     "mesh.remove_doubles"
+    ],
+    [
+     "op",
+     "Fill Holes",
+     "mesh.fill_holes"
+    ]
+   ]
+  },
+  "VIEW3D_MT_edit_mesh_context_menu": {
+   "label": "",
+   "items": [
+    [
+     "label",
+     "Vertex",
+     ""
+    ],
+    [
+     "op",
+     "Subdivide",
+     "mesh.subdivide"
+    ],
+    [
+     "op",
+     "Extrude Vertices",
+     "mesh.extrude_vertices_move"
+    ],
+    [
+     "op",
+     "Bevel Vertices",
+     "mesh.bevel"
+    ],
+    [
+     "op",
+     "New Edge/Face from Vertices",
+     "mesh.edge_face_add"
+    ],
+    [
+     "op",
+     "Connect Vertex Path",
+     "mesh.vert_connect_path"
+    ],
+    [
+     "op",
+     "Connect Vertex Pairs",
+     "mesh.vert_connect"
+    ],
+    [
+     "op",
+     "Push/Pull",
+     "transform.push_pull"
+    ],
+    [
+     "op",
+     "Shrink/Fatten",
+     "transform.shrink_fatten"
+    ],
+    [
+     "op",
+     "Shear",
+     "transform.shear"
+    ],
+    [
+     "op",
+     "Slide Vertices",
+     "transform.vert_slide"
+    ],
+    [
+     "op",
+     "Randomize Vertices",
+     "transform.vertex_random"
+    ],
+    [
+     "op",
+     "Smooth Vertices",
+     "mesh.vertices_smooth"
+    ],
+    [
+     "op",
+     "Smooth Laplacian",
+     "mesh.vertices_smooth_laplacian"
+    ],
+    [
+     "menu",
+     "Mirror Vertices",
+     "VIEW3D_MT_mirror"
+    ],
+    [
+     "menu",
+     "Snap Vertices",
+     "VIEW3D_MT_snap"
+    ],
+    [
+     "op",
+     "Vertex Crease",
+     "transform.vert_crease"
+    ],
+    [
+     "menu",
+     "Merge Vertices",
+     "VIEW3D_MT_edit_mesh_merge"
+    ],
+    [
+     "op",
+     "Split",
+     "mesh.split"
+    ],
+    [
+     "enum",
+     "Separate",
+     "mesh.separate:type"
+    ],
+    [
+     "op",
+     "Dissolve Vertices",
+     "mesh.dissolve_verts"
+    ],
+    [
+     "op",
+     "Delete Vertices",
+     "mesh.delete"
+    ]
+   ]
+  },
+  "VIEW3D_MT_edit_mesh_delete": {
+   "label": "Delete",
+   "items": [
+    [
+     "op",
+     "Vertices",
+     "mesh.delete:type=VERT"
+    ],
+    [
+     "op",
+     "Edges",
+     "mesh.delete:type=EDGE"
+    ],
+    [
+     "op",
+     "Faces",
+     "mesh.delete:type=FACE"
+    ],
+    [
+     "op",
+     "Only Edges & Faces",
+     "mesh.delete:type=EDGE_FACE"
+    ],
+    [
+     "op",
+     "Only Faces",
+     "mesh.delete:type=ONLY_FACE"
+    ],
+    [
+     "op",
+     "Dissolve Vertices",
+     "mesh.dissolve_verts"
+    ],
+    [
+     "op",
+     "Dissolve Edges",
+     "mesh.dissolve_edges"
+    ],
+    [
+     "op",
+     "Dissolve Faces",
+     "mesh.dissolve_faces"
+    ],
+    [
+     "op",
+     "Limited Dissolve",
+     "mesh.dissolve_limited"
+    ],
+    [
+     "op",
+     "Collapse Edges & Faces",
+     "mesh.edge_collapse"
+    ],
+    [
+     "op",
+     "Edge Loops",
+     "mesh.delete_edgeloop"
+    ]
+   ]
+  },
+  "VIEW3D_MT_edit_mesh_edges": {
+   "label": "Edge",
+   "items": [
+    [
+     "op",
+     "Extrude Edges",
+     "mesh.extrude_edges_move"
+    ],
+    [
+     "op",
+     "Bevel Edges",
+     "mesh.bevel"
+    ],
+    [
+     "op",
+     "Bridge Edge Loops",
+     "mesh.bridge_edge_loops"
+    ],
+    [
+     "op",
+     "Screw",
+     "mesh.screw"
+    ],
+    [
+     "op",
+     "Subdivide",
+     "mesh.subdivide"
+    ],
+    [
+     "op",
+     "Subdivide Edge-Ring",
+     "mesh.subdivide_edgering"
+    ],
+    [
+     "op",
+     "Un-Subdivide",
+     "mesh.unsubdivide"
+    ],
+    [
+     "op",
+     "Rotate Edge CW",
+     "mesh.edge_rotate"
+    ],
+    [
+     "op",
+     "Rotate Edge CCW",
+     "mesh.edge_rotate"
+    ],
+    [
+     "op",
+     "Edge Slide",
+     "transform.edge_slide"
+    ],
+    [
+     "op",
+     "Loop Cut and Slide",
+     "mesh.loopcut_slide"
+    ],
+    [
+     "op",
+     "Offset Edge Slide",
+     "mesh.offset_edge_loops_slide"
+    ],
+    [
+     "op",
+     "Edge Bevel Weight",
+     "transform.edge_bevelweight"
+    ],
+    [
+     "op",
+     "Edge Crease",
+     "transform.edge_crease"
+    ],
+    [
+     "op",
+     "Mark Seam",
+     "mesh.mark_seam"
+    ],
+    [
+     "op",
+     "Clear Seam",
+     "mesh.mark_seam"
+    ],
+    [
+     "op",
+     "Mark Sharp",
+     "mesh.mark_sharp"
+    ],
+    [
+     "op",
+     "Clear Sharp",
+     "mesh.mark_sharp"
+    ],
+    [
+     "op",
+     "Mark Sharp from Vertices",
+     "mesh.mark_sharp"
+    ],
+    [
+     "op",
+     "Clear Sharp from Vertices",
+     "mesh.mark_sharp"
+    ],
+    [
+     "op",
+     "Set Sharpness by Angle",
+     "mesh.set_sharpness_by_angle"
+    ],
+    [
+     "op",
+     "Mark Freestyle Edge",
+     "mesh.mark_freestyle_edge"
+    ],
+    [
+     "op",
+     "Clear Freestyle Edge",
+     "mesh.mark_freestyle_edge"
+    ]
+   ]
+  },
+  "VIEW3D_MT_edit_mesh_extrude": {
+   "label": "Extrude",
+   "items": [
+    [
+     "op",
+     "Extrude Faces",
+     "view3d.edit_mesh_extrude_move_normal"
+    ],
+    [
+     "op",
+     "Extrude Faces Along Normals",
+     "view3d.edit_mesh_extrude_move_shrink_fatten"
+    ],
+    [
+     "op",
+     "Extrude Individual Faces",
+     "mesh.extrude_faces_move"
+    ],
+    [
+     "op",
+     "Extrude Manifold",
+     "view3d.edit_mesh_extrude_manifold_normal"
+    ],
+    [
+     "op",
+     "Extrude Edges",
+     "mesh.extrude_edges_move"
+    ],
+    [
+     "op",
+     "Extrude Vertices",
+     "mesh.extrude_vertices_move"
+    ],
+    [
+     "op",
+     "Extrude Repeat",
+     "mesh.extrude_repeat"
+    ],
+    [
+     "op",
+     "Spin",
+     "mesh.spin"
+    ]
+   ]
+  },
+  "VIEW3D_MT_edit_mesh_faces": {
+   "label": "Face",
+   "items": [
+    [
+     "op",
+     "Extrude Faces",
+     "view3d.edit_mesh_extrude_move_normal"
+    ],
+    [
+     "op",
+     "Extrude Faces Along Normals",
+     "view3d.edit_mesh_extrude_move_shrink_fatten"
+    ],
+    [
+     "op",
+     "Extrude Individual Faces",
+     "mesh.extrude_faces_move"
+    ],
+    [
+     "op",
+     "Inset Faces",
+     "mesh.inset"
+    ],
+    [
+     "op",
+     "Poke Faces",
+     "mesh.poke"
+    ],
+    [
+     "op",
+     "Triangulate Faces",
+     "mesh.quads_convert_to_tris"
+    ],
+    [
+     "op",
+     "Triangles to Quads",
+     "mesh.tris_convert_to_quads"
+    ],
+    [
+     "op",
+     "Solidify Faces",
+     "mesh.solidify"
+    ],
+    [
+     "op",
+     "Wireframe",
+     "mesh.wireframe"
+    ],
+    [
+     "op",
+     "Fill",
+     "mesh.fill"
+    ],
+    [
+     "op",
+     "Grid Fill",
+     "mesh.fill_grid"
+    ],
+    [
+     "op",
+     "Beautify Faces",
+     "mesh.beautify_fill"
+    ],
+    [
+     "op",
+     "Intersect (Knife)",
+     "mesh.intersect"
+    ],
+    [
+     "op",
+     "Intersect (Boolean)",
+     "mesh.intersect_boolean"
+    ],
+    [
+     "op",
+     "Weld Edges into Faces",
+     "mesh.face_split_by_edges"
+    ],
+    [
+     "op",
+     "Shade Smooth",
+     "mesh.faces_shade_smooth"
+    ],
+    [
+     "op",
+     "Shade Flat",
+     "mesh.faces_shade_flat"
+    ],
+    [
+     "menu",
+     "Face Data",
+     "VIEW3D_MT_edit_mesh_faces_data"
+    ]
+   ]
+  },
+  "VIEW3D_MT_edit_mesh_faces_data": {
+   "label": "Face Data",
+   "items": [
+    [
+     "op",
+     "Rotate Colors",
+     "mesh.colors_rotate"
+    ],
+    [
+     "op",
+     "Reverse Colors",
+     "mesh.colors_reverse"
+    ],
+    [
+     "op",
+     "Rotate UVs",
+     "mesh.uvs_rotate"
+    ],
+    [
+     "op",
+     "Reverse UVs",
+     "mesh.uvs_reverse"
+    ],
+    [
+     "op",
+     "Flip Quad Tessellation",
+     "mesh.flip_quad_tessellation"
+    ],
+    [
+     "op",
+     "Mark Freestyle Face",
+     "mesh.mark_freestyle_face"
+    ],
+    [
+     "op",
+     "Clear Freestyle Face",
+     "mesh.mark_freestyle_face"
+    ]
+   ]
+  },
+  "VIEW3D_MT_edit_mesh_merge": {
+   "label": "Merge",
+   "items": [
+    [
+     "op",
+     "At Center",
+     "mesh.merge:type=CENTER"
+    ],
+    [
+     "op",
+     "At Cursor",
+     "mesh.merge:type=CURSOR"
+    ],
+    [
+     "op",
+     "Collapse",
+     "mesh.merge:type=COLLAPSE"
+    ],
+    [
+     "op",
+     "At First",
+     "mesh.merge:type=FIRST"
+    ],
+    [
+     "op",
+     "At Last",
+     "mesh.merge:type=LAST"
+    ],
+    [
+     "op",
+     "By Distance",
+     "mesh.remove_doubles"
+    ]
+   ]
+  },
+  "VIEW3D_MT_edit_mesh_normals": {
+   "label": "Normals",
+   "items": [
+    [
+     "op",
+     "Flip",
+     "mesh.flip_normals"
+    ],
+    [
+     "op",
+     "Recalculate Outside",
+     "mesh.normals_make_consistent"
+    ],
+    [
+     "op",
+     "Recalculate Inside",
+     "mesh.normals_make_consistent"
+    ],
+    [
+     "op",
+     "Set from Faces",
+     "mesh.set_normals_from_faces"
+    ],
+    [
+     "op",
+     "Rotate...",
+     "transform.rotate_normal"
+    ],
+    [
+     "op",
+     "Point to Target...",
+     "mesh.point_normals"
+    ],
+    [
+     "op",
+     "Merge",
+     "mesh.merge_normals"
+    ],
+    [
+     "op",
+     "Split",
+     "mesh.split_normals"
+    ],
+    [
+     "menu",
+     "Average",
+     "VIEW3D_MT_edit_mesh_normals_average"
+    ],
+    [
+     "op",
+     "Copy Vector",
+     "mesh.normals_tools"
+    ],
+    [
+     "op",
+     "Paste Vector",
+     "mesh.normals_tools"
+    ],
+    [
+     "op",
+     "Smooth Vectors",
+     "mesh.smooth_normals"
+    ],
+    [
+     "op",
+     "Reset Vectors",
+     "mesh.normals_tools"
+    ],
+    [
+     "menu",
+     "Select by Face Strength",
+     "VIEW3D_MT_edit_mesh_normals_select_strength"
+    ],
+    [
+     "menu",
+     "Set Face Strength",
+     "VIEW3D_MT_edit_mesh_normals_set_strength"
+    ]
+   ]
+  },
+  "VIEW3D_MT_edit_mesh_normals_average": {
+   "label": "Average",
+   "items": [
+    [
+     "op",
+     "Custom Normal",
+     "mesh.average_normals"
+    ],
+    [
+     "op",
+     "Face Area",
+     "mesh.average_normals"
+    ],
+    [
+     "op",
+     "Corner Angle",
+     "mesh.average_normals"
+    ]
+   ]
+  },
+  "VIEW3D_MT_edit_mesh_normals_select_strength": {
+   "label": "Select by Face Strength",
+   "items": [
+    [
+     "op",
+     "Weak",
+     "mesh.mod_weighted_strength"
+    ],
+    [
+     "op",
+     "Medium",
+     "mesh.mod_weighted_strength"
+    ],
+    [
+     "op",
+     "Strong",
+     "mesh.mod_weighted_strength"
+    ]
+   ]
+  },
+  "VIEW3D_MT_edit_mesh_normals_set_strength": {
+   "label": "Set Face Strength",
+   "items": [
+    [
+     "op",
+     "Weak",
+     "mesh.mod_weighted_strength"
+    ],
+    [
+     "op",
+     "Medium",
+     "mesh.mod_weighted_strength"
+    ],
+    [
+     "op",
+     "Strong",
+     "mesh.mod_weighted_strength"
+    ]
+   ]
+  },
+  "VIEW3D_MT_edit_mesh_select_by_trait": {
+   "label": "Select All by Trait",
+   "items": [
+    [
+     "op",
+     "Non Manifold",
+     "mesh.select_non_manifold"
+    ],
+    [
+     "op",
+     "Loose Geometry",
+     "mesh.select_loose"
+    ],
+    [
+     "op",
+     "Interior Faces",
+     "mesh.select_interior_faces"
+    ],
+    [
+     "op",
+     "Faces by Sides",
+     "mesh.select_face_by_sides"
+    ],
+    [
+     "op",
+     "Poles by Count",
+     "mesh.select_by_pole_count"
+    ],
+    [
+     "op",
+     "Ungrouped Vertices",
+     "mesh.select_ungrouped"
+    ]
+   ]
+  },
+  "VIEW3D_MT_edit_mesh_select_linked": {
+   "label": "Select Linked",
+   "items": [
+    [
+     "op",
+     "Linked",
+     "mesh.select_linked"
+    ],
+    [
+     "op",
+     "Shortest Path",
+     "mesh.shortest_path_select"
+    ],
+    [
+     "op",
+     "Linked Flat Faces",
+     "mesh.faces_select_linked_flat"
+    ]
+   ]
+  },
+  "VIEW3D_MT_edit_mesh_select_loops": {
+   "label": "Select Loops",
+   "items": [
+    [
+     "op",
+     "Edge Loops",
+     "mesh.select_edge_loop_multi"
+    ],
+    [
+     "op",
+     "Edge Rings",
+     "mesh.select_edge_ring_multi"
+    ],
+    [
+     "op",
+     "Boundary Loops",
+     "mesh.select_boundary_loop_multi"
+    ],
+    [
+     "op",
+     "Loop Inner-Region",
+     "mesh.loop_to_region"
+    ],
+    [
+     "op",
+     "Boundary of Selected",
+     "mesh.region_to_loop"
+    ]
+   ]
+  },
+  "VIEW3D_MT_edit_mesh_select_mode": {
+   "label": "Mesh Select Mode",
+   "items": [
+    [
+     "op",
+     "Vertex",
+     "mesh.select_mode"
+    ],
+    [
+     "op",
+     "Edge",
+     "mesh.select_mode"
+    ],
+    [
+     "op",
+     "Face",
+     "mesh.select_mode"
+    ]
+   ]
+  },
+  "VIEW3D_MT_edit_mesh_select_more_less": {
+   "label": "Select More/Less",
+   "items": [
+    [
+     "op",
+     "More",
+     "mesh.select_more"
+    ],
+    [
+     "op",
+     "Less",
+     "mesh.select_less"
+    ],
+    [
+     "op",
+     "Next Active",
+     "mesh.select_next_item"
+    ],
+    [
+     "op",
+     "Previous Active",
+     "mesh.select_prev_item"
+    ]
+   ]
+  },
+  "VIEW3D_MT_edit_mesh_select_similar": {
+   "label": "Select Similar",
+   "items": [
+    [
+     "op",
+     "Normal",
+     "mesh.select_similar:type=VERT_NORMAL"
+    ],
+    [
+     "op",
+     "Amount of Adjacent Faces",
+     "mesh.select_similar:type=VERT_FACES"
+    ],
+    [
+     "op",
+     "Vertex Groups",
+     "mesh.select_similar:type=VERT_GROUPS"
+    ],
+    [
+     "op",
+     "Amount of Connecting Edges",
+     "mesh.select_similar:type=VERT_EDGES"
+    ],
+    [
+     "op",
+     "Vertex Crease",
+     "mesh.select_similar:type=VERT_CREASE"
+    ],
+    [
+     "op",
+     "Length",
+     "mesh.select_similar:type=EDGE_LENGTH"
+    ],
+    [
+     "op",
+     "Direction",
+     "mesh.select_similar:type=EDGE_DIR"
+    ],
+    [
+     "op",
+     "Amount of Faces Around an Edge",
+     "mesh.select_similar:type=EDGE_FACES"
+    ],
+    [
+     "op",
+     "Face Angles",
+     "mesh.select_similar:type=EDGE_FACE_ANGLE"
+    ],
+    [
+     "op",
+     "Crease",
+     "mesh.select_similar:type=EDGE_CREASE"
+    ],
+    [
+     "op",
+     "Bevel",
+     "mesh.select_similar:type=EDGE_BEVEL"
+    ],
+    [
+     "op",
+     "Seam",
+     "mesh.select_similar:type=EDGE_SEAM"
+    ],
+    [
+     "op",
+     "Sharpness",
+     "mesh.select_similar:type=EDGE_SHARP"
+    ],
+    [
+     "op",
+     "Freestyle Edge Marks",
+     "mesh.select_similar:type=EDGE_FREESTYLE"
+    ],
+    [
+     "op",
+     "Material",
+     "mesh.select_similar:type=FACE_MATERIAL"
+    ],
+    [
+     "op",
+     "Area",
+     "mesh.select_similar:type=FACE_AREA"
+    ],
+    [
+     "op",
+     "Polygon Sides",
+     "mesh.select_similar:type=FACE_SIDES"
+    ],
+    [
+     "op",
+     "Perimeter",
+     "mesh.select_similar:type=FACE_PERIMETER"
+    ],
+    [
+     "op",
+     "Normal",
+     "mesh.select_similar:type=FACE_NORMAL"
+    ],
+    [
+     "op",
+     "Coplanar",
+     "mesh.select_similar:type=FACE_COPLANAR"
+    ],
+    [
+     "op",
+     "Flat/Smooth",
+     "mesh.select_similar:type=FACE_SMOOTH"
+    ],
+    [
+     "op",
+     "Freestyle Face Marks",
+     "mesh.select_similar:type=FACE_FREESTYLE"
+    ],
+    [
+     "op",
+     "Face Regions",
+     "mesh.select_similar_region"
+    ]
+   ]
+  },
+  "VIEW3D_MT_edit_mesh_shading": {
+   "label": "Shading",
+   "items": [
+    [
+     "op",
+     "Smooth Faces",
+     "mesh.faces_shade_smooth"
+    ],
+    [
+     "op",
+     "Flat Faces",
+     "mesh.faces_shade_flat"
+    ],
+    [
+     "op",
+     "Smooth Edges",
+     "mesh.mark_sharp"
+    ],
+    [
+     "op",
+     "Sharp Edges",
+     "mesh.mark_sharp"
+    ],
+    [
+     "op",
+     "Smooth Vertices",
+     "mesh.mark_sharp"
+    ],
+    [
+     "op",
+     "Sharp Vertices",
+     "mesh.mark_sharp"
+    ]
+   ]
+  },
+  "VIEW3D_MT_edit_mesh_showhide": {
+   "label": "Show/Hide",
+   "items": [
+    [
+     "error",
+     "'Self' object has no attribute '_operator_name'",
+     ""
+    ]
+   ]
+  },
+  "VIEW3D_MT_edit_mesh_split": {
+   "label": "Split",
+   "items": [
+    [
+     "op",
+     "Selection",
+     "mesh.split"
+    ],
+    [
+     "op",
+     "Faces by Edges",
+     "mesh.edge_split:type=EDGE"
+    ],
+    [
+     "op",
+     "Faces & Edges by Vertices",
+     "mesh.edge_split:type=VERT"
+    ]
+   ]
+  },
+  "VIEW3D_MT_edit_mesh_vertices": {
+   "label": "Vertex",
+   "items": [
+    [
+     "op",
+     "Extrude Vertices",
+     "mesh.extrude_vertices_move"
+    ],
+    [
+     "op",
+     "Extrude to Cursor or Add",
+     "mesh.dupli_extrude_cursor"
+    ],
+    [
+     "op",
+     "Bevel Vertices",
+     "mesh.bevel"
+    ],
+    [
+     "op",
+     "New Edge/Face from Vertices",
+     "mesh.edge_face_add"
+    ],
+    [
+     "op",
+     "Connect Vertex Path",
+     "mesh.vert_connect_path"
+    ],
+    [
+     "op",
+     "Connect Vertex Pairs",
+     "mesh.vert_connect"
+    ],
+    [
+     "op",
+     "Rip Vertices",
+     "mesh.rip_move"
+    ],
+    [
+     "op",
+     "Rip Vertices and Fill",
+     "mesh.rip_move"
+    ],
+    [
+     "op",
+     "Rip Vertices and Extend",
+     "mesh.rip_edge_move"
+    ],
+    [
+     "op",
+     "Slide Vertices",
+     "transform.vert_slide"
+    ],
+    [
+     "op",
+     "Smooth Vertices",
+     "mesh.vertices_smooth"
+    ],
+    [
+     "op",
+     "Smooth Vertices (Laplacian)",
+     "mesh.vertices_smooth_laplacian"
+    ],
+    [
+     "op",
+     "Vertex Crease",
+     "transform.vert_crease"
+    ],
+    [
+     "op",
+     "Blend from Shape",
+     "mesh.blend_from_shape"
+    ],
+    [
+     "op",
+     "Propagate to Shapes",
+     "mesh.shape_propagate_to_all"
+    ],
+    [
+     "menu",
+     "Vertex Groups",
+     "VIEW3D_MT_vertex_group"
+    ],
+    [
+     "menu",
+     "Hooks",
+     "VIEW3D_MT_hook"
+    ],
+    [
+     "op",
+     "Make Vertex Parent",
+     "object.vertex_parent_set"
+    ]
+   ]
+  },
+  "VIEW3D_MT_edit_mesh_weights": {
+   "label": "Weights",
+   "items": [
+    [
+     "op",
+     "Normalize All",
+     "object.vertex_group_normalize_all"
+    ],
+    [
+     "op",
+     "Normalize",
+     "object.vertex_group_normalize"
+    ],
+    [
+     "op",
+     "Mirror",
+     "object.vertex_group_mirror"
+    ],
+    [
+     "op",
+     "Invert",
+     "object.vertex_group_invert"
+    ],
+    [
+     "op",
+     "Clean",
+     "object.vertex_group_clean"
+    ],
+    [
+     "op",
+     "Quantize",
+     "object.vertex_group_quantize"
+    ],
+    [
+     "op",
+     "Levels",
+     "object.vertex_group_levels"
+    ],
+    [
+     "op",
+     "Smooth",
+     "object.vertex_group_smooth"
+    ],
+    [
+     "op",
+     "Limit Total",
+     "object.vertex_group_limit_total"
+    ],
+    [
+     "menu",
+     "Locks",
+     "VIEW3D_MT_paint_weight_lock"
+    ]
+   ]
+  },
+  "VIEW3D_MT_select_edit_mesh": {
+   "label": "Select",
+   "items": [
+    [
+     "op",
+     "All",
+     "mesh.select_all"
+    ],
+    [
+     "op",
+     "None",
+     "mesh.select_all"
+    ],
+    [
+     "op",
+     "Invert",
+     "mesh.select_all"
+    ],
+    [
+     "op",
+     "Box Select",
+     "view3d.select_box"
+    ],
+    [
+     "op",
+     "Circle Select",
+     "view3d.select_circle"
+    ],
+    [
+     "enum",
+     "Lasso Select",
+     "view3d.select_lasso:mode"
+    ],
+    [
+     "op",
+     "Select Mirror",
+     "mesh.select_mirror"
+    ],
+    [
+     "op",
+     "Select Random",
+     "mesh.select_random"
+    ],
+    [
+     "op",
+     "Checker Deselect",
+     "mesh.select_nth"
+    ],
+    [
+     "menu",
+     "More/Less",
+     "VIEW3D_MT_edit_mesh_select_more_less"
+    ],
+    [
+     "menu",
+     "Select Similar",
+     "VIEW3D_MT_edit_mesh_select_similar"
+    ],
+    [
+     "menu",
+     "Select All by Trait",
+     "VIEW3D_MT_edit_mesh_select_by_trait"
+    ],
+    [
+     "menu",
+     "Select Linked",
+     "VIEW3D_MT_edit_mesh_select_linked"
+    ],
+    [
+     "menu",
+     "Select Loops",
+     "VIEW3D_MT_edit_mesh_select_loops"
+    ],
+    [
+     "op",
+     "Sharp Edges",
+     "mesh.edges_select_sharp"
+    ],
+    [
+     "op",
+     "Side of Active",
+     "mesh.select_axis"
+    ],
+    [
+     "op",
+     "By Attribute",
+     "mesh.select_by_attribute"
+    ]
+   ]
+  },
+  "VIEW3D_MT_uv_map": {
+   "label": "UV Mapping",
+   "items": [
+    [
+     "menu",
+     "Unwrap",
+     "IMAGE_MT_uvs_unwrap"
+    ],
+    [
+     "op",
+     "Project from View",
+     "uv.project_from_view"
+    ],
+    [
+     "op",
+     "Project from View (Bounds)",
+     "uv.project_from_view"
+    ],
+    [
+     "op",
+     "Mark Seam",
+     "mesh.mark_seam"
+    ],
+    [
+     "op",
+     "Clear Seam",
+     "mesh.mark_seam"
+    ],
+    [
+     "op",
+     "Reset",
+     "uv.reset"
+    ]
+   ]
+  }
+ }
+}

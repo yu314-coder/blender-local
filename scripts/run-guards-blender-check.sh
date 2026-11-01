@@ -18,9 +18,13 @@ if [ ! -x "$BLENDER" ]; then
 fi
 home="${TMPDIR:-/tmp}/blenderlocal-guards-home"
 mkdir -p "$home"
+# From that folder, not the repo: what Blender writes into its working folder
+# stays out of the tree.
+ROOT="$(pwd)"
+cd "$home"
 set +e
 HOME="$home" BLENDER_USER_RESOURCES="$home/res" \
-  "$BLENDER" -b --factory-startup --python-exit-code 1 --python tests/guards/blender/verify.py 2>&1 \
+  "$BLENDER" -b --factory-startup --python-exit-code 1 --python "$ROOT/tests/guards/blender/verify.py" 2>&1 \
   | grep -E "^  (PASS|FAIL)|^[A-Z][a-z].*$|^ALL PASS|FAILED$" | grep -vE '^(Blender [0-9]|Read prefs|Writing:)'
 status=${PIPESTATUS[0]}
 set -e

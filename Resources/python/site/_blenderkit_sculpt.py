@@ -64,6 +64,7 @@ own `invoke` makes and `exec` skips are made here too (`_require_brush_fits`).
 
 import math
 import os
+import sys
 import time
 from array import array
 
@@ -124,17 +125,49 @@ REPLAY_BUDGET_MS = 25.0
 # vertices — a 64 x 32 UV sphere's 1,986 is in, at about 2.7 s for an Undo,
 # the dearest thing it does.
 MULTIRES_BASE_BUDGET = 2000
+# And on a level of at most this many vertices: past the base mesh, the level
+# itself starts to cost. Measured in desktop 5.2.1 on a 1,986-vertex base
+# (`multires_display`, a Grab's `_sculpted_tree`, an Undo with the level read
+# back; peak resident memory):
+#   level 3,   129,026 vertices: read 0.40 s, Grab tree 0.08 s and +91 MB,  Undo 0.84 s
+#   level 4,   516,098:          read 0.55 s, Grab tree 0.32 s and +370 MB, Undo 1.11 s
+#   level 5, 2,064,386:          read 1.00 s, Grab tree 1.19 s and +1.06 GB, Undo 2.10 s
+# and the app does the same work about five times slower (round 3's review
+# put an Undo or a lift at levels 4-5 at 8-10 s there, and a Grab's tree at
+# 534 MB). Levels 4 and 5 of the largest base are refused; a 482-vertex base
+# still sculpts at level 4 (126,978 vertices).
+MULTIRES_LEVEL_BUDGET = 300_000
 
-# Voxel Remesh's output, from the mesh's surface area in its OWN units — the
-# units `object.voxel_remesh` measures `remesh_voxel_size` in
-# (voxel_remesh_exec, object_remesh.cc). Measured in desktop 5.2.1, output
-# vertices over (local area / voxel size²): closed shapes 1.02 (a cube) to
-# 1.71 (a 0.1 sphere at a 0.02 voxel); an open plane or grid, which the
-# remesher closes into a sheet with two sides, 2.08 to 2.42. 2.5 bounds all of
-# them. The volume, the world size and the object's scale do not enter: an
-# unscaled 0.1 sphere and a 1 m sphere scaled to 0.1 look alike in the world
-# and remeshed at 0.02 to 536 and 47,648 vertices.
-REMESH_VERTICES_PER_AREA = 2.5
+# Voxel Remesh's output, reckoned in the mesh's OWN units — the units
+# `object.voxel_remesh` measures `remesh_voxel_size` in (voxel_remesh_exec,
+# object_remesh.cc); the volume, the world size and the object's scale do not
+# enter (an unscaled 0.1 sphere and a 1 m sphere scaled to 0.1 look alike in
+# the world and remeshed at 0.02 to 536 and 47,648 vertices).
+#
+# The first guard counted 2.5 vertices per voxel-sized square of the mesh's
+# area. That holds for ordinary closed shapes (measured 1.02 for a cube to
+# 1.71) and open sheets (2.08 to 2.42), but not for thin ones: OpenVDB rebuilds
+# a feature thinner than a voxel as a tube or a blob about a voxel across, so
+# the output's surface is not the input's. Round 3's review measured up to 7
+# times the estimate; this round, in desktop 5.2.1 over 15 shapes at voxels of
+# 0.1, 0.05 and 0.02 (2 m across), up to 53 times: 200 cubes of 4 mm became
+# 256 vertices where area alone said 5, 30 hairs of 4 mm radius 1,218 where it
+# said 271, a 1 cm rod 88 where it said 32.
+#
+# So the estimate is the area of the surface OpenVDB can make, offset by
+# REMESH_OFFSET voxels — Steiner's formula, A + 2·d·M + 4π·d² per piece, with
+# M the mesh's total mean curvature (edge length × the angle between its two
+# faces, halved; an open edge counts as a fold of 180°) — and a loose piece
+# with an open edge counts its area twice, since the remesher closes an open
+# sheet into one with two sides. REMESH_VERTICES_PER_AREA vertices per
+# voxel-sized square of that. Fitted over 46 remeshes (the 45, and 30 rods
+# 0.1 mm thick at a 1 mm voxel: 104,104 vertices where area alone said
+# 89,994): every one comes in under its estimate by at least a quarter;
+# ordinary shapes are overestimated 1.25 (a sphere) to 3.2 times (Suzanne,
+# whose open eyes count twice), thin ones up to 3.7 (the specks), where the
+# old factor gave 1.03 to 2.45 on the ordinary ones.
+REMESH_VERTICES_PER_AREA = 1.87
+REMESH_OFFSET = 0.42
 # Peak memory per output vertex: 1,178,936 vertices took desktop Blender from
 # 395 to 925 MB (450 bytes each); rounded up as the Multires budget's is, for
 # the undo step and the viewport's copy (_blenderkit_multires).
@@ -244,6 +277,55 @@ def brushes():
     return list(_names)
 
 
+# The tool system's name for each mode a brush is picked in.
+_TOOL_MODES = {'SCULPT': 'SCULPT', 'VERTEX_PAINT': 'PAINT_VERTEX', 'WEIGHT_PAINT': 'PAINT_WEIGHT',
+               'TEXTURE_PAINT': 'PAINT_TEXTURE'}
+
+
+def ensure_view_tool(what, mode):
+    """The 3D View's tool for `mode` in Blender's workspace, which
+    `brush.asset_activate` needs, made if there is none, or a Refusal.
+
+    `asset_activate` reads the 3D View's active tool for the mode
+    (`WM_toolsystem_activate_brush_and_tool`) and dereferences it without
+    asking whether there is one. A file saved in a paint or sculpt mode, opened
+    with `load_ui=False` as the app opens every file, keeps the startup
+    workspace, which has no tool for that mode until the mode is entered: the
+    app's autosave, saved in Vertex Paint, crashed the app's bpy 5.3 on the
+    Brush menu's first pick (EXC_BAD_ACCESS at 0xe0 in
+    WM_toolsystem_activate_brush_and_tool, 2026-10-19), and desktop 5.2.1
+    crashes the same way with the app's context. One implementation,
+    `_blenderkit_context.give_brush_tool`, which also guards every other
+    route to the operator (a script line, the console, Run, the operator
+    search: `_blenderkit_context.UNSAFE_OPERATORS`); called under the 3D View
+    override the caller holds, in `mode`."""
+    if _TOOL_MODES.get(mode) is None or bpy.context.workspace is None:
+        raise Refusal(what + " needs Blender's workspace and a brush mode, and this context has "
+                      "neither.")
+    try:
+        _context_module().give_brush_tool(what)
+    except RuntimeError as error:
+        raise Refusal(str(error)) from None
+
+
+def _context_module():
+    """`_blenderkit_context`, imported, or loaded from beside this module where
+    the site folder is not on the path (the desktop checks)."""
+    module = sys.modules.get('_blenderkit_context')
+    if module is None:
+        try:
+            import _blenderkit_context as module
+        except ImportError:
+            import importlib.util
+            spec = importlib.util.spec_from_file_location(
+                '_blenderkit_context', os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                                                    '_blenderkit_context.py'))
+            module = importlib.util.module_from_spec(spec)
+            sys.modules['_blenderkit_context'] = module
+            spec.loader.exec_module(module)
+    return module
+
+
 def activate(name):
     """Makes an Essentials brush the sculpt brush, as the asset shelf does."""
     if name not in brushes():
@@ -255,6 +337,12 @@ def activate(name):
     if obj is None or obj.mode != 'SCULPT':
         raise Refusal("Pick a sculpt brush in Sculpt Mode.")
     _refuse_during_stroke("Picking a brush")
+    if not _knife.on_main_thread():
+        raise Refusal("Picking a brush works through Blender's 3D View, which exists on the main "
+                      "thread only.")
+    window, area, region = _knife.view3d("Picking a brush")
+    with bpy.context.temp_override(window=window, area=area, region=region):
+        ensure_view_tool("Picking a brush", 'SCULPT')
     result = bpy.ops.brush.asset_activate(asset_library_type='ESSENTIALS',
                                           relative_asset_identifier=ASSET_PREFIX + name)
     if 'FINISHED' not in result or _brush() is None or _brush().name != name:
@@ -337,7 +425,7 @@ def state():
                   detail_resolution=round(sculpt.constant_detail_resolution, 4))
     if obj is not None and obj.type == 'MESH':
         mesh = obj.data
-        # The voxel size is in the mesh's own units (see REMESH_VERTICES_PER_AREA),
+        # The voxel size is in the mesh's own units (see REMESH_OFFSET),
         # so the header says what scale stands between them and the scene's.
         scale = obj.matrix_world.to_scale()
         report.update(dyntopo=bool(obj.use_dynamic_topology_sculpting),
@@ -404,18 +492,36 @@ def _require(name):
     return obj
 
 
-def multires_base_refusal(obj, what=None):
-    """Why `obj`'s Multires level is too heavy to sculpt here, or None. See
-    MULTIRES_BASE_BUDGET. `what` names an operation that would add a level."""
+def multires_base_refusal(obj, what=None, level=None):
+    """Why `obj`'s Multires level is too heavy to sculpt here, or None: a base
+    mesh past MULTIRES_BASE_BUDGET, or a level past MULTIRES_LEVEL_BUDGET.
+    `level` is the sculpt level asked about (the one sculpted now when None);
+    `what` names an operation that would make it."""
     count = len(obj.data.vertices)
-    if count <= MULTIRES_BASE_BUDGET:
-        return None
     lead = (what + ": " if what else "")
-    return (lead + "%s's base mesh has %s vertices. On a Multires level Blender rebuilds the "
-            "level from the base mesh after every stroke and every Undo (measured in this app: "
-            "8 s for an Undo on a 4,514-vertex base, 2.7 s on 1,986), so it sculpts Multires "
-            "on base meshes of up to %s vertices. Dynamic Topology or Voxel Remesh add "
-            "detail without it." % (obj.name, format(count, ','), format(MULTIRES_BASE_BUDGET, ',')))
+    if count > MULTIRES_BASE_BUDGET:
+        return (lead + "%s's base mesh has %s vertices. On a Multires level Blender rebuilds the "
+                "level from the base mesh after every stroke and every Undo (measured in this app: "
+                "8 s for an Undo on a 4,514-vertex base, 2.7 s on 1,986), so it sculpts Multires "
+                "on base meshes of up to %s vertices. Dynamic Topology or Voxel Remesh add "
+                "detail without it." % (obj.name, format(count, ','), format(MULTIRES_BASE_BUDGET, ',')))
+    if level is None:
+        modifier = active_multires(obj)
+        level = modifier.sculpt_levels if modifier is not None else 0
+    if level <= 0:
+        return None
+    import _blenderkit_multires
+    shown = _blenderkit_multires.level_vertices(obj.data, level)
+    if shown <= MULTIRES_LEVEL_BUDGET:
+        return None
+    highest = max((n for n in range(1, level) if _blenderkit_multires.level_vertices(obj.data, n)
+                   <= MULTIRES_LEVEL_BUDGET), default=0)
+    return (lead + "%s's Multires level %d has %s vertices. Blender reads a level back after every "
+            "stroke and every Undo, and a Grab builds a search tree over all of it (measured in "
+            "desktop 5.2.1 on a 1,986-vertex base at level 5, 2,064,386 vertices: 2.1 s an Undo and "
+            "1.06 GB more memory for a Grab; the app is about five times slower), so it sculpts "
+            "levels of up to %s vertices. Sculpt at level %d or lower."
+            % (obj.name, level, format(shown, ','), format(MULTIRES_LEVEL_BUDGET, ','), highest))
 
 
 def _require_multires_fits(obj):
@@ -442,6 +548,27 @@ def refuse_heavy_multires():
     if said is not None:
         raise Refusal(said + " Set the Multires's Sculpt level to 0 in the Modifiers panel "
                       "to sculpt " + obj.name + "'s base mesh.")
+
+
+def refuse_heavy_level(obj, level, what):
+    """Refuses, in words, a Multires change that would leave `obj` sculpted
+    on a level of a base mesh past MULTIRES_BASE_BUDGET while it is in Sculpt
+    Mode: `level` is the sculpt level it would leave. Sculpt Mode's own way in
+    asks this (`refuse_heavy_multires`); round 3's review found three ways
+    round it from inside Sculpt Mode — the Modifiers panel's Subdivide, the
+    operator search's `object.multires_subdivide` and the panel's Sculpt
+    level stepper — each of which left Blender evaluating the level on every
+    stroke and Undo (8 s an Undo on a 4,514-vertex base, measured in the
+    app). Nothing for a level of 0, which sculpts the base mesh, under
+    Dynamic Topology, or outside Sculpt Mode."""
+    if not _is_real_blender() or obj is None or obj.type != 'MESH' or obj.mode != 'SCULPT':
+        return
+    if level <= 0 or obj.use_dynamic_topology_sculpting:
+        return
+    said = multires_base_refusal(obj, what, level)
+    if said is not None:
+        raise Refusal(said + " To sculpt " + obj.name + "'s base mesh, keep the Multires's "
+                      "Sculpt level at 0.")
 
 
 # The brushes that paint colour, blur it or smear it (brush_type_is_paint).
@@ -485,8 +612,8 @@ def _require_brush_fits(obj, brush):
                           "mode.")
     if kind in MULTIRES_TYPES and active_multires(obj) is None:
         raise Refusal("The " + brush.name + " brush is only supported in multiresolution "
-                      "mode: " + obj.name + " has no Multires level to sculpt. Use "
-                      "Remesh ▸ Multires Subdivide first.")
+                      "mode: " + obj.name + " has no Multires level to sculpt. Add one first: "
+                      "Remesh ▸ Add Multires and Subdivide, in the header.")
     if kind not in ATTRIBUTE_TYPES:
         key = obj.active_shape_key
         if key is not None and getattr(key, 'lock_shape', False):
@@ -629,7 +756,7 @@ def _spacing(stroke, pressure):
     brush = _brush()
     radius = max(1.0, _size_owner().size / 2.0)
     spacing = brush.spacing
-    if brush.stroke_method == 'SPACE' and getattr(brush, 'use_pressure_spacing', False):
+    if brush.stroke_method in ('SPACE', 'LINE') and getattr(brush, 'use_pressure_spacing', False):
         spacing = spacing * (1.5 - pressure)
     return max(1.0, radius * spacing / 50.0)
 
@@ -640,9 +767,11 @@ def _space(stroke, points):
     dabs = []
     brush = _brush()
     # paint_space_stroke_enabled: a Space stroke, and not a grab tool (the
-    # cloth brush is spaced whatever it deforms).
-    spaced = brush.stroke_method == 'SPACE' and (brush.sculpt_brush_type == 'CLOTH'
-                                                  or not _is_grab_tool(brush))
+    # cloth brush is spaced whatever it deforms). A Line is spaced too, at
+    # its end (`paint_stroke_line_end` calls `paint_space_stroke` without
+    # asking): it used to send the line's two ends alone (round 4's review).
+    spaced = brush.stroke_method == 'LINE' or (
+        brush.stroke_method == 'SPACE' and (brush.sculpt_brush_type == 'CLOTH' or not _is_grab_tool(brush)))
     for point in points:
         last = stroke['last']
         if last is None:
@@ -919,7 +1048,11 @@ def _below_is_sculpt_step():
     if not rows:
         return None
     active = next((row for row in rows if row[3]), None)
-    return active is not None and active[1] == 'Sculpt'
+    # Without case: desktop 5.2.1 prints a sculpt step's type "Sculpt" and the
+    # app's bundled build "SCULPT" (measured in the real app, 2026-10-02), so
+    # compared exactly the device never saw a Sculpt step under a stroke and
+    # anchored every stroke (`stroke_step` reads it the same way).
+    return active is not None and active[1].lower() == 'sculpt'
 
 
 def _anchor(stroke, dab):
@@ -932,8 +1065,7 @@ def _anchor(stroke, dab):
     Sculpt step took 0.3 to 3 (measured in desktop 5.2.1), and the Python
     objects from before it are gone. So the stroke's first dab is first made
     at zero strength, which pushes a Sculpt step, and the stroke rewinds onto
-    that. It is one of the stroke's own steps, so the stroke's Undo takes it
-    back too.
+    that.
 
     Zero strength is not enough by itself: Blender's auto-smooth runs at the
     brush's own Auto-Smooth factor whatever the strength. Measured in desktop
@@ -943,58 +1075,100 @@ def _anchor(stroke, dab):
     face set or colour value. (The Mask, Face Set and paint brushes make their
     layer on the first dab, at its default, as their first real dab would.)
 
-    Under dynamic topology a dab remeshes at any strength, so the anchor's dab
-    is made with the detail method at Manual, under which a stroke changes no
-    topology (Blender remeshes only from Detail Flood Fill then). It matters
-    more there than anywhere: a memfile step comes back without the dynamic
-    topology mesh, so a rewind onto one turned dynamic topology off in the
-    middle of the stroke and the rest replayed without it — after a relaunch
-    (the history's first step is Global Undo) or a labelled change in Sculpt
-    Mode (round 3's review; scratchpad vr/p6c_dyn.py: on after chunk 0, off
-    after chunk 1's 2.66 ms rewind).
+    Under dynamic topology the anchor is not a dab but Blender's Dynamic
+    Topology Toggle, off and on (`_anchor_dyntopo`). Not for the cloth
+    brushes otherwise, whose simulation moves at any strength.
 
-    Not for the cloth brushes, whose simulation moves at any strength.
-    Returns whether the stroke has its anchor (False: it goes on without).
+    Where the anchor's steps go (`_place_anchor`): into the history step under
+    the stroke, so the stroke's own Undo stops on them. Returns whether the
+    stroke has its anchor (False: it goes on without; None: the dab missed the
+    surface, and the next chunk's dab tries again).
     """
     brush = _brush()
     obj = bpy.data.objects[stroke['object']]
+    if _below_is_sculpt_step() is not False:
+        return False
+    if obj.use_dynamic_topology_sculpting:
+        return _anchor_dyntopo(stroke)
     if (brush.sculpt_brush_type == 'CLOTH'
-            or getattr(brush, 'deform_target', 'GEOMETRY') == 'CLOTH_SIM'
-            or _below_is_sculpt_step() is not False):
+            or getattr(brush, 'deform_target', 'GEOMETRY') == 'CLOTH_SIM'):
         return False
     owner = _strength_owner()
     saved, smooth = owner.strength, brush.auto_smooth_factor
-    settings = bpy.context.scene.tool_settings.sculpt
-    dyntopo = obj.use_dynamic_topology_sculpting
-    detail = settings.detail_type_method
     owner.strength = 0.0
     brush.auto_smooth_factor = 0.0
-    if dyntopo:
-        settings.detail_type_method = 'MANUAL'
     try:
         pushed = _run(stroke, _stroke_elements([dab], stroke['location']), stroke['location'] is None)
     finally:
         owner.strength = saved
         brush.auto_smooth_factor = smooth
-        if dyntopo:
-            settings.detail_type_method = detail
     if not pushed:
         # The dab missed the surface: tried again with the next chunk's.
         return None
-    if dyntopo and stroke['fresh'] and stroke['mark'] is not None:
-        # This stroke started Blender's stack (the first after a relaunch), so
-        # the anchor joins its base instead of the stroke: the stroke's Undo
-        # stops on a Sculpt step and keeps dynamic topology, and its Redo has
-        # it to replay onto. Counted into the stroke, the Undo went down to the
-        # memfile step and both were lost (5,352 vertices and dynamic topology
-        # off after the Undo, and again after the Redo, measured in 5.2.1). No
-        # history step lies under the base for the step to throw off. Over a
-        # labelled change it stays the stroke's own, or the next Undo, of that
-        # change, would stop one step short.
+    _place_anchor(stroke, 1)
+    return True
+
+
+def _anchor_dyntopo(stroke):
+    """The anchor under dynamic topology: Blender's Dynamic Topology Toggle
+    run off and on again, two Sculpt steps, the second of which (a
+    "DyntopoBegin" step) holds the whole mesh as it is.
+
+    A memfile step comes back without the dynamic topology mesh. Over a
+    labelled change made in Sculpt Mode — or any other memfile step — a
+    rewind onto it turned Dynamic Topology off in the middle of the stroke,
+    the stroke's Undo did, and a Redo then had no mesh to replay the stroke
+    onto (round 3's review; desktop 5.2.1: 5,325 vertices and Dynamic Topology
+    off after the Undo and again after the Redo, where the stroke made 5,352).
+    A zero-strength dab under Manual detail kept the stroke's own Undo and
+    Redo (counted into the step below), but an Undo past the labelled change
+    and a Redo back crossed its memfile step and lost the stroke again: the
+    stroke's steps are Blender's BMesh log, and nothing rebuilt the BMesh
+    they replay onto. A Redo of a DyntopoBegin step does
+    (`bmesh_handle_dyntopo_begin` in sculpt_undo.cc rebuilds it from the
+    mesh the step logged), so with the toggle pair under it the stroke is
+    redone onto the mesh it was made on. The toggle changes nothing it does
+    not put back: off copies the BMesh to the mesh, on builds it again."""
+    obj = bpy.data.objects[stroke['object']]
+    before = _undo.pushed_since(stroke['mark']) if stroke['mark'] is not None else None
+    for _ in range(2):
+        _undo.reserve(stroke['pushed'] + 3)
+        result = bpy.ops.sculpt.dynamic_topology_toggle()
+        if 'FINISHED' not in result:
+            raise Refusal("Blender could not set up Dynamic Topology's undo for the stroke.")
+        obj = bpy.data.objects[stroke['object']]
+    if not obj.use_dynamic_topology_sculpting:
+        raise Refusal("Dynamic Topology did not come back on under the stroke, so the stroke "
+                      "stops here rather than sculpt without it.")
+    pushed = (_undo.pushed_since(stroke['mark']) - (before or 0)) \
+        if stroke['mark'] is not None and before is not None else 2
+    _place_anchor(stroke, pushed or 0)
+    return True
+
+
+def _place_anchor(stroke, count):
+    """The anchor's `count` steps join the history step the stroke began on,
+    when they are the first steps after it (`_blenderkit_undo.join_current`):
+    the stroke's Undo then stops on them rather than going down onto the
+    memfile step under them, which comes back without the dynamic topology
+    mesh, and the step below's own Undo takes them back with it, so no Undo
+    stops short. After a relaunch the stroke started Blender's stack and no
+    history step is live: they join its base instead (the mark moves past
+    them). Otherwise they are the stroke's own."""
+    if count <= 0:
+        return
+    if stroke['mark'] is not None and _undo.pushed_since(stroke['mark']) == count \
+            and _undo.join_current(count):
+        stroke['mark'] = _undo.mark()
+    elif stroke['fresh'] and stroke['mark'] is not None:
+        # Counted into the stroke, the stroke's Undo went down to the memfile
+        # step and Dynamic Topology was lost (5,352 vertices and dynamic
+        # topology off after the Undo, and again after the Redo, measured in
+        # 5.2.1). No history step lies under the base for the steps to throw
+        # off.
         stroke['mark'] = _undo.mark()
     else:
-        stroke['pushed'] += 1
-    return True
+        stroke['pushed'] += count
 
 
 def _gather(stroke, converted):
@@ -1101,6 +1275,8 @@ def chunk(points):
                 dabs = growing if kind == 'replay' else [growing[0], growing[-1]]
                 if len(dabs) == 2 and dabs[0] == dabs[1]:
                     dabs = dabs[:1]
+        if dabs and obj.use_dynamic_topology_sculpting:
+            _refuse_dyntopo_growth(stroke, obj, brush, len(dabs))
         if dabs and stroke['anchor'] is None:
             # The chunk's last dab: the likeliest to be over the surface (a
             # stroke begun off the mesh has come onto it by now), and where a
@@ -1167,6 +1343,69 @@ def chunk(points):
     result['mirror_ms'] = round((finished - stroked) * 1000, 2)
     stroke['timings'].append((result['dabs'], result['stroke_ms'], result['mirror_ms']))
     return result
+
+
+def _dyntopo_dab_vertices(stroke, obj, brush):
+    """At most how many vertices one Dynamic Topology dab can add: its
+    circle cut into triangles whose edges are the detail size, four times
+    what that area holds (a generous upper bound), for each mirror image the
+    symmetry axes make. The detail is the header's: Relative in pixels, as the
+    brush's Size is; Brush a percentage of the brush; Constant and Manual a
+    resolution in the object's units."""
+    settings = _sculpt_settings()
+    owner = _size_owner()
+    radius_px = max(1.0, float(getattr(owner, 'size', 50)))
+    method = settings.detail_type_method
+    if method == 'RELATIVE':
+        ratio = radius_px / max(1e-6, float(settings.detail_size))
+    elif method == 'BRUSH':
+        ratio = 100.0 / max(1e-6, float(settings.detail_percent))
+    else:
+        camera, view, mapped = stroke['camera'], stroke['view'], stroke['mapped']
+        world_per_point = 2.0 * float(camera['distance']) * math.tan(float(camera['fov_y']) / 2.0) / max(1.0, view[1])
+        radius_world = radius_px / max(1e-6, mapped[0]) * world_per_point
+        if getattr(owner, 'use_locked_size', 'VIEW') == 'SCENE':
+            radius_world = float(getattr(owner, 'unprojected_size', None)
+                                 or getattr(owner, 'unprojected_radius', None) or radius_world)
+        scale = max(abs(c) for c in obj.matrix_world.to_scale()) or 1.0
+        edge = scale / max(1e-6, float(settings.constant_detail_resolution))
+        ratio = radius_world / edge
+    copies = 2 ** sum(1 for axis in ('use_symmetry_x', 'use_symmetry_y', 'use_symmetry_z')
+                      if getattr(obj, axis, False))
+    return 4.0 * math.pi * ratio * ratio * copies
+
+
+def _refuse_dyntopo_growth(stroke, obj, brush, dabs):
+    """Refuses, in words, a chunk of a Dynamic Topology stroke that could
+    take the mesh past the vertex budget: what the mesh has (flushed by the
+    chunk before, `_mirror`) and what its dabs can add at the detail size
+    (`_dyntopo_dab_vertices`). Round 4's fix-round review read it, not run: a
+    stroke never looked at the count, and the Detail Size and Resolution take
+    any value (Constant up to 10,000 per unit: a dab of half a metre at it is
+    millions of triangles), so repeated strokes at a fine detail could grow
+    the mesh without end."""
+    budget = _budget_module()
+    now = len(obj.data.vertices)
+    add = int(_dyntopo_dab_vertices(stroke, obj, brush) * dabs)
+    # Through the stack as Object Mode evaluates it: Blender skips a
+    # Subdivision Surface while Dynamic Topology is on ("Not supported in
+    # dyntopo"; an icosphere at level 5 under Subdivision 2 evaluated at 2,562
+    # in Sculpt Mode and 61,442 in Object Mode) and builds it again on leaving
+    # Sculpt Mode or turning Dynamic Topology off (round 4's second fix-round
+    # review, read: strokes could grow the base to the budget and the stack
+    # then multiply it). A dab's new vertices bring at most three edges, two
+    # triangles and six corners each.
+    mesh = obj.data
+    base = (now + add, len(mesh.edges) + 3 * add, len(mesh.polygons) + 2 * add, len(mesh.loops) + 6 * add)
+    count = budget.stack_vertices(obj, base=base, sculpt=False) if obj.modifiers else now + add
+    if count <= budget.BUDGET:
+        return
+    raise Refusal("Dynamic Topology at this detail could give %s %s vertices%s (it has %s, and %d dabs can "
+                  "add up to %s), and this app stops at %s so it does not run out of memory. Use a larger "
+                  "Detail Size or a lower Resolution, or a smaller brush%s."
+                  % (obj.name, format(int(count), ','), " once its modifiers are counted" if obj.modifiers else "",
+                     format(now, ','), dabs, format(int(add), ','), format(budget.BUDGET, ','),
+                     ", or lower what the modifiers make" if obj.modifiers else ""))
 
 
 def refresh_evaluated(obj):
@@ -1408,7 +1647,28 @@ def end():
                   stroke_ms=[t[1] for t in timings], mirror_ms=[t[2] for t in timings])
     if refused is not None:
         report['refused'] = refused
+    if pushed:
+        # The step Blender's own undo history shows for the stroke, which is
+        # its brush's ("Draw Brush", "Grab Brush", "Inflate Brush" — measured
+        # in desktop 5.2.1 with print_undo_steps): the history records the
+        # stroke under the same name (BpyBridge.sculptEnd). The step's type
+        # is printed "Sculpt" by desktop 5.2.1 and "SCULPT" by the app's
+        # bundled build (measured in the real app, 2026-10-02), so it is
+        # compared without case.
+        step = stroke_step(_undo.blender_steps())
+        if step:
+            report['step'] = step
     return report
+
+
+def stroke_step(rows):
+    """The name of Blender's active undo step when it is a sculpt step —
+    what its undo history calls the stroke just made — from
+    `_blenderkit_undo.blender_steps()`'s rows; None otherwise."""
+    active = next((row for row in rows or [] if row[3]), None)
+    if active is not None and active[1].lower() == 'sculpt' and active[2]:
+        return active[2]
+    return None
 
 
 def cancel():
@@ -1447,6 +1707,13 @@ class counted:
                 _undo.note_pushed(pushed)
             else:
                 _undo.note_pushed(pushed, own=True)
+        elif self.final and hasattr(_undo, 'note_pending_alone'):
+            # Run without its undo argument, a sculpt operator leaves its step
+            # pending (Mask Fill, Face Sets: nothing on the stack until the
+            # next push), and this operation is that operator alone: the
+            # history's push finishes it as the step, without a memfile step
+            # of the whole mesh after it (`_blenderkit_undo._push_own`).
+            _undo.note_pending_alone()
         return False
 
 
@@ -1482,6 +1749,20 @@ def dyntopo(on):
     if on and any(m.type == 'MULTIRES' for m in obj.modifiers):
         raise Refusal("Dynamic Topology cannot run with a Multiresolution modifier. "
                       "Apply or remove it first.")
+    if not on and obj.modifiers:
+        # Turning it off builds the stack Blender skipped on what the strokes
+        # made (see `_refuse_dyntopo_growth`): priced first, as Object Mode
+        # evaluates it.
+        budget = _budget_module()
+        bpy.ops.ed.flush_edits()
+        mesh = obj.data
+        count = budget.stack_vertices(obj, base=(len(mesh.vertices), len(mesh.edges), len(mesh.polygons),
+                                                 len(mesh.loops)), sculpt=False)
+        if count > budget.BUDGET:
+            raise Refusal("Turning Dynamic Topology off would build %s's modifiers on its %s vertices, %s in all, "
+                          "and this app stops at %s so it does not run out of memory. Lower what the modifiers "
+                          "make first." % (obj.name, format(len(mesh.vertices), ','), format(int(count), ','),
+                                           format(budget.BUDGET, ',')))
     with counted(), _view_override():
         result = bpy.ops.sculpt.dynamic_topology_toggle()
     if 'FINISHED' not in result:
@@ -1516,14 +1797,70 @@ def set_voxel_size(value):
     return obj.data.remesh_voxel_size
 
 
-def remesh_estimate(mesh, size):
-    """(vertices Voxel Remesh would make at voxel `size`, the surface area it
-    is reckoned from), both in the mesh's own units. See
-    REMESH_VERTICES_PER_AREA."""
-    areas = array('f', [0.0]) * len(mesh.polygons)
-    mesh.polygons.foreach_get('area', areas)
-    area = float(sum(areas))
-    return REMESH_VERTICES_PER_AREA * area / (size * size), area
+def remesh_measures(mesh):
+    """(area, mean curvature, pieces) of `mesh` as the Voxel Remesh estimate
+    reads them (see REMESH_OFFSET), in the mesh's own units: the area with a
+    loose piece that has an open edge counted twice, the total mean curvature
+    with an open or non-manifold edge counted as a fold of 180°, and the
+    loose pieces that have faces. One implementation, the vertex budget's
+    (`_blenderkit_budget.Measures`, numpy), shared with the Remesh modifier's
+    count: it takes each face's area from its triangles, which is what
+    OpenVDB is given — a twisted quad's own `area` is far less (round 4's fix
+    round: 260 against 17,732 m² on a twisted Bézier ribbon)."""
+    return _budget_module().Measures(mesh).remesh()
+
+
+def _budget_module():
+    """The vertex budget (_blenderkit_budget.py), imported or — where the site
+    folder is not on the path, as in the desktop checks — loaded from its file."""
+    import sys
+    budget = sys.modules.get('_blenderkit_budget')
+    if budget is None:
+        try:
+            import _blenderkit_budget as budget
+        except ImportError:
+            import importlib.util
+            import os
+            spec = importlib.util.spec_from_file_location(
+                '_blenderkit_budget', os.path.join(os.path.dirname(__file__), '_blenderkit_budget.py'))
+            budget = importlib.util.module_from_spec(spec)
+            sys.modules['_blenderkit_budget'] = budget
+            try:
+                spec.loader.exec_module(budget)
+            except BaseException:
+                sys.modules.pop('_blenderkit_budget', None)
+                raise
+    return budget
+
+
+def _remesh_count(measures, size):
+    area, curvature, pieces = measures
+    offset = REMESH_OFFSET * size
+    surface = area + 2.0 * offset * curvature + 4.0 * math.pi * offset * offset * pieces
+    return REMESH_VERTICES_PER_AREA * surface / (size * size)
+
+
+def remesh_estimate(mesh, size, budget=None):
+    """(vertices Voxel Remesh would make at voxel `size`, the area it is
+    reckoned from), in the mesh's own units: an upper bound, see
+    REMESH_OFFSET. With `budget`, a mesh whose plain area already passes it
+    is answered from the area alone, before the walk over its edges."""
+    measures = remesh_measures(mesh)
+    return _remesh_count(measures, size), measures[0]
+
+
+def remesh_smallest(mesh, budget):
+    """The smallest voxel size whose estimate stays within `budget`."""
+    area, curvature, pieces = remesh_measures(mesh)
+    k, c = REMESH_VERTICES_PER_AREA, REMESH_OFFSET
+    # k·(A·x² + 2c·M·x + 4π·c²·P) = budget, with x = 1 / size.
+    qa, qb, qc = k * area, 2.0 * k * c * curvature, 4.0 * math.pi * k * c * c * pieces - budget
+    if qc >= 0:
+        return float('inf')
+    if qa <= 0:
+        return qb / -qc if qb > 0 else 0.0
+    x = (-qb + math.sqrt(qb * qb - 4.0 * qa * qc)) / (2.0 * qa)
+    return 1.0 / x if x > 0 else 0.0
 
 
 def voxel_remesh():
@@ -1557,8 +1894,10 @@ def refuse_voxel_remesh(obj):
     """Raises, in words, when Voxel Remesh at `obj`'s voxel size would pass
     the vertex budget or the memory left (see `voxel_remesh`). Shared by the
     Sculpt header's Remesh and the operator search's `object.voxel_remesh`,
-    which ran with no check at all: 1,043,336 vertices from a 2 m cube at a
-    0.0048 voxel, past this estimate's 2,604,166 (round 3's review)."""
+    which ran with no check at all (round 3's review). The count it gives
+    is an upper bound (REMESH_OFFSET), so the sentence says "as many as":
+    a 2 m cube at a 0.0048 voxel is estimated at 1,954,089 and made 1,043,336
+    (round 3's measurement), and passes."""
     if obj is None or obj.type != 'MESH':
         return
     size = obj.data.remesh_voxel_size
@@ -1566,21 +1905,26 @@ def refuse_voxel_remesh(obj):
         raise Refusal("Voxel Remesh needs a voxel size above zero.")
     import _blenderkit_multires
     budget = _blenderkit_multires.BUDGET
-    count, area = remesh_estimate(obj.data, size)
-    # The smallest voxel size the budget allows, in the same units.
-    smallest = math.sqrt(REMESH_VERTICES_PER_AREA * area / budget) if area > 0 else 0.0
+    count, area = remesh_estimate(obj.data, size, budget)
     units = _units_note(obj)
     if count > budget:
-        raise Refusal("A voxel size of %g would remesh %s into about %s vertices, and this app "
+        # The smallest voxel size the budget allows, in the same units.
+        smallest = remesh_smallest(obj.data, budget)
+        raise Refusal("A voxel size of %g could remesh %s into as many as %s vertices, and this app "
                       "stops at %s so it does not run out of memory. Use %.4g or larger%s."
                       % (size, obj.name, format(int(count), ','), format(budget, ','),
                          smallest, units))
     free = _blenderkit_multires.available_memory()
     need = count * REMESH_PEAK_BYTES_PER_VERTEX
     if free is not None and need > free:
-        raise Refusal("A voxel size of %g would remesh %s into about %s vertices, which needs "
+        raise Refusal("A voxel size of %g could remesh %s into as many as %s vertices, which needs "
                       "about %.1f GB of memory, and %.1f GB is free. Use a larger size%s."
                       % (size, obj.name, format(int(count), ','), need / 1e9, free / 1e9, units))
+    # And through the modifiers above the new mesh: a Subdivision Surface on
+    # top multiplies what the Remesh makes (round 4's fix-round review: a cube
+    # under Subdivision 3 at 0.02, 386 → 3,917,186, with the base priced alone).
+    if obj.modifiers:
+        _budget_module().price_voxel_remesh(obj, count)
 
 
 def _units_note(obj):
@@ -1604,7 +1948,9 @@ def multires_subdivide():
     # What a Multires costs here is its base mesh (MULTIRES_BASE_BUDGET):
     # measured on the review's 99,840-triangle sphere, Subdivide to level 1
     # took 26.9 s and level 2 76 s, and every stroke after it 13 s a chunk.
-    said = multires_base_refusal(obj, "Multires Subdivide")
+    existing = next((m for m in obj.modifiers if m.type == 'MULTIRES'), None)
+    said = multires_base_refusal(obj, "Multires Subdivide",
+                                 (existing.total_levels if existing is not None else 0) + 1)
     if said is not None:
         raise Refusal(said)
     # The Modifiers panel's budget: each press multiplies the mesh by four,
@@ -1615,19 +1961,21 @@ def multires_subdivide():
     existing = next((m for m in obj.modifiers if m.type == 'MULTIRES'), None)
     _blenderkit_multires.refuse_over_budget(
         obj, existing.total_levels if existing is not None else 0, "Multires Subdivide")
+    # Through the Modifiers panel's own Subdivide (`_blenderkit_multires.run`),
+    # which does from Sculpt Mode what Blender's operator does there: the new
+    # level is the sculpt level, and the viewport level stays where it was.
+    # This used to run the operator in Object Mode and leave it there, which
+    # raises the viewport level too: four presses left the levels at 4/4/4
+    # (viewport, sculpt, total) where Blender and the panel leave 0/4/4
+    # (round 3's review; measured again in desktop 5.2.1).
     with counted(final=False):
-        bpy.ops.object.mode_set(mode='OBJECT')
-        try:
-            modifier = next((m for m in obj.modifiers if m.type == 'MULTIRES'), None)
-            if modifier is None:
-                modifier = obj.modifiers.new("Multires", 'MULTIRES')
-            result = bpy.ops.object.multires_subdivide(modifier=modifier.name, mode='CATMULL_CLARK')
-            if 'FINISHED' not in result:
-                raise Refusal("Blender could not subdivide " + obj.name + ".")
-        finally:
-            bpy.ops.object.mode_set(mode='SCULPT')
+        modifier = existing
+        if modifier is None:
+            modifier = obj.modifiers.new("Multires", 'MULTIRES')
+        _blenderkit_multires.run('subdivide', modifier.name)
+    obj = bpy.data.objects[obj.name]
     _mirror(obj)
-    return modifier.total_levels
+    return obj.modifiers[modifier.name].total_levels
 
 
 MASK_ACTIONS = ('CLEAR', 'INVERT', 'FILL')

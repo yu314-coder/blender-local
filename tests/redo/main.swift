@@ -198,30 +198,47 @@ check("merge by distance", meshKeys(.mergeByDistance) == ["threshold"],
       "\(meshKeys(.mergeByDistance))")
 check("randomize", meshKeys(.randomize) == ["offset", "uniform", "normal", "seed"],
       "\(meshKeys(.randomize))")
-check("loop cut", meshKeys(.loopCut) == ["number_cuts", "smoothness", "interpolation"],
-      "\(meshKeys(.loopCut))")
+check("subdivide edge-ring: Blender's five rows in its order",
+      meshKeys(.subdivideEdgeRing) == ["number_cuts", "interpolation", "smoothness", "profile_shape_factor", "profile_shape"],
+      "\(meshKeys(.subdivideEdgeRing))")
 check("shrink/fatten, push/pull and to sphere all take value",
       [LastOperator.Mesh.shrinkFatten, .pushPull, .toSphere].allSatisfy { meshKeys($0) == ["value"] })
 
-// Loop Cut is the ring through the selected edges, so the ring is selected
-// first, an empty selection is an error the reader can act on, and the cut is
-// the last line — in the first run, the re-run and the log alike.
-let loopCut = LastOperator.mesh(.loopCut)
-let cutLines = loopCut.python.split(separator: "\n").map(String.init)
-check("loop cut selects the ring before cutting",
-      cutLines.first == "bpy.ops.mesh.select_edge_ring_multi()", loopCut.python)
-check("loop cut refuses an empty selection in words",
-      loopCut.python.contains("raise RuntimeError('Loop Cut cuts across the selected edges"), loopCut.python)
-check("loop cut ends with the cut, linear by default",
-      cutLines.last == "bpy.ops.mesh.subdivide_edgering(number_cuts=1, smoothness=0, interpolation='LINEAR')",
-      cutLines.last ?? "")
-var adjustedCut = loopCut
-adjustedCut.subject = "Cube"
-adjustedCut["number_cuts"] = 3
-check("an adjusted loop cut re-selects the ring before cutting again",
-      adjustedCut.rerunPython.contains("bpy.ops.mesh.select_edge_ring_multi()\n    if bpy.context.object.data.total_edge_sel == 0:")
-      && adjustedCut.rerunPython.contains("subdivide_edgering(number_cuts=3,"),
-      adjustedCut.rerunPython)
+// The Edge menu's old "Loop Cut" row selected the whole ring and then ran
+// Subdivide Edge-Ring, which no row of Blender's does. It is Blender's own
+// Subdivide Edge-Ring now — that operator alone, on the selection — refused in
+// words with fewer than two edges selected, and when Blender's FINISHED changed
+// nothing (measured in 5.2.1: one cube edge, or two sharing a corner). The
+// toolbar's Loop Cut is the cut through one edge (tests/cuttools).
+let edgeRing = LastOperator.mesh(.subdivideEdgeRing)
+let ringLines = edgeRing.python.split(separator: "\n").map(String.init)
+check("subdivide edge-ring no longer selects the ring first (the old row did)",
+      !edgeRing.python.contains("select_edge_ring_multi"), edgeRing.python)
+check("subdivide edge-ring refuses fewer than two edges in words",
+      edgeRing.python.contains("total_edge_sel < 2")
+      && edgeRing.python.contains("raise RuntimeError('Subdivide Edge-Ring cuts across"), edgeRing.python)
+// Blender 5.2.1's RNA defaults (read in desktop Blender): 10 cuts, Blend
+// Path, Smoothness 1, Profile Factor 0, Profile Shape Smooth. The row used to
+// send the old Loop Cut row's 1 cut, Linear and Smoothness 0.
+check("the Info line ends with Blender's call, with Blender's own defaults",
+      ringLines.last == "bpy.ops.mesh.subdivide_edgering(number_cuts=10, interpolation='PATH', smoothness=1, "
+        + "profile_shape_factor=0, profile_shape='SMOOTH')",
+      ringLines.last ?? "")
+check("its Smoothness and Profile Factor are bare numbers, not metres",
+      edgeRing.parameters.filter { ["smoothness", "profile_shape_factor"].contains($0.key) }.allSatisfy { !$0.display.contains("m") },
+      edgeRing.parameters.map(\.display).joined(separator: ", "))
+check("and ten cuts are priced against the vertex budget before Blender runs",
+      edgeRing.python.contains("_blenderkit_loopcut.check_edgering(10)"), edgeRing.python)
+check("what runs says so when Blender changed nothing, and the Info line does not carry the check",
+      edgeRing.executedPython.contains("if _bk_lc.edit_state() == _bk_counts:")
+      && !edgeRing.python.contains("edit_state"), edgeRing.executedPython)
+var adjustedRing = edgeRing
+adjustedRing.subject = "Cube"
+adjustedRing["number_cuts"] = 3
+check("an adjusted Subdivide Edge-Ring re-runs with the new count and the same checks",
+      adjustedRing.rerunPython.contains("subdivide_edgering(number_cuts=3,")
+      && adjustedRing.rerunPython.contains("edit_state()"),
+      adjustedRing.rerunPython)
 check("the operators without a lead are unchanged",
       !LastOperator.mesh(.bevel).python.contains("\n"), LastOperator.mesh(.bevel).python)
 
@@ -395,7 +412,7 @@ for m in [LastOperator.Mesh.selectEdgeLoops, .selectEdgeRings, .markSeam, .clear
     let lines = LastOperator.mesh(m).python.split(separator: "\n").map(String.init)
     check("\(m.displayName) refuses an empty edge selection before the call",
           lines.count == 3 && lines[0] == "if bpy.context.object.data.total_edge_sel == 0:"
-          && lines[1].contains("raise RuntimeError('\(m.displayName) ") && lines[2].hasPrefix(m.call),
+          && lines[1].contains("raise RuntimeError('\(m.rowName) ") && lines[2].hasPrefix(m.call),
           lines.joined(separator: " / "))
 }
 check("connect vertex path wants two vertices",
@@ -433,41 +450,61 @@ along["value"] = -1
 check("slide vertices clamps at 0, where Blender's Clamp stops it, and slides along -Y",
       along.python.contains("vert_slide(value=0, direction=(0.0, -1.0, 0.0))"), along.python)
 
-// The Mesh menu reads these.
-check("the new groups are Blender's headings, in its header's order",
+// The Mesh menu reads these: Blender's own menus (docs/blender-names.md;
+// tests/names holds every row to Blender's menus as 5.2.1 draws them).
+check("the groups are Blender's menus: Select Loops, its Mesh menu's, then Vertex, Edge and Face",
       LastOperator.Mesh.Group.allCases.map(\.rawValue)
-      == ["Select Loops", "Add Geometry", "Split", "Cut and Divide", "Vertex", "Edge",
-          "Clean Up", "Fill", "Normals", "Deform"],
+      == ["Select Loops", "Transform", "Extrude", "Merge", "Split", "Mesh", "Normals", "Average", "Clean Up",
+          "Delete", "Vertex", "Edge", "Face"],
       "\(LastOperator.Mesh.Group.allCases.map(\.rawValue))")
-check("and the Edge group lists Blender's Edge menu in its order",
-      LastOperator.Mesh.allCases.filter { $0.group == .edge }.map(\.displayName)
-      == ["Edge Slide", "Offset Edge Slide", "Edge Bevel Weight", "Edge Crease",
-          "Mark Seam", "Clear Seam", "Mark Sharp", "Clear Sharp", "Un-Subdivide"],
-      "\(LastOperator.Mesh.allCases.filter { $0.group == .edge }.map(\.displayName))")
-// The menu draws every group and fills it from `group`, so an operator is
-// always in a drawn group; what can go wrong is a group drawn empty.
-check("every group the menu draws has an operator in it",
-      LastOperator.Mesh.Group.allCases.allSatisfy { g in
-          LastOperator.Mesh.allCases.contains { $0.group == g }
+check("and the Edge group lists Blender's Edge menu's rows in its order",
+      LastOperator.Mesh.Group.edge.rows.map(\.menuLabel)
+      == ["Bevel Edges", "Bridge Edge Loops", "Subdivide", "Subdivide Edge-Ring", "Un-Subdivide",
+          "Rotate Edge CW", "Rotate Edge CCW", "Edge Slide",
+          "Offset Edge Slide", "Edge Bevel Weight", "Edge Crease", "Mark Seam", "Clear Seam",
+          "Mark Sharp", "Clear Sharp"],
+      "\(LastOperator.Mesh.Group.edge.rows.map(\.menuLabel))")
+// Limited Dissolve is in two, as Blender has it in Clean Up and in Delete.
+check("each row is in the group that lists it, and in one only (Limited Dissolve in Clean Up and Delete)",
+      LastOperator.Mesh.allCases.allSatisfy { m in
+          LastOperator.Mesh.Group.allCases.filter { $0.rows.contains(m) }
+              == (m == .limitedDissolve ? [.cleanUp, .delete] : [m.group])
       })
+check("the redo panel's title is the operator's name, the row its menu's label: Clear Seam is mark_seam",
+      LastOperator.mesh(.clearSeam).name == "Mark Seam" && LastOperator.Mesh.clearSeam.menuLabel == "Clear Seam"
+      && LastOperator.mesh(.quadify).name == "Triangles to Quads"
+      && LastOperator.mesh(.extrude).name == "Extrude Region and Shrink/Fatten"
+      && LastOperator.Mesh.extrude.menuLabel == "Extrude Faces Along Normals")
+// The menu draws every group and fills it from the group's `rows`; what can
+// go wrong is a group drawn empty.
+check("every group the menu draws has an operator in it",
+      LastOperator.Mesh.Group.allCases.allSatisfy { !$0.rows.isEmpty })
 
 // From Object Mode the menu runs an operator on the selection the mesh last
 // stored, which the app does not draw there. These change nothing else.
-check("the selections and the edge flags are offered in Edit Mode only",
+// Round 4's rows (group 6) are Blender's Edit Mode rows too: run from Object
+// Mode on the stored selection, Delete ▸ Vertices or Merge would take the
+// whole mesh. Recalculate Inside is Recalculate Outside's operator and runs
+// where that row always has.
+check("the selections, the edge flags and round 4's rows are offered in Edit Mode only",
       LastOperator.Mesh.allCases.filter(\.editModeOnly)
       == [.selectEdgeLoops, .selectEdgeRings, .bevelWeight, .edgeCrease,
-          .markSeam, .clearSeam, .markSharp, .clearSharp],
+          .markSeam, .clearSeam, .markSharp, .clearSharp]
+         + LastOperator.Mesh.allCases.filter { LastOperator.Mesh.roundFourRows.contains($0) },
       "\(LastOperator.Mesh.allCases.filter(\.editModeOnly))")
+check("and Recalculate Inside is not one of them", !LastOperator.Mesh.recalculateInside.editModeOnly)
 
 // Flipped picks which neighbour Even follows, and does nothing without Even
-// (measured in 5.2.1): its row is greyed until Even is on.
+// (measured in 5.2.1), but Blender's panel never greys it: Edge Slide has no
+// `ui` callback and `transform_poll_property` no rule for `flipped`.
 var evenSlide = LastOperator.mesh(.edgeSlide)
 let flippedRow = evenSlide.parameters.first { $0.key == "flipped" }!
-check("Flipped is greyed while Even is off", !evenSlide.isActive(flippedRow))
+check("Flipped is live while Even is off, as in Blender's panel",
+      flippedRow.activeWhen == nil && evenSlide.isActive(flippedRow))
 evenSlide["use_even"] = 1
-check("and live once it is on", evenSlide.isActive(flippedRow))
-check("the other rows are always live",
-      evenSlide.parameters.filter { $0.key != "flipped" }.allSatisfy { evenSlide.isActive($0) }
+check("and still live once it is on", evenSlide.isActive(flippedRow))
+check("every Edge Slide and Bevel row is live",
+      evenSlide.parameters.allSatisfy { evenSlide.isActive($0) }
       && LastOperator.mesh(.bevel).parameters.allSatisfy { LastOperator.mesh(.bevel).isActive($0) })
 
 // Knife Project's `within` indents every line of the call now; one line is

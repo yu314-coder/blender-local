@@ -31,17 +31,22 @@ struct TPOut {
     float2 uv;
 };
 
+// `shading` and `domain` are Blender's face or corner normals, as
+// mesh_shaded_vertex in Shaders.metal reads them; domain 0 is the vertex's.
 vertex TPOut texpaint_vertex(uint corner [[vertex_id]],
                              const device TPVertexIn *verts [[buffer(0)]],
                              constant TPUniforms &u [[buffer(1)]],
                              const device float2 *cornerUVs [[buffer(2)]],
-                             const device uint *cornerVertices [[buffer(3)]])
+                             const device uint *cornerVertices [[buffer(3)]],
+                             const device packed_float3 *shading [[buffer(5)]],
+                             constant uint &domain [[buffer(7)]])
 {
     TPVertexIn v = verts[cornerVertices[corner]];
     float4 world = u.model * float4(v.position, 1.0);
+    float3 normal = domain == 0 ? v.normal : float3(shading[domain == 1 ? corner / 3 : corner]);
     TPOut out;
     out.position    = u.viewProjection * world;
-    out.worldNormal = normalize((u.normalMatrix * float4(v.normal, 0.0)).xyz);
+    out.worldNormal = normalize((u.normalMatrix * float4(normal, 0.0)).xyz);
     out.worldPos    = world.xyz;
     // Images are held top row first; UV v runs up from the bottom.
     float2 uv = cornerUVs[corner];
@@ -54,11 +59,15 @@ vertex TPOut texpaint_vertex(uint corner [[vertex_id]],
 // mesh_fragment's, so a face with no image looks exactly as the solid pass
 // draws it.
 fragment float4 texpaint_fragment(TPOut in [[stage_in]],
+                                  bool front [[front_facing]],
                                   constant TPUniforms &u [[buffer(1)]],
                                   texture2d<float> image [[texture(0)]],
                                   sampler imageSampler [[sampler(0)]])
 {
+    // Both sides drawn and a back face lit from its own side, as the solid
+    // pass does (`facing_normal` in Shaders.metal).
     float3 n = normalize(in.worldNormal);
+    if (!front) n = -n;
     const float3 keyDir  = normalize(float3(-0.35,  0.55,  0.75));
     const float3 fillDir = normalize(float3( 0.70, -0.30,  0.35));
     const float3 rimDir  = normalize(float3( 0.10, -0.85, -0.45));

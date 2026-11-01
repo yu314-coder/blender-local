@@ -21,8 +21,7 @@ import SwiftUI
 /// local copy and ran nothing, were removed rather than fixed — the controls
 /// that are on screen are LayoutWorkspace's Pivot, Snap and Proportional
 /// menus and its More ▸ Transform Tools sheet (TransformToolsPanel), and they
-/// go through `bridge.run`. SidebarN has them too, but nothing instantiates
-/// that either. Auto Merge went the same way: its toggle wrote a local copy
+/// go through `bridge.run`. Auto Merge went the same way: its toggle wrote a local copy
 /// and logged a line, so the preview welded while Blender, which never heard
 /// of it, did not. It is in TransformToolsPanel now, as Blender's setting.
 /// Its X / Y / Z toggles went too, for the same reason: they set
@@ -164,13 +163,13 @@ struct ToolHeader: View {
                         // own brushes are SculptHeader's.
                         scene.sculpt.brush = b
                     } label: {
-                        Label(b.label, systemImage: scene.sculpt.brush == b ? "checkmark" : b.icon)
+                        Label(b.name, systemImage: scene.sculpt.brush == b ? "checkmark" : b.icon)
                     }
                 }
             } label: {
                 HStack(spacing: 4) {
                     Image(systemName: scene.sculpt.brush.icon).font(.system(size: 11))
-                    Text(scene.sculpt.brush.label).font(BTheme.Font.ui(11))
+                    Text(scene.sculpt.brush.name).font(BTheme.Font.ui(11))
                     Image(systemName: "chevron.down").font(.system(size: 7))
                 }
                 .foregroundStyle(BTheme.text)
@@ -340,22 +339,14 @@ struct ToolHeader: View {
         .clipShape(RoundedRectangle(cornerRadius: BTheme.Metric.corner))
     }
 
+    /// The tool's name. Its Orientation chip went: it set a copy of the
+    /// orientation that no drag read and Blender never heard of. Blender's is
+    /// the 3D View header's Orientation menu, in LayoutWorkspace.
     private var transformSettings: some View {
         HStack(spacing: 4) {
             Text(tool.label).font(BTheme.Font.ui(11)).foregroundStyle(BTheme.text)
             Divider().frame(height: 14).overlay(BTheme.outline)
-            Menu {
-                ForEach(ViewportOptions.TransformOrientation.allCases) { o in
-                    Button {
-                        if o.isImplemented { options.orientation = o }
-                    } label: {
-                        Label(o.label, systemImage: options.orientation == o ? "checkmark" : "")
-                    }
-                    .disabled(!o.isImplemented)
-                }
-            } label: {
-                headerChip("Orientation", value: options.orientation.label)
-            }
+            headerChip("Orientation", value: scene.orientation.label)
         }
     }
 

@@ -103,10 +103,32 @@ public enum ConsoleShell {
     }
 
     /// Whether a command may change the scene, and so is worth an undo step and
-    /// a mirror of the scene into the viewport. Only running a Python file can.
+    /// a mirror of the scene into the viewport. Only running Python can: the
+    /// command itself, or the one `time` or `watch` runs (`_time_cmd` and
+    /// `_watch` in _blenderkit_shell call the next word's builtin). Reading the
+    /// first word alone took `time python -c "…"` for a command that touches
+    /// nothing: whatever it changed in Blender was not mirrored into the
+    /// viewport and had no undo step (round 4's review of group 7).
     public static func touchesScene(_ command: String) -> Bool {
-        let word = command.prefix { $0 != " " && $0 != "\t" }
-        return word == "python" || word == "python3" || word == "py"
+        var words = command.split(whereSeparator: { $0 == " " || $0 == "\t" }).map(String.init)
+        while let word = words.first {
+            switch word {
+            case "python", "python3", "py":
+                return true
+            case "time":
+                words.removeFirst()
+            case "watch":
+                // `watch [-n SEC] [-c COUNT] CMD`: the flags and their values.
+                words.removeFirst()
+                while let flag = words.first, flag.hasPrefix("-") {
+                    words.removeFirst()
+                    if ["-n", "-c", "--count"].contains(flag), !words.isEmpty { words.removeFirst() }
+                }
+            default:
+                return false
+            }
+        }
+        return false
     }
 
     /// What a console run leaves in the record.

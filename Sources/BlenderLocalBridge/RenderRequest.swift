@@ -16,11 +16,12 @@ public struct RenderRequest: Equatable, Sendable {
         case eevee = "BLENDER_EEVEE"
         case workbench = "BLENDER_WORKBENCH"
         public var id: String { rawValue }
+        /// The engine's name in Blender's Render Engine menu (5.2.1).
         public var label: String {
             switch self {
             case .cycles: return "Cycles"
-            case .eevee: return "Eevee"
-            case .workbench: return "Solid"
+            case .eevee: return "EEVEE"
+            case .workbench: return "Workbench"
             }
         }
         /// What it is for, in the panel.
@@ -173,7 +174,7 @@ public struct RenderRequest: Equatable, Sendable {
         switch source {
         case .sceneCamera:
             lines.append("if scene.camera is None:")
-            lines.append("    raise RuntimeError(\"This scene has no camera. Add ▸ Camera, or render from the 3D View.\")")
+            lines.append("    raise RuntimeError(\"This scene has no camera. Add ▸ Camera, or render from the 3D Viewport.\")")
         case .view(let view):
             lines += [
                 "_data = bpy.data.cameras.new(\(Bpy.quote(Self.viewCameraName)))",
@@ -250,6 +251,47 @@ public struct RenderRequest: Equatable, Sendable {
     }
 }
 
+/// Cycles' Metal kernels: compiled the first time Cycles renders on the GPU
+/// of a device — minutes, once, cached afterwards. The Render panel warns
+/// before that render; a script's render is warned in the console, by the
+/// same words, through `_blenderkit_cycles` (BpySession arms it before a run
+/// that may render and reads it back after).
+public enum CyclesKernels {
+    /// The defaults key both remember it under: the Render panel's
+    /// `@AppStorage` and the scripts' warning.
+    public static let builtKey = "bl_cycles_kernels_built"
+
+    /// The Render panel's warning, word for word.
+    public static let warning = "Cycles renders on the GPU. The first one builds its shaders, which takes a few "
+        + "minutes once; every render after that is quick. EEVEE needs no wait."
+
+    /// Whether a Cycles render has finished on this device's GPU.
+    public static var built: Bool {
+        get { UserDefaults.standard.bool(forKey: builtKey) }
+        set { UserDefaults.standard.set(newValue, forKey: builtKey) }
+    }
+
+    /// Whether `source` may render: as blunt as `ScriptThread.mayStartGPU`,
+    /// since a false match only arms a handler that never fires.
+    public static func mayRender(_ source: String) -> Bool {
+        source.contains("render.render")
+    }
+
+    /// Run before such a script: the warning goes out before its first Cycles
+    /// render on the GPU (a `render_pre` handler).
+    public static var arm: String {
+        "import _blenderkit_cycles\n_blenderkit_cycles.arm(\(Bpy.quote(warning)))"
+    }
+
+    /// Run after it: prints True when a Cycles render finished on the GPU.
+    public static let disarm = "import _blenderkit_cycles\nprint(_blenderkit_cycles.disarm())"
+
+    /// Whether `disarm` said a render finished on the GPU.
+    public static func finishedOnGPU(_ printed: [String]) -> Bool {
+        printed.contains { $0.trimmingCharacters(in: .whitespaces) == "True" }
+    }
+}
+
 public extension Bpy {
     /// `scene.camera = <object>`, which is what a render goes through.
     static func setSceneCamera(_ name: String) -> String {
@@ -257,9 +299,33 @@ public extension Bpy {
     }
 
     /// Aims a camera the way the 3D View is looking, as Blender's
-    /// Align Active Camera to View does.
+    /// Align Active Camera to View does: the view's world placement is
+    /// written as the object's world matrix (`BKE_object_apply_mat4`, which
+    /// Blender's operator and `matrix_world` both use), so it goes through
+    /// the camera's parent and into whatever rotation mode it uses.
+    ///
+    /// The view's world values were written into the local channels, which
+    /// is right only for an unparented camera rotated by XYZ Euler. Round 3's
+    /// review measured 10.2 m and 78.1° off on a parented camera, and 63° on
+    /// one rotated by quaternion (`rotation_euler` is not what turns it).
+    /// The simulator's stand-in has neither parents nor rotation modes, and
+    /// no world matrix to write: it takes the channels as before.
     static func alignCameraToView(_ name: String, _ view: RenderRequest.ViewCamera) -> String {
-        [setLocation(name, view.location), setRotation(name, view.rotation)].joined(separator: "\n")
+        let l = view.location, r = view.rotation
+        return """
+        _bk_o = bpy.data.objects[\(quote(name))]
+        _bk_loc = \(String(format: "(%.6f, %.6f, %.6f)", l.x, l.y, l.z))
+        _bk_rot = \(String(format: "(%.6f, %.6f, %.6f)", r.x, r.y, r.z))
+        if hasattr(bpy.ops.mesh.primitive_cube_add, 'get_rna_type'):
+            from mathutils import Euler as _bk_Euler, Matrix as _bk_Matrix
+            # The parent's world matrix as Blender holds it now, not as the
+            # last evaluation left it.
+            bpy.context.view_layer.update()
+            _bk_o.matrix_world = _bk_Matrix.Translation(_bk_loc) @ _bk_Euler(_bk_rot, 'XYZ').to_matrix().to_4x4()
+        else:
+            _bk_o.location = _bk_loc
+            _bk_o.rotation_euler = _bk_rot
+        """
     }
 
     /// A value on the data-block a camera or light object carries — `energy`,

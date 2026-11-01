@@ -16,7 +16,7 @@ public enum ActiveTool: String, CaseIterable, Identifiable {
     // Add Primitive, which Blender offers in Object, Edit and Sculpt.
     case addCube, addCone, addCylinder, addUVSphere, addIcoSphere
 
-    // Edit Mesh.
+    // Edit Mode, on a mesh.
     case extrudeRegion, insetFaces, bevel, loopCut, knife, polyBuild, spin
     case smoothTool, randomize, edgeSlide, shrinkFatten, shear, ripRegion
 
@@ -59,6 +59,24 @@ public enum ActiveTool: String, CaseIterable, Identifiable {
         // because Blender's own choice — the view axis — needs a view.
         case .spin:
             return true
+        // Blender's Loop Cut (Ctrl+R) and Knife (K) are modal and need a
+        // pointer; the app picks the edge and draws the path itself and hands
+        // Blender the call the modal half makes — `loopcut_slide` with the
+        // picked edge, `knife_project` along the path — under the borrowed
+        // 3D View (CutTools.swift, docs/blender-local.md 2026-10-18).
+        case .loopCut, .knife:
+            return true
+        // The Cursor and Measure were greyed for want of "a placeable 3D
+        // cursor gizmo" and "a ruler gizmo": `view3d.cursor3d` answers
+        // PASS_THROUGH without a window and `view3d.ruler_add` fails its poll
+        // even under the borrowed 3D View (round 3's review). The Cursor is
+        // Blender's click ported (`_blenderkit_cursor.place`, held to
+        // Blender's own invoke in 4,146 cases) and its drag Blender's own
+        // translate of the cursor; the Measure tool's rulers are the app's
+        // overlay, built as Blender's gizmo behaves (CursorTool.swift,
+        // Ruler.swift, docs/blender-local.md 2026-10-19).
+        case .cursor, .measure:
+            return true
         case .sculptDraw, .sculptInflate, .sculptSmooth, .sculptFlatten,
              .sculptGrab, .sculptPinch:
             return true
@@ -74,20 +92,20 @@ public enum ActiveTool: String, CaseIterable, Identifiable {
     /// Why a tool is unavailable, shown as its tooltip.
     public var requirement: String {
         switch self {
-        case .cursor:      return "Needs a placeable 3D cursor gizmo"
         case .annotate:    return "Needs grease-pencil strokes"
-        case .measure:     return "Needs a ruler gizmo"
         // Measured, not assumed. In Blender 5.2.1 without a window:
-        // `knife_tool`, `transform.shear` and `rip_move` fail their poll
-        // outright; `loopcut_slide` with its defaults returns CANCELLED and
-        // changes nothing, because it wants a modal drag in a viewport to say
-        // where the cut goes. Given an edge index instead, `loopcut` and
-        // `loopcut_slide` segfault Blender in `loopcut_init` when the context
-        // has no 3D View (5.2.1, 2026-10-02), so `_blenderkit_context` refuses
-        // both outside one (`NEEDS_VIEW`). None of that is about the mesh
-        // structure — Blender's BMesh is right there and bevel uses it.
-        case .loopCut, .ripRegion:
-            return "Blender runs this one modally, in a window it does not have here"
+        // `transform.shear` and `rip_move` fail their poll outright. Loop Cut
+        // and the Knife were here too — `loopcut_slide` with its defaults
+        // returns CANCELLED, and given an edge index with no 3D View in the
+        // context it segfaults in `loopcut_init` (2026-10-02;
+        // `_blenderkit_context.NEEDS_VIEW` refuses it there) — and are tools
+        // now, given the edge the app picks under the borrowed 3D View.
+        // Rip has no exec: which side tears away comes from the pointer
+        // (round 4 group 6 measured `rip_move` FINISHED with nothing changed
+        // under the borrowed 3D View). Mesh ▸ Vertex ▸ Rip Vertices and Extend
+        // has one, given a ray, and the menu runs it toward the 3D cursor.
+        case .ripRegion:
+            return MeshMenuTools.ripRefusal
         // `edge_slide` is not one of them, as this once said. Given a value
         // it slides without a window: `edge_slide(value=0.5)` moved an
         // 11-vertex loop of a 10 × 10 grid by half its 0.2 spacing. Called
@@ -98,14 +116,14 @@ public enum ActiveTool: String, CaseIterable, Identifiable {
         case .edgeSlide:
             return "Blender slides from a drag in a window it does not have here. "
                 + "Mesh ▸ Edge ▸ Edge Slide takes the distance as a Factor instead"
-        // `knife_project` does run, with a view aimed for it: see
-        // `LastOperator.knifeProject`.
-        case .knife:
-            return "Blender runs the drawn knife modally, in a window it does not have here. "
-                + "Mesh ▸ Cut and Divide ▸ Knife Project cuts with another object's outline instead"
         case .shear:
             return "Blender refuses this one without a viewport context"
-        case .polyBuild, .shrinkFatten:
+        // "Not wired up yet — Blender can do it" was not so for Poly Build:
+        // measured, every one of its operators changes nothing without a
+        // pointer (MeshMenuTools.polyBuildRefusal).
+        case .polyBuild:
+            return MeshMenuTools.polyBuildRefusal
+        case .shrinkFatten:
             return "Not wired up yet — Blender can do it"
         case .boxMask, .boxHide, .boxFaceSet, .meshFilter, .lineProject:
             return "Needs per-vertex masks and face sets"
@@ -117,6 +135,10 @@ public enum ActiveTool: String, CaseIterable, Identifiable {
         }
     }
 
+    /// Blender's toolbar's name for the tool (5.2.1, tests/names/reference),
+    /// or, for the sculpt brushes the simulator's section lists, the brush's
+    /// own name in Blender's Essentials library: in 5.x a brush is an asset
+    /// the toolbar's one Brush tool paints with, not a tool of its own.
     public var label: String {
         switch self {
         case .select:        return "Tweak"
@@ -148,18 +170,16 @@ public enum ActiveTool: String, CaseIterable, Identifiable {
         case .shrinkFatten:  return "Shrink/Fatten"
         case .shear:         return "Shear"
         case .ripRegion:     return "Rip Region"
-        case .sculptDraw:    return "Draw"
-        case .sculptInflate: return "Inflate"
-        case .sculptSmooth:  return "Smooth"
-        case .sculptFlatten: return "Flatten"
-        case .sculptGrab:    return "Grab"
-        case .sculptPinch:   return "Pinch"
+        case .sculptDraw, .sculptInflate, .sculptSmooth, .sculptFlatten, .sculptGrab, .sculptPinch:
+            return sculptBrush?.name ?? ""
         case .boxMask:       return "Box Mask"
         case .boxHide:       return "Box Hide"
         case .boxFaceSet:    return "Box Face Set"
         case .meshFilter:    return "Mesh Filter"
         case .lineProject:   return "Line Project"
-        case .paintDraw:     return "Draw"
+        // The paint modes' toolbar draws with "Brush" (5.2.1), the tool for
+        // whichever brush is active.
+        case .paintDraw:     return "Brush"
         case .paintBlur:     return "Blur"
         case .paintAverage:  return "Average"
         case .paintSmear:    return "Smear"
@@ -404,11 +424,12 @@ public enum ActiveTool: String, CaseIterable, Identifiable {
 public extension InteractionMode {
     /// Sculpt and the paint modes: the modes a brush puts the view in.
     ///
-    /// Painting here is the interface's own, drawn onto the display cache
-    /// while Blender stays in object mode underneath, which is why those are
-    /// left on their own by the mirror of Blender's mode. Sculpt Mode is
-    /// Blender's own with the real Blender (`_blenderkit_sculpt`); only the
-    /// simulator's stand-in sculpts the display cache.
+    /// Texture Paint here is the interface's own, drawn onto the viewport's
+    /// images while Blender stays in object mode underneath, which is why the
+    /// mirror of Blender's mode leaves it alone. Sculpt Mode, Weight Paint and
+    /// Vertex Paint are Blender's own with the real Blender
+    /// (`_blenderkit_sculpt`, `_blenderkit_vwpaint`); only the simulator's
+    /// stand-in sculpts and paints the display cache.
     var isBrushMode: Bool {
         switch self {
         case .sculpt, .texturePaint, .vertexPaint, .weightPaint: return true
@@ -447,7 +468,7 @@ public extension ActiveTool {
     /// a brush left the view sculpting: the Move button lit up and every drag
     /// still pushed the mesh around, with no way out short of changing tab.
     ///
-    /// The edit-mode tools answer nil. Editing is entered with Edit Mesh or
+    /// The edit-mode tools answer nil. Editing is entered with Edit Mode or
     /// Tab, which Blender itself decides.
     func mode(whenChosenFrom current: InteractionMode) -> InteractionMode? {
         if let needed = requiredMode, needed.isBrushMode {

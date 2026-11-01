@@ -13,7 +13,7 @@ What it holds the app to:
   * the camera menu items and the light and camera property writes reach the
     data-block Blender keeps them on.
 """
-import bpy, os, sys
+import bpy, math, os, sys
 from bpy_extras.object_utils import world_to_camera_view
 from mathutils import Vector
 
@@ -154,11 +154,11 @@ scene.camera = camera
 print("\n  the camera menu items")
 scene.camera = None
 run("SET_SCENE_CAMERA")
-check("Set Scene Camera sets it", scene.camera is camera)
+check("Set Active Object as Camera sets it", scene.camera is camera)
 run("AIM_CAMERA")
 location = numbers("VIEW_LOCATION")
 rotation = numbers("VIEW_ROTATION")
-check("Aim Camera at This View moves it to the view",
+check("Align Active Camera to View moves it to the view",
       all(abs(a - b) < 1e-3 for a, b in zip(camera.location, location)), tuple(camera.location))
 check("and turns it the way the view looks",
       all(abs(a - b) < 1e-3 for a, b in zip(camera.rotation_euler, rotation)), tuple(camera.rotation_euler))
@@ -179,6 +179,66 @@ bpy.data.objects.remove(aimed)
 bpy.data.cameras.remove(namespace["_data"])
 scene.camera = camera
 
+# A parented camera, and one rotated by quaternion: Align Active Camera to
+# View is about where the camera ends up in the world. Round 3's review
+# measured the old lines (the view's world values written into the local
+# channels) 10.2 m and 78.1 deg off on the first and 63 deg on the second;
+# they are the negative control here.
+from mathutils import Euler, Matrix
+want = Matrix.Translation(location) @ Euler(rotation, 'XYZ').to_matrix().to_4x4()
+
+
+def apart(obj):
+    bpy.context.view_layer.update()
+    got = obj.matrix_world
+    turn = got.to_quaternion().rotation_difference(want.to_quaternion()).angle
+    return (got.translation - want.translation).length, math.degrees(turn)
+
+
+def old_lines(name):
+    return ("bpy.data.objects[%r].location = (%.4f, %.4f, %.4f)\n"
+            "bpy.data.objects[%r].rotation_euler = (%.4f, %.4f, %.4f)"
+            % ((name,) + tuple(location) + (name,) + tuple(rotation)))
+
+
+rig = bpy.data.objects.new("Rig", None)
+scene.collection.objects.link(rig)
+rig.location = (3.0, -2.0, 1.5)
+rig.rotation_euler = (0.3, -0.5, 1.1)
+rig.scale = (1.5, 1.5, 1.5)
+bpy.context.view_layer.update()
+
+
+def keep_inverse(o):
+    # Parented as Ctrl+P's Object does: with the parent's inverse kept.
+    o.parent = rig
+    o.matrix_parent_inverse = rig.matrix_world.inverted()
+
+
+for label, setup in (("parented to a moved, turned and scaled empty, as a script parents it",
+                      lambda o: setattr(o, "parent", rig)),
+                     ("rotated by quaternion", lambda o: setattr(o, "rotation_mode", 'QUATERNION')),
+                     ("parented with the inverse kept, rotated by axis and angle",
+                      lambda o: (keep_inverse(o), setattr(o, "rotation_mode", 'AXIS_ANGLE')))):
+    for kind in ("old", "new"):
+        data = bpy.data.cameras.new("Aim " + kind)
+        aim = bpy.data.objects.new("Aim", data)
+        scene.collection.objects.link(aim)
+        setup(aim)
+        aim.location = (0.4, 0.2, -0.3)
+        source = blocks["AIM_CAMERA"].replace('"Camera"', '"%s"' % aim.name)
+        exec(compile(old_lines(aim.name) if kind == "old" else source, "<aim>", "exec"), {"bpy": bpy})
+        off, turned = apart(aim)
+        if kind == "old":
+            check("negative control, %s: the old lines leave it %.2f m and %.1f deg off the view"
+                  % (label, off, turned), off > 0.1 or turned > 1, (off, turned))
+        else:
+            check("%s: it ends up where the view is (%.1g m, %.1g deg)" % (label, off, turned),
+                  off < 1e-4 and turned < 1e-3, (off, turned))
+        bpy.data.objects.remove(aim)
+        bpy.data.cameras.remove(data)
+bpy.data.objects.remove(rig)
+
 print("\n  light and camera properties")
 light = bpy.data.objects["Light"]
 run("LIGHT_ENERGY"); check("a light's power", light.data.energy == 250, light.data.energy)
@@ -195,6 +255,89 @@ check("its clipping range", (camera.data.clip_start, camera.data.clip_end) == (0
 run("CAMERA_TYPE"); run("CAMERA_ORTHO_SCALE")
 check("and its projection", camera.data.type == 'ORTHO' and camera.data.ortho_scale == 9,
       (camera.data.type, camera.data.ortho_scale))
+
+print("\n  a script's first Cycles render on the GPU (_blenderkit_cycles)")
+import importlib.util, pathlib, tempfile
+SITE = pathlib.Path(__file__).resolve().parents[3] / "Resources" / "python" / "site"
+spec = importlib.util.spec_from_file_location("_blenderkit_cycles", SITE / "_blenderkit_cycles.py")
+cycles_module = importlib.util.module_from_spec(spec)
+sys.modules["_blenderkit_cycles"] = cycles_module
+spec.loader.exec_module(cycles_module)
+scene = bpy.context.scene
+scene.render.engine = 'CYCLES'
+scene.cycles.samples = 1
+scene.render.resolution_x, scene.render.resolution_y, scene.render.resolution_percentage = 16, 16, 100
+scene.render.filepath = os.path.join(WORK, "cycles.png")
+prefs = bpy.context.preferences.addons['cycles'].preferences
+scene.cycles.device = 'CPU'
+check("Cycles on the CPU is not on the GPU", not cycles_module.renders_on_gpu(scene))
+scene.cycles.device = 'GPU'
+prefs.compute_device_type = 'NONE'
+check("nor is Cycles set to GPU with no compute device chosen (Cycles renders on the CPU then)",
+      not cycles_module.renders_on_gpu(scene))
+prefs.compute_device_type = 'METAL'
+prefs.refresh_devices()
+for device in prefs.devices:
+    device.use = device.type == 'METAL'
+metal = [d.name for d in prefs.devices if d.type == 'METAL']
+check("with a Metal device chosen and on, as the Render panel sets it up, it is (%s)" % ", ".join(metal),
+      bool(metal) and cycles_module.renders_on_gpu(scene), metal)
+
+
+import io, contextlib
+events = []
+
+
+class Recorder(io.TextIOBase):
+    """sys.stdout while a render runs: what Python prints, in order with the
+    render's own progress (`render_stats`, which Blender calls as it renders)."""
+    def write(self, text):
+        if text.strip():
+            events.append(("print", text.strip()))
+        return len(text)
+
+
+def _bk_test_stats(*arguments):
+    events.append(("render", str(arguments[0]) if arguments else ""))
+
+
+def render_recording():
+    del events[:]
+    bpy.app.handlers.render_stats.append(_bk_test_stats)
+    try:
+        with contextlib.redirect_stdout(Recorder()):
+            bpy.ops.render.render(write_still=True)
+    finally:
+        bpy.app.handlers.render_stats.remove(_bk_test_stats)
+    return list(events)
+
+
+# The renders here are on the CPU, which costs a second and compiles nothing;
+# `renders_on_gpu` is made to answer as a GPU render would.
+scene.cycles.device = 'CPU'
+real = cycles_module.renders_on_gpu
+cycles_module.renders_on_gpu = lambda s: s.render.engine == 'CYCLES'
+warning = blocks["CYCLES_WARNING"].strip()
+try:
+    exec(blocks["CYCLES_ARM"], {"bpy": bpy})
+    first = render_recording()
+    second = render_recording()
+    buffer = io.StringIO()
+    with contextlib.redirect_stdout(buffer):
+        exec(blocks["CYCLES_DISARM"], {"bpy": bpy})
+    finished = buffer.getvalue().strip()
+    third = render_recording()
+finally:
+    cycles_module.renders_on_gpu = real
+said = [i for i, e in enumerate(first) if e == ("print", warning)]
+rendered = [i for i, e in enumerate(first) if e[0] == "render"]
+check("the Render panel's warning is printed before Blender's render starts (event %s, the render's "
+      "first progress line event %s of %d)" % (said[:1], rendered[:1], len(first)),
+      len(said) == 1 and rendered and said[0] < rendered[0], first[:4])
+check("once: the second render says nothing", ("print", warning) not in second, second[:3])
+check("and the finished render is read back as built (%r)" % finished, finished == "True", finished)
+check("disarmed, a render says nothing", ("print", warning) not in third, third[:3])
+scene.render.engine = 'BLENDER_WORKBENCH'
 
 print()
 if failures:

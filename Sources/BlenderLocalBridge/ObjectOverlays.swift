@@ -499,12 +499,12 @@ public enum ObjectOverlays {
 
         case .image:
             // `image_sync`: the frame, sized by the image's proportions and
-            // moved by its offset. The picture itself is not drawn.
-            var frame = m
-            frame.columns.0 = m.columns.0 * (e.imageAspect.x * 0.5 * s)
-            frame.columns.1 = m.columns.1 * (e.imageAspect.y * 0.5 * s)
-            frame.columns.3 = m.columns.3 + frame.columns.0 * (e.imageOffset.x * 2 + 1)
-                                          + frame.columns.1 * (e.imageOffset.y * 2 + 1)
+            // moved by its offset — not at all in a view its Show In switches
+            // hide it from (`BKE_object_empty_image_frame_is_visible_in_view3d`).
+            // The picture is drawn by the viewport's image pass
+            // (`ImageEmptyDraw`, round 4 group 8).
+            guard e.frameVisible(perspective: b.view.isPerspective) else { return }
+            let frame = ImageEmptyDraw.frame(e, m)
             let quad = [SIMD2<Float>(-1, -1), SIMD2(-1, 1), SIMD2(1, 1), SIMD2(1, -1)]
             b.loop(quad.map { (frame * SIMD4($0.x, $0.y, 0, 1)).xyz })
         }
@@ -821,5 +821,104 @@ public extension Array where Element == String {
             return drawn && ObjectOverlayPicking.touches(object, rect: rect, in: scene, view: view)
                 ? object.name : nil
         }
+    }
+}
+
+
+// MARK: - Image empties' pictures
+
+/// What the viewport draws for the picture on an image empty, as Blender's
+/// overlay engine draws it (`Empties::image_sync` and `create_subpass` in
+/// overlay_empty.hh, overlay_image_frag.glsl; round 4, group 8). It used to
+/// draw the frame alone.
+public enum ImageEmptyDraw {
+    /// Where a picture is drawn, in Blender's pass order.
+    public enum Pass: Int, Comparable, Sendable {
+        /// Depth Back: behind everything (`images_back_ps_`, drawn where
+        /// nothing else is).
+        case back
+        /// Depth Default without Opacity: depth-tested and depth-writing,
+        /// alpha tested at 5% (`images_ps_`, DEPTH_LESS, WRITE_DEPTH).
+        case scene
+        /// Depth Default with Opacity: blended, depth-tested, not written,
+        /// sorted back to front (`images_blend_ps_`).
+        case blended
+        /// Depth Front, or In Front: over everything (`images_front_ps_`, no
+        /// depth test).
+        case front
+
+        public static func < (a: Pass, b: Pass) -> Bool { a.rawValue < b.rawValue }
+    }
+
+    public struct Quad: Sendable {
+        public let object: String
+        public let file: String
+        /// World-space corners for UV (0,0), (1,0), (1,1), (0,1): Blender's
+        /// `uvs = pos.xy * 0.5 + 0.5` over the quad from -1 to 1.
+        public let corners: [SIMD3<Float>]
+        /// `ob->color`, which multiplies the picture.
+        public let tint: SIMD4<Float>
+        public let pass: Pass
+        /// Opacity on: blended by `tint.w`. Off: alpha tested, drawn opaque.
+        public let alphaBlend: Bool
+        public let premultiplied: Bool
+        /// Distance along the view, for back-to-front sorting.
+        public let depth: Float
+    }
+
+    /// `image_sync`'s matrix: the object's, its X and Y scaled by the image's
+    /// proportions, half the display size, and moved by the offset.
+    public static func frame(_ e: EmptyDisplay, _ m: simd_float4x4) -> simd_float4x4 {
+        var frame = m
+        frame.columns.0 = m.columns.0 * (e.imageAspect.x * 0.5 * e.size)
+        frame.columns.1 = m.columns.1 * (e.imageAspect.y * 0.5 * e.size)
+        frame.columns.3 = m.columns.3 + frame.columns.0 * (e.imageOffset.x * 2 + 1)
+                                      + frame.columns.1 * (e.imageOffset.y * 2 + 1)
+        return frame
+    }
+
+    /// The pictures `scene` shows in `view`, sorted in drawing order: by pass,
+    /// and within the blended and front passes back to front, as Blender's
+    /// `PassSortable` sorts them. Nothing when the overlays are off, which
+    /// hides extras in Blender too (`state.show_extras()`).
+    public static func quads(in scene: BKScene, view: OverlayView, overlays: Bool = true) -> [Quad] {
+        guard overlays else { return [] }
+        var out: [Quad] = []
+        for object in scene.objects where object.visible {
+            guard case .empty(let e)? = object.overlayDisplay, let quad = quad(e, object.name,
+                                                                                object.modelMatrix, view)
+            else { continue }
+            out.append(quad)
+        }
+        return out.sorted { a, b in
+            a.pass != b.pass ? a.pass < b.pass : a.depth > b.depth
+        }
+    }
+
+    /// One empty's picture, or nil when Blender draws none: not an image
+    /// empty, no picture to read, a view its switches hide it from, or
+    /// Opacity on at zero (`(ob->color[3] > 0.0f) || !use_alpha_blend`).
+    public static func quad(_ e: EmptyDisplay, _ name: String, _ m: simd_float4x4,
+                            _ view: OverlayView) -> Quad? {
+        guard e.kind == .image, e.imageHasData, !e.imageFile.isEmpty,
+              e.frameVisible(perspective: view.isPerspective),
+              e.pictureVisible(world: m, view: view),
+              e.color.w > 0 || !e.useAlpha else { return nil }
+        let f = frame(e, m)
+        let corners = [SIMD2<Float>(-1, -1), SIMD2(1, -1), SIMD2(1, 1), SIMD2(-1, 1)]
+            .map { (f * SIMD4($0.x, $0.y, 0, 1)).xyz }
+        let pass: Pass
+        if e.inFront {
+            pass = .front
+        } else {
+            switch e.depth {
+            case .back: pass = .back
+            case .front: pass = .front
+            case .default: pass = e.useAlpha ? .blended : .scene
+            }
+        }
+        return Quad(object: name, file: e.imageFile, corners: corners, tint: e.color, pass: pass,
+                    alphaBlend: e.useAlpha, premultiplied: e.imagePremultiplied,
+                    depth: view.distance(f.columns.3.xyz))
     }
 }

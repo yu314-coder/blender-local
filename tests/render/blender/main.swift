@@ -42,6 +42,12 @@ for p in points {
 emit("POINTS", points.flatMap { [$0.x, $0.y, $0.z] }.map { String(format: "%.6f", $0) }.joined(separator: " "))
 emit("PROJECTED", numbers(projected))
 
+// A script's first Cycles render on the GPU: the warning it is armed with,
+// and what reads the answer back (`CyclesKernels`, `_blenderkit_cycles`).
+emit("CYCLES_ARM", CyclesKernels.arm)
+emit("CYCLES_DISARM", CyclesKernels.disarm)
+emit("CYCLES_WARNING", CyclesKernels.warning)
+
 // The camera menu items.
 emit("SET_SCENE_CAMERA", Bpy.setSceneCamera("Camera"))
 emit("AIM_CAMERA", Bpy.alignCameraToView("Camera", view.renderCamera))

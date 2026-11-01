@@ -26,7 +26,8 @@ Nothing here opens a browser, a file browser or another program, and the
 Blender it runs in is given a HOME and BLENDER_USER_RESOURCES of its own by the
 shell script, so the Mac's own Blender settings are never touched.
 """
-import bpy, bmesh, gpu, json, sys, math
+import bpy, bmesh, gpu, json, sys, math, pathlib
+sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[3] / "Resources/python/site"))
 from mathutils import Vector, Quaternion, Euler
 
 argv = sys.argv[sys.argv.index("--") + 1:]

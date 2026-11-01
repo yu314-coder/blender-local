@@ -1,4 +1,6 @@
 import SwiftUI
+import ImageIO
+import Metal
 import simd
 
 /// A viewport-first workspace. Detailed tools are presented only on request.
@@ -22,10 +24,30 @@ struct LayoutWorkspace: View {
     /// tool-header mode buttons, here in the Select tool menu, so a touch-only
     /// iPad can extend, subtract or intersect too.
     @State private var regionAction: SelectAction = .set
+    /// What a finger's tap does while editing a mesh: one of Blender's pick
+    /// selections (Loop Select, Edge Ring Select, Pick Shortest Path, Select
+    /// Linked), set from the Select menu or the pick bar, or nil for an
+    /// ordinary select. A pointer's Alt, Ctrl+Alt and Ctrl make them anyway.
+    @State private var pick: SelectPick?
+    /// Blender's Shift variant of `pick`, for a finger.
+    @State private var pickShift = false
     /// Select ▸ Select Pattern…, asking for the pattern.
     @State private var askingPattern = false
     @State private var pattern = "*"
     @State private var panel: String?
+    /// Blender's Sidebar (View ▸ Sidebar, N): Item, Tool and View down the
+    /// right edge of the 3D View. It existed (SidebarN) and nothing showed it,
+    /// so Edit Mode had nowhere to type a vertex's position (round 3's
+    /// review, toolkit item 3).
+    @State private var showsSidebar = false
+    /// The Outliner and the Properties editor beside the 3D View
+    /// (`editorsDock`), open as Blender opens them; kept across launches.
+    @AppStorage("bl_editors_shown") private var showsEditors = true
+    /// The header's width, its content's, and whether it is scrolled to its
+    /// end (`headerRow`).
+    @State private var headerWidth: CGFloat = 1_000
+    @State private var headerContentWidth: CGFloat = 0
+    @State private var headerScrolledToEnd = false
     /// Set by Look Through Camera: the frame the render will take, and the
     /// view it was set from. The guide is drawn while the view has not moved.
     @State private var cameraView: (aspect: CGFloat, camera: ViewportCamera, name: String)?
@@ -33,6 +55,27 @@ struct LayoutWorkspace: View {
     @State private var catalogue = OperatorCatalogue()
     /// The failure on screen, until it times out or is tapped away.
     @State private var shownReport: BpyBridge.Report?
+    /// Move or Link to New Collection's name prompt: the collection the new
+    /// one goes inside, and whether the selection is linked rather than moved.
+    @State private var newCollection: (parent: Int, link: Bool)?
+    /// The 3D View's size, for Local View's framing, which fits the
+    /// narrower side as Blender's does.
+    @State private var viewportSize = CGSize(width: 4, height: 3)
+    /// What Edit Mode's overlays were last read for (`measureChanged`).
+    @State private var measuredFor: MeasureKey?
+    @State private var newCollectionName = ""
+    /// Add ▸ Image's Reference... or Background..., asking for its picture.
+    @State private var imageRequest: ReferenceImages.Kind?
+    /// The text object whose Body Text Tab opened (round 4, group 8).
+    @State private var bodyTextObject: BKObject?
+    /// The view and the camera view Local View was entered from, put back on
+    /// the way out as Blender puts back the view it kept (`localvd`).
+    /// The Sidebar's Global / Local (SidebarN's `bl_sidebar_item_local`):
+    /// Blender's V3D_GLOBAL_STATS, which its Edge Length, Face Area and the
+    /// angles read too.
+    @AppStorage("bl_sidebar_item_local") private var measureLocal = true
+    @State private var beforeLocalView: (camera: ViewportCamera,
+                                         cameraView: (aspect: CGFloat, camera: ViewportCamera, name: String)?)?
 
     /// Picks a tool, and takes the view to the mode it needs.
     ///
@@ -42,9 +85,12 @@ struct LayoutWorkspace: View {
     /// that second half, Move lit up after a brush while every drag still
     /// pushed the mesh around.
     ///
-    /// Painting is the app's own mode, deliberately *not* Blender's: the brush
-    /// works on the display cache and each finished stroke is written into
-    /// Blender's mesh, while Blender stays in object mode.
+    /// Texture Paint is the app's own mode, on top of Blender's Object Mode:
+    /// its brush works on the viewport's images and each finished stroke is
+    /// written into Blender's. Weight Paint and Vertex Paint are Blender's own
+    /// with the real Blender (`enterPaintMode`, `_blenderkit_vwpaint`): they
+    /// were the app's too, and their strokes never reached Blender (round 3's
+    /// review).
     ///
     /// Sculpt Mode, with the real Blender, is Blender's own: its brushes,
     /// dynamic topology, masks and Multires work on the mesh in Blender's
@@ -68,16 +114,24 @@ struct LayoutWorkspace: View {
         if let next = t.mode(whenChosenFrom: scene.mode) {
             if next == .sculpt, session.usesRealBlender {
                 bridge?.run(SculptBpy.enter, undo: SculptBpy.modeUndo)
+            } else if PaintModeBpy.modes.contains(next), session.usesRealBlender {
+                enterPaintMode(next)
             } else if next.isBrushMode {
                 // Out of Blender's edit mode first, as its own Sculpt Mode
-                // leaves it. Out of its Sculpt Mode too, for a paint mode.
-                if editing { bridge?.run(Bpy.setMode(.object), undo: "Toggle Edit Mode") }
+                // leaves it. Out of its Sculpt Mode, Weight Paint or Vertex
+                // Paint too, for Texture Paint, which is the app's own.
+                if editing { bridge?.run(Bpy.setMode(.object), undo: UndoStep.editMode) }
                 if scene.mode == .sculpt, session.usesRealBlender {
                     bridge?.run(SculptBpy.leave, undo: SculptBpy.modeUndo)
+                }
+                if paintingInBlender {
+                    bridge?.run(PaintModeBpy.leave, undo: PaintModeBpy.modeUndo(scene.mode))
                 }
                 scene.setMode(next)
             } else if scene.mode == .sculpt, session.usesRealBlender {
                 bridge?.run(SculptBpy.leave, undo: SculptBpy.modeUndo)
+            } else if paintingInBlender {
+                bridge?.run(PaintModeBpy.leave, undo: PaintModeBpy.modeUndo(scene.mode))
             } else {
                 scene.setMode(next)
                 // A sculpt or paint mode Blender is really in — a script put
@@ -90,7 +144,39 @@ struct LayoutWorkspace: View {
         // the tool where it was: the drag would otherwise orbit under a lit
         // brush button.
         if t.requiredMode == .sculpt, session.usesRealBlender, scene.mode != .sculpt { return }
+        // In Blender's Weight Paint and Vertex Paint the toolbar's Brush,
+        // Blur, Average and Smear are Blender's tools, each with its brush
+        // (`_blenderkit_vwpaint.set_tool`).
+        if let paintTool = PaintTool(t), paintingInBlender {
+            bridge?.run(PaintModeBpy.setTool(paintTool))
+            scene.paintBlender = bridge?.paintState()
+        }
         tool = t
+    }
+
+    /// Blender's Weight Paint or Vertex Paint, as its mode menu's row enters
+    /// it: one undo step named as Blender names it ("Weight Paint Mode"),
+    /// refused in words for what Blender would enter and not paint. The
+    /// mirror then reports Blender's mode, and the tool follows Blender's
+    /// brush. Strokes there are Blender's (`_blenderkit_vwpaint`); the app's
+    /// own paint modes used to paint its display cache and nothing reached
+    /// Blender (round 3's review).
+    private func enterPaintMode(_ mode: InteractionMode) {
+        if let held = session.gestureHold {
+            bridge?.showReport(mode.label, held)
+            return
+        }
+        // Texture Paint is the app's own, on top of Blender's Object Mode.
+        if scene.mode == .texturePaint { scene.setMode(.object) }
+        bridge?.run(PaintModeBpy.enter(mode), undo: PaintModeBpy.modeUndo(mode))
+        guard scene.mode == mode else { return }
+        scene.paintBlender = bridge?.paintState()
+        tool = scene.paintBlender?.paintTool?.tool ?? .paintDraw
+    }
+
+    /// Blender's own Weight Paint or Vertex Paint, with the real Blender.
+    private var paintingInBlender: Bool {
+        (scene.mode == .weightPaint || scene.mode == .vertexPaint) && session.usesRealBlender
     }
 
     /// Editing a mesh is the one state that changes what every tool acts on —
@@ -138,14 +224,29 @@ struct LayoutWorkspace: View {
         }
     }
 
-    /// Edit Mesh and Done: into and out of Blender's edit mode.
+    /// The bar's Edit Mode and Object Mode: into and out of Blender's edit
+    /// mode, as its mode menu's two rows do.
     private func setEditing(_ on: Bool) {
-        bridge?.run(Bpy.setMode(on ? .edit : .object), undo: "Toggle Edit Mode")
+        if on, openBodyText() { return }
+        bridge?.run(Bpy.setMode(on ? .edit : .object), undo: UndoStep.editMode)
     }
 
     /// Tab: toggles by Blender's own mode, read when the key is pressed.
     private func toggleEditing() {
-        bridge?.run(Bpy.toggleEditMode, undo: "Toggle Edit Mode")
+        if !editing, openBodyText() { return }
+        bridge?.run(Bpy.toggleEditMode, undo: UndoStep.editMode)
+    }
+
+    /// Edit Mode on a text object is typing its body. Blender's own Edit Mode
+    /// keeps the typing in a buffer no Python can read back
+    /// (_blenderkit_text.py), so Blender stays in Object Mode and the body is
+    /// typed into its Body Text field, written to `data.body` when the edit
+    /// ends. True when it opened.
+    private func openBodyText() -> Bool {
+        guard session.usesRealBlender, let active = scene.active, active.blenderType == "FONT",
+              scene.mode == .object else { return false }
+        bodyTextObject = active
+        return true
     }
 
     /// Vertex, edge or face: Blender's header buttons, and 1, 2, 3.
@@ -172,162 +273,176 @@ struct LayoutWorkspace: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            toolRow
+            headerRow
 
-            ZStack(alignment: .topTrailing) {
-                MetalViewportView(scene: scene, camera: $camera, tool: tool,
-                                  shading: shading, options: options,
-                                  circleRadius: circleRadius,
-                                  regionAction: regionAction, bridge: bridge,
-                                  onSelectionChange: { _ in },
-                                  onTransform: { session.log($0) },
-                                  onCommit: { name in if !session.usesRealBlender { undo.push(name, scene) } },
-                                  onCycleTool: { choose(tool.next) },
-                                  onToggleEditing: keysLive ? toggleEditingFromKeyboard : nil,
-                                  onStrokeEnd: keepStroke)
-                // The rectangle a box-select drag is sweeping. Screen-space
-                // and changing every frame, so it is drawn here rather than in
-                // the renderer's 3D pass.
-                if let box = scene.selectionBox, box.width > 1, box.height > 1 {
-                    GeometryReader { _ in
-                        Rectangle()
-                            .fill(BTheme.select.opacity(0.14))
-                            .overlay(Rectangle().strokeBorder(BTheme.select, lineWidth: 1))
-                            .frame(width: box.width, height: box.height)
-                            .position(x: box.midX, y: box.midY)
-                    }
-                    .allowsHitTesting(false)
-                }
-                // A Circle select's painted stroke or a Lasso's outline, from
-                // the region the selection is then made from.
-                if let stroke = scene.selectionStroke {
-                    SelectionStrokeOverlay(region: stroke)
-                        .allowsHitTesting(false)
-                }
-
-                // What the render will take in, while the view stands where
-                // Look Through Camera put it. A viewport is rarely the frame's
-                // shape, so without this the view shows more than the picture
-                // will.
-                if let cameraView, camera.stillAt(cameraView.camera) {
-                    GeometryReader { geometry in
-                        let size = geometry.size
-                        let fitted = size.width / size.height > cameraView.aspect
-                            ? CGSize(width: size.height * cameraView.aspect * 0.94, height: size.height * 0.94)
-                            : CGSize(width: size.width * 0.94, height: size.width / cameraView.aspect * 0.94)
-                        ZStack {
-                            // Blender's passepartout: everything outside the
-                            // frame dimmed, the frame itself untouched.
-                            Rectangle().fill(Color.black.opacity(0.35))
-                                .mask {
-                                    ZStack {
-                                        Rectangle()
-                                        Rectangle()
-                                            .frame(width: fitted.width, height: fitted.height)
-                                            .blendMode(.destinationOut)
-                                    }
-                                    .compositingGroup()
+            // Blender's layout: the toolbar down the left edge, and the
+            // Outliner over the Properties editor beside the 3D View — on the
+            // right when the window is wider than tall, underneath when it is
+            // taller, where a column would leave the view too narrow to model
+            // in. Both stay open while the view is worked in; as sheets they
+            // dimmed it and covered the object being edited. The toolbar runs
+            // the full height, beside the editors too when they are
+            // underneath: an upright iPad's view alone is too short for Edit
+            // Mode's twelve buttons.
+            HStack(spacing: 0) {
+                toolShelf
+                GeometryReader { geo in
+                    let wide = geo.size.width >= geo.size.height
+                    let layout = wide ? AnyLayout(HStackLayout(spacing: 0)) : AnyLayout(VStackLayout(spacing: 0))
+                    layout {
+                        ZStack(alignment: .topTrailing) {
+                            MetalViewportView(scene: scene, camera: $camera, tool: tool,
+                                              shading: shading, options: options,
+                                              circleRadius: circleRadius,
+                                              regionAction: regionAction,
+                                              pick: editing && !editingPoints ? pick : nil, pickShift: pickShift,
+                                              bridge: bridge,
+                                              onSelectionChange: { _ in },
+                                              onTransform: { session.log($0) },
+                                              onCommit: { name in if !session.usesRealBlender { undo.push(name, scene) } },
+                                              onCycleTool: { choose(tool.next) },
+                                              onToggleEditing: keysLive ? toggleEditingFromKeyboard : nil,
+                                              onStrokeEnd: keepStroke)
+                                .background(GeometryReader { geo in
+                                    Color.clear
+                                        .onAppear { viewportSize = geo.size }
+                                        .onChange(of: geo.size) { _, size in viewportSize = size }
+                                })
+                            // The rectangle a box-select drag is sweeping. Screen-space
+                            // and changing every frame, so it is drawn here rather than in
+                            // the renderer's 3D pass.
+                            if let box = scene.selectionBox, box.width > 1, box.height > 1 {
+                                GeometryReader { _ in
+                                    Rectangle()
+                                        .fill(BTheme.select.opacity(0.14))
+                                        .overlay(Rectangle().strokeBorder(BTheme.select, lineWidth: 1))
+                                        .frame(width: box.width, height: box.height)
+                                        .position(x: box.midX, y: box.midY)
                                 }
-                            Rectangle()
-                                .strokeBorder(BTheme.active.opacity(0.9), lineWidth: 1)
-                                .frame(width: fitted.width, height: fitted.height)
-                            Text(cameraView.name)
-                                .font(BTheme.Font.ui(10)).foregroundStyle(BTheme.active)
-                                .padding(.horizontal, 5).padding(.vertical, 2)
-                                .background(BTheme.header.opacity(0.85))
-                                .clipShape(RoundedRectangle(cornerRadius: 3))
-                                .position(x: size.width / 2,
-                                          y: (size.height - fitted.height) / 2 - 10)
+                                .allowsHitTesting(false)
+                            }
+                            // A Circle select's painted stroke or a Lasso's outline, from
+                            // the region the selection is then made from.
+                            if let stroke = scene.selectionStroke {
+                                SelectionStrokeOverlay(region: stroke)
+                                    .allowsHitTesting(false)
+                            }
+                            // The Measure tool's rulers and Edit Mode's measurements
+                            // (MeasureOverlay.swift).
+                            MeasureOverlay(scene: scene, camera: camera, showsRulers: tool == .measure,
+                                           overlays: options.measure, editingMesh: editingMesh)
+                            // Loop Cut's and the Knife's bar; with any other tool while
+                            // editing a mesh, the pick bar; the Cursor's and the Measure
+                            // tool's settings; then the Statistics overlay's rows.
+                            VStack(alignment: .leading, spacing: 0) {
+                                HStack { cutToolBar; pickBar; cursorToolBar; measureToolBar; Spacer(minLength: 0) }
+                                if options.measure.statistics, editingMesh, let stats = scene.editMeasurements?.statistics {
+                                    StatisticsOverlay(statistics: stats)
+                                        .padding(.leading, 14).padding(.top, 6)
+                                }
+                                // Fewer labels than Blender would draw, said in words.
+                                if options.measure.measures, editingMesh, scene.transformReadout == nil,
+                                   let note = scene.editMeasurements?.thinningNote {
+                                    Text(note)
+                                        .font(BTheme.Font.ui(11))
+                                        .foregroundStyle(BTheme.text.opacity(0.9))
+                                        .shadow(color: .black.opacity(0.6), radius: 1, y: 0.5)
+                                        .frame(maxWidth: 420, alignment: .leading)
+                                        .padding(.leading, 14).padding(.top, 6)
+                                        .allowsHitTesting(false)
+                                }
+                                Spacer(minLength: 0)
+                            }
+
+                            // Blender's Sidebar, over the 3D View's right edge as
+                            // Blender draws it, below Frame All and above the info row.
+                            if showsSidebar {
+                                SidebarN(scene: scene, session: session, bridge: bridge,
+                                         camera: $camera, tool: tool)
+                                    .clipShape(RoundedRectangle(cornerRadius: BTheme.Metric.corner))
+                                    .padding(.top, 70)
+                                    .padding(.trailing, 8)
+                                    .padding(.bottom, 54)
+                            }
+
+                            // What the render will take in, while the view stands where
+                            // Look Through Camera put it. A viewport is rarely the frame's
+                            // shape, so without this the view shows more than the picture
+                            // will.
+                            if let cameraView, camera.stillAt(cameraView.camera) {
+                                GeometryReader { geometry in
+                                    let size = geometry.size
+                                    let fitted = size.width / size.height > cameraView.aspect
+                                        ? CGSize(width: size.height * cameraView.aspect * 0.94, height: size.height * 0.94)
+                                        : CGSize(width: size.width * 0.94, height: size.width / cameraView.aspect * 0.94)
+                                    ZStack {
+                                        // Blender's passepartout: everything outside the
+                                        // frame dimmed, the frame itself untouched.
+                                        Rectangle().fill(Color.black.opacity(0.35))
+                                            .mask {
+                                                ZStack {
+                                                    Rectangle()
+                                                    Rectangle()
+                                                        .frame(width: fitted.width, height: fitted.height)
+                                                        .blendMode(.destinationOut)
+                                                }
+                                                .compositingGroup()
+                                            }
+                                        Rectangle()
+                                            .strokeBorder(BTheme.active.opacity(0.9), lineWidth: 1)
+                                            .frame(width: fitted.width, height: fitted.height)
+                                        Text(cameraView.name)
+                                            .font(BTheme.Font.ui(10)).foregroundStyle(BTheme.active)
+                                            .padding(.horizontal, 5).padding(.vertical, 2)
+                                            .background(BTheme.header.opacity(0.85))
+                                            .clipShape(RoundedRectangle(cornerRadius: 3))
+                                            .position(x: size.width / 2,
+                                                      y: (size.height - fitted.height) / 2 - 10)
+                                    }
+                                    .frame(width: size.width, height: size.height)
+                                }
+                                .allowsHitTesting(false)
+                            }
+
+                            // Adjust Last Operation. It costs nothing until something has
+                            // run, and without it every operator is a guess you have to
+                            // undo to correct — which is most of what a modelling session
+                            // is.
+                            VStack {
+                                Spacer()
+                                HStack {
+                                    AdjustLastOperation(bridge: bridge)
+                                    Spacer(minLength: 0)
+                                }
+                            }
+                            .padding(.leading, 14)
+                            .padding(.bottom, 64)
+
+                            Button { camera.frameAll(scene.objects) } label: {
+                                Image(systemName: "viewfinder").frame(width: 44, height: 44)
+                                    .background(BTheme.header.opacity(0.9)).clipShape(Circle())
+                            }.padding(14).accessibilityLabel("Frame All")
+                            ViewportInfoRow(scene: scene)
+
+                            if let report = shownReport {
+                                reportBanner(report)
+                            }
+                        }.foregroundStyle(BTheme.text)
+                        if showsEditors {
+                            editorsDock(wide: wide, height: geo.size.height)
+                                .frame(width: wide ? min(360, geo.size.width * 0.36) : nil,
+                                       height: wide ? nil : geo.size.height * 0.42)
                         }
-                        .frame(width: size.width, height: size.height)
-                    }
-                    .allowsHitTesting(false)
-                }
-
-                // Adjust Last Operation. It costs nothing until something has
-                // run, and without it every operator is a guess you have to
-                // undo to correct — which is most of what a modelling session
-                // is.
-                VStack {
-                    Spacer()
-                    HStack {
-                        AdjustLastOperation(bridge: bridge)
-                        Spacer(minLength: 0)
                     }
                 }
-                .padding(.leading, 14)
-                .padding(.bottom, 64)
-
-                Button { camera.frameAll(scene.objects) } label: {
-                    Image(systemName: "viewfinder").frame(width: 44, height: 44)
-                        .background(BTheme.header.opacity(0.9)).clipShape(Circle())
-                }.padding(14).accessibilityLabel("Frame All")
-                VStack {
-                    Spacer()
-                    HStack {
-                        Text(scene.active?.name ?? "Tap an object to select it")
-                            .font(.system(size: 13, weight: .medium))
-                        Spacer()
-                        if let readout = scene.dragReadout { Text(readout).font(.system(size: 12, design: .monospaced)) }
-                    }.padding(14).background(BTheme.header.opacity(0.9))
-                }.allowsHitTesting(false)
-
-                if let report = shownReport {
-                    reportBanner(report)
-                }
-            }.foregroundStyle(BTheme.text)
+            }
             AnimationDock(scene: scene, session: session, bridge: bridge)
         }
         .sheet(isPresented: Binding(get: { panel != nil }, set: { if !$0 { panel = nil } })) {
             NavigationStack {
                 Group {
                     switch panel {
-                    case "Scene": OutlinerView(scene: scene, session: session, bridge: bridge)
-                    case "Object Details":
-                        // A camera or a light has no mesh to show, and until
-                        // now had no settings either: the sheet went straight
-                        // to the RNA browser, where `energy` is a row of JSON.
-                        if let object = scene.active, object.overlayDisplay != nil {
-                            ScrollView {
-                                VStack(alignment: .leading, spacing: 0) {
-                                    CameraLightPanel(scene: scene, session: session, bridge: bridge,
-                                                     object: object, camera: $camera,
-                                                     lookThrough: { lookThroughCamera(object) })
-                                    if session.usesRealBlender {
-                                        NavigationLink("Every Property") {
-                                            BlenderDataBrowser(bridge: bridge, startPath: "bpy.context.object",
-                                                               revision: session.backendRevision)
-                                        }
-                                        .font(BTheme.Font.ui(12))
-                                        .padding(.horizontal, 12).padding(.vertical, 10)
-                                    }
-                                }
-                            }
-                        } else if scene.active != nil {
-                            // A mesh got the RNA browser and nothing else, on
-                            // exactly the backend where it matters: no
-                            // Transform fields, no modifier stack, no material
-                            // — so a part could not be placed at a number, only
-                            // dragged. The Properties editor is what Blender
-                            // shows here, and the browser stays one tap away,
-                            // the way the camera and light panel already does.
-                            VStack(spacing: 0) {
-                                PropertiesView(scene: scene, session: session, bridge: bridge)
-                                if session.usesRealBlender {
-                                    BEditorDivider(.horizontal)
-                                    NavigationLink("Every Property") {
-                                        BlenderDataBrowser(bridge: bridge, startPath: "bpy.context.object",
-                                                           revision: session.backendRevision)
-                                    }
-                                    .font(BTheme.Font.ui(12))
-                                    .frame(maxWidth: .infinity, alignment: .leading)
-                                    .padding(.horizontal, 12).padding(.vertical, 10)
-                                }
-                            }
-                        } else if session.usesRealBlender {
-                            BlenderDataBrowser(bridge: bridge, startPath: "bpy.context.object", revision: session.backendRevision)
-                        } else { PropertiesView(scene: scene, session: session, bridge: bridge) }
-                    case "Transform Tools":
+                    case "Tool Settings":
                         TransformToolsPanel(scene: scene, bridge: bridge,
                                             increment: $options.snapIncrement)
                     case "Animation": TimelineView(scene: scene, session: session)
@@ -337,7 +452,7 @@ struct LayoutWorkspace: View {
                     default: EmptyView()
                     }
                 }
-                .navigationTitle(panel ?? "Details")
+                .navigationTitle(panel ?? "")
                 .navigationBarTitleDisplayMode(.inline)
                 .toolbar { ToolbarItem(placement: .confirmationAction) { Button("Done") { panel = nil } } }
             }
@@ -358,10 +473,12 @@ struct LayoutWorkspace: View {
         .task(id: session.isRunning) { session.probeEssentialsLibrary() }
         #if DEBUG
         // `-panel <name>` opens one of the More menu's panels at launch, so a
-        // panel can be photographed without tapping through a menu.
+        // panel can be photographed without tapping through a menu:
+        // "Outliner", "Properties", "Tool Settings", "Render", "Image to 3D
+        // Model".
         .task {
             let args = ProcessInfo.processInfo.arguments
-            if let i = args.firstIndex(of: "-panel"), i + 1 < args.count { panel = args[i + 1] }
+            if let i = args.firstIndex(of: "-panel"), i + 1 < args.count { show(args[i + 1]) }
         }
         // `-sculpt-enter` picks Sculpt from the Sculpt menu (`choose`) once a
         // `-eval64` script has finished: Blender's Sculpt Mode on the active
@@ -380,6 +497,20 @@ struct LayoutWorkspace: View {
         }
         // `-xray` turns on X-Ray, as View Style ▸ X-Ray does.
         .task { if ProcessInfo.processInfo.arguments.contains("-xray") { options.xray = true } }
+        #if DEBUG
+        // `-measure-overlays stats,length,eangle,area,fangle`: Viewport
+        // Overlays' Statistics and Measurement switches, as the More menu
+        // sets them, for `-measure-ops`.
+        .task {
+            let args = ProcessInfo.processInfo.arguments
+            if let i = args.firstIndex(of: "-measure-overlays"), i + 1 < args.count {
+                let on = Set(args[i + 1].split(separator: ",").map(String.init))
+                options.measure = MeasureOverlays(statistics: on.contains("stats"), edgeLength: on.contains("length"),
+                                                  edgeAngle: on.contains("eangle"), faceArea: on.contains("area"),
+                                                  faceAngle: on.contains("fangle"))
+            }
+        }
+        #endif
         // `-region-action intersect` picks the select tools' mode, as the
         // Select tool menu's Mode rows do.
         .task {
@@ -445,9 +576,28 @@ struct LayoutWorkspace: View {
         // `none` (Alt+A),
         // `dup` (Duplicate, Shift+D: elements in Edit Mode), `dup-linked`, `join`, `parent`, `parent-keep`, `clear`,
         // `clear-keep`, `clear-inverse`, `convert-mesh`, `convert-curve`,
-        // `mesh:<LastOperator.Mesh>`, `shear`, `adjust:key=value` (the redo
-        // panel), `undo`, `redo`, and `field:<location|rotation|scale>:<axis>=
-        // <value>` (a Transform field of the active object).
+        // `mesh:<LastOperator.Mesh>` (with the menu's `meshPointer`),
+        // `extrude-cursor` (Mesh ▸ Vertex ▸ Extrude to Cursor or Add),
+        // `separate:<SELECTED|MATERIAL|LOOSE>` (Mesh ▸ Separate's rows),
+        // `cursor:x;y;z` (the 3D cursor, as the Sidebar writes it), `py:<base64>` (a script line, as the
+        // console runs it), `cap:<base64>` (what a script prints), `shear`, `adjust:key=value` (the redo
+        // panel), `undo`, `redo`, `field:<location|rotation|scale>:<axis>=
+        // <value>` (a Transform field of the active object), and, to read what
+        // the screen says: `ax` (every accessibility label in the windows),
+        // `steps` (Blender's undo history by name), `panel:<name>` and
+        // `close` (a More-menu sheet: Outliner, Properties, Tool Settings,
+        // Render), `search` (the Operator Search), `tool:<ActiveTool>`,
+        // `paintmode:<weightPaint|vertexPaint>` (the mode menu's row),
+        // `aim-camera` (Cameras ▸ Align Active Camera to View),
+        // `normals` (the active mesh's shading normals against Blender's
+        // corner normals), `view-stats` (the 3D View's own frame, measured)
+        // and `render-stats` (the viewport drawn offscreen, measured), with
+        // `winding:old` / `winding:blender` (the renderer's front face for a
+        // mirrored object as it was, or as Blender flips it) and
+        // `culling:old` / `culling:blender` (back faces culled as they were,
+        // or both sides drawn as Blender's 3D View draws them) and
+        // `shading:old` / `shading:blender` (every surface by its vertex
+        // normals as before, or by Blender's face and corner normals).
         .task(id: bridge == nil) {
             let args = ProcessInfo.processInfo.arguments
             guard let i = args.firstIndex(of: "-object-ops"), i + 1 < args.count, bridge != nil else { return }
@@ -463,8 +613,8 @@ struct LayoutWorkspace: View {
                     for (k, name) in names.enumerated() { bridge?.select(Bpy.select(name, only: k == 0)) }
                 case "edit":   setEditing(true)
                 case "object": setEditing(false)
-                case "all":    bridge?.run(Bpy.selectAll(editing: editing), undo: "Select All")
-                case "none":   bridge?.run(Bpy.deselectAll(editing: editing), undo: "Deselect")
+                case "all":    bridge?.run(Bpy.selectAll(editing: editing), undo: SelectMenu.selectAllUndo)
+                case "none":   bridge?.run(Bpy.deselectAll(editing: editing), undo: SelectMenu.selectAllUndo)
                 case "dup":           duplicateSelected()
                 case "dup-linked":    performObjectRow(.duplicateLinked())
                 case "join":          performObjectRow(.join())
@@ -478,23 +628,31 @@ struct LayoutWorkspace: View {
                 case "shear":         bridge?.perform(editing ? LastOperator.shear() : LastOperator.shearObjects())
                 case _ where token.hasPrefix("field:"):
                     // `field:<location|rotation|scale>:<axis>=<value>`: one
-                    // Transform field of the active object, through the calls
-                    // the field makes (`TransformFieldEdit`, then
-                    // `commitTransformField`), the preview printed beside where
-                    // Blender then put the object and its children.
+                    // Transform field of the active object, through the type
+                    // the fields themselves run (`TransformFieldDrag`: its
+                    // `change`, with Blender's preview of a field a constraint
+                    // decides, then its `commit`), the preview printed beside
+                    // where Blender then put the object and its children.
                     let spec = token.dropFirst("field:".count).split(separator: "=").map(String.init)
                     let path = spec.first?.split(separator: ":").map(String.init) ?? []
                     guard spec.count == 2, path.count == 2, let value = Float(spec[1]), let axis = Int(path[1]),
                           let group = TransformChannels.Group.allCases.first(where: { $0.title.lowercased() == path[0] }),
-                          let obj = scene.active, var edit = TransformFieldEdit(object: obj, scene: scene) else {
+                          let obj = scene.active, let start = obj.shownChannels else {
                         said = "no field edit: no active object, no channels for it, or a malformed token"
                         break
                     }
-                    let shown = edit.start.values(group).map { String(format: "%.4f", $0) }.joined(separator: ", ")
-                    edit.change(group, axis: axis, to: value)
+                    let shown = start.values(group).map { String(format: "%.4f", $0) }.joined(separator: ", ")
+                    let drag = TransformFieldDrag()
+                    drag.change(group, axis: axis, to: value, of: obj, in: scene, bridge: bridge)
+                    let constrained = drag.constrainedPreview
+                    let sent = drag.edit?.python
                     let moving = [obj] + scene.carried(by: [obj.id]).map(\.object)
+                        + scene.objects.filter { !$0.constraints.isEmpty && $0.id != obj.id }
                     let previewed = moving.map { ($0, $0.modelMatrix.columns.3) }
-                    let outcome = bridge?.commitTransformField(edit, group: group)
+                    // Mid-edit, as the bar's Undo would be: refused while
+                    // Blender previews it (BpySession.constrainedDragOpen).
+                    let hold = session.gestureHold ?? "no hold"
+                    let outcome = drag.commit(group, bridge: bridge)
                     let worst = previewed.map { simd_distance($0.0.modelMatrix.columns.3, $0.1) }.max() ?? 0
                     let after = obj.shownChannels?.values(group).map { String(format: "%.4f", $0) }
                         .joined(separator: ", ") ?? "unknown"
@@ -502,17 +660,178 @@ struct LayoutWorkspace: View {
                         _o = bpy.data.objects[\(Bpy.quote(obj.name))]
                         print(tuple(round(c, 4) for c in _o.location), tuple(round(c, 4) for c in _o.matrix_world.translation))
                         """) ?? "?"
-                    said = "\(group.title) showed (\(shown)); sent \(edit.python ?? "nothing"); "
+                    said = "\(group.title) showed (\(shown)); sent \(sent ?? "nothing"); "
                         + "\(outcome.map { $0.succeeded ? "succeeded" : "FAILED: \($0.error ?? "")" } ?? "not run"); "
                         + "now shows (\(after)); Blender location, world: \(held); "
                         + "preview vs Blender, worst of \(previewed.count) object(s): \(String(format: "%.6f", worst)) m"
+                        + (constrained ? " (Blender previewed it: constrained; mid-edit hold: \(hold))" : "")
+                        + "; hold after: \(session.gestureHold ?? "none")"
                 case "undo":          session.performUndo()
                 case "redo":          session.performRedo()
+                // What the screen says: every accessibility label in the
+                // windows, the bar's, the redo panel's and an open sheet's.
+                case "ax":            AccessibilityDump.print("object-ops")
+                // Blender's own undo history, by the names it shows.
+                case "steps":
+                    said = "Blender's undo steps: " + (bridge?.capture("""
+                        import _blenderkit_undo as _bk_u
+                        print([_r[2] + ('*' if _r[3] else '') for _r in (_bk_u.blender_steps() or [])][-14:])
+                        """)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? "?")
+                // A More-menu sheet, as its row opens it, or none.
+                case _ where token.hasPrefix("panel:"):
+                    panel = String(token.dropFirst("panel:".count))
+                    try? await Task.sleep(nanoseconds: 1_200_000_000)
+                case "close":         panel = nil; showOperations = false
+                // The Operator Search sheet, as More ▸ Operator Search opens it.
+                case "search":        showOperations = true
+                    try? await Task.sleep(nanoseconds: 1_200_000_000)
+                // Blender's Weight Paint or Vertex Paint, as the mode menu's
+                // row enters it (`enterPaintMode`).
+                case _ where token.hasPrefix("paintmode:"):
+                    guard let mode = InteractionMode(rawValue: String(token.dropFirst("paintmode:".count))),
+                          PaintModeBpy.modes.contains(mode) else { said = "paintmode:weightPaint|vertexPaint"; break }
+                    enterPaintMode(mode)
+                    said = "Blender: \(bridge?.paintState().map { "\($0.mode ?? "OBJECT") \($0.brush ?? "no brush") tool \($0.tool ?? "?") size \($0.size ?? -1)" } ?? "?")"
+                // Cameras ▸ Align Active Camera to View, as its row runs it,
+                // then where the camera ended up in the world beside the view.
+                case "aim-camera":
+                    aimCameraAtView()
+                    let view = camera.renderCamera
+                    said = "the view: location \(view.location), rotation \(view.rotation); Blender: " + (bridge?.capture("""
+                        _bk_c = bpy.context.scene.camera
+                        if _bk_c is None:
+                            print('no scene camera')
+                        else:
+                            bpy.context.view_layer.update()
+                            _bk_m = _bk_c.matrix_world
+                            print(_bk_c.name, _bk_c.rotation_mode, 'parent', _bk_c.parent.name if _bk_c.parent else '-',
+                                  'world', tuple(round(v, 4) for v in _bk_m.translation),
+                                  tuple(round(v, 4) for v in _bk_m.to_euler('XYZ')))
+                        """)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? "?")
+                // The viewport's own drawing of the scene, offscreen at 400 x
+                // 300 (the renderer's culling with each object's winding):
+                // how much of the frame the scene covers and how bright, by a
+                // 4 x 3 grid of cells, to compare two states by.
+                // `view-stats`: the same for the 3D View's own frame (its
+                // Solid pass, `captureFrame`), the overlays off so only the
+                // surfaces count.
+                case "render-stats", "view-stats":
+                    let w = 400, h = 300
+                    var frame: [UInt8]?
+                    if token == "view-stats" {
+                        if let device = MTLCreateSystemDefaultDevice(),
+                           let renderer = ViewportRenderer(device: device, scene: scene, camera: camera) {
+                            renderer.shading = shading
+                            renderer.options.showOverlays = false
+                            frame = renderer.captureFrame(points: CGSize(width: w, height: h), scale: 1,
+                                                          clear: MTLClearColor(red: 0, green: 0, blue: 0, alpha: 1))?.rgba
+                        }
+                    } else {
+                        frame = OfflineRenderer.render(scene: scene, camera: camera, width: w, height: h)
+                    }
+                    if let bytes = frame {
+                        var covered = 0
+                        var cells = [Double](repeating: 0, count: 12), counts = [Int](repeating: 0, count: 12)
+                        for y in 0..<h {
+                            for x in 0..<w {
+                                let i = (y * w + x) * 4
+                                let lum = (Double(bytes[i]) + Double(bytes[i + 1]) + Double(bytes[i + 2])) / 3
+                                guard lum > 20 else { continue }
+                                covered += 1
+                                let c = (y * 3 / h) * 4 + x * 4 / w
+                                cells[c] += lum
+                                counts[c] += 1
+                            }
+                        }
+                        said = "covered \(covered) px; mean brightness by cell: " + (0..<12).map {
+                            counts[$0] == 0 ? "-" : String(format: "%.1f", cells[$0] / Double(counts[$0]))
+                        }.joined(separator: " ")
+                        // Pixel by pixel against the last frame of this kind:
+                        // a cell's mean hides a flat face drawn smooth.
+                        let key = token
+                        if let last = Self.lastStatsFrame[key], last.count == bytes.count {
+                            var differ = 0, most = 0
+                            for k in stride(from: 0, to: bytes.count, by: 4) {
+                                let d = max(abs(Int(bytes[k]) - Int(last[k])), abs(Int(bytes[k + 1]) - Int(last[k + 1])),
+                                            abs(Int(bytes[k + 2]) - Int(last[k + 2])))
+                                if d > 8 { differ += 1 }
+                                most = max(most, d)
+                            }
+                            said += "; against the last \(key): \(differ) px differ by more than 8 of 255, at most \(most)"
+                        }
+                        Self.lastStatsFrame[key] = bytes
+                    } else {
+                        said = "no render"
+                    }
+                // `winding:old` / `winding:blender`: the renderer's front face
+                // for a mirrored object as it was (anticlockwise always), or
+                // flipped as Blender flips it — the in-app negative control
+                // for `render-stats` (`ViewportRenderer.frontFacing`).
+                // Read by `BpyBridge.beginConstrainedDrag`: the path the
+                // fields and the gizmo run.
+                case "constrained-preview:off": BpyBridge.debugSkipConstrainedPreview = true
+                case "constrained-preview:on":  BpyBridge.debugSkipConstrainedPreview = false
+                case "winding:old":     ViewportRenderer.debugOldWinding = true
+                case "winding:blender": ViewportRenderer.debugOldWinding = false
+                // `culling:old` / `culling:blender`: the surface passes culling
+                // back faces as they did, or drawing both sides as Blender's
+                // 3D View does (`ViewportRenderer.surfaceCull`).
+                // `shading:old` / `shading:blender`: every surface drawn by
+                // its vertex normals, as before, or by Blender's face and
+                // corner normals (`ViewportRenderer.drawSurface`).
+                case "shading:old":     ViewportRenderer.debugVertexNormalsOnly = true
+                case "shading:blender": ViewportRenderer.debugVertexNormalsOnly = false
+                case "culling:old":     ViewportRenderer.debugCullBackFaces = true
+                case "culling:blender": ViewportRenderer.debugCullBackFaces = false
+                // A tool, as its button or menu row picks it (`choose`).
+                case _ where token.hasPrefix("tool:"):
+                    guard let t = ActiveTool(rawValue: String(token.dropFirst("tool:".count))) else {
+                        said = "no such tool"; break
+                    }
+                    choose(t)
                 case _ where token.hasPrefix("mesh:"):
                     guard let op = LastOperator.Mesh(rawValue: String(token.dropFirst("mesh:".count))) else {
                         print("[bk] object-ops \(token): no such Mesh row"); continue
                     }
-                    bridge?.perform(LastOperator.mesh(op, spinningAround: scene.active?.location, symmetry: scene.active?.symmetry))
+                    bridge?.perform(LastOperator.mesh(op, spinningAround: scene.active?.location,
+                                                      symmetry: scene.active?.symmetry, pointer: meshPointer))
+                // Mesh ▸ Vertex ▸ Extrude to Cursor or Add, as its row runs it.
+                case "extrude-cursor": extrudeToCursor()
+                // Mesh ▸ Separate ▸ <SELECTED|MATERIAL|LOOSE>, as its row runs it.
+                case _ where token.hasPrefix("separate:"):
+                    guard let type = Bpy.SeparateType(rawValue: String(token.dropFirst("separate:".count))) else {
+                        said = "separate:SELECTED|MATERIAL|LOOSE"; break
+                    }
+                    separate(type)
+                // `py:<base64>`: a script line between rows (a selection to
+                // set up, a file to save), as the console runs one, with an
+                // undo step of its own so an Undo after the next row stops
+                // there.
+                case _ where token.hasPrefix("py:"):
+                    guard let data = Data(base64Encoded: String(token.dropFirst("py:".count))),
+                          let script = String(data: data, encoding: .utf8) else { said = "py:<base64>"; break }
+                    let outcome = bridge?.run(script, undo: "Run Script")
+                    said = outcome.map { $0.succeeded ? "ran" : "FAILED: \($0.error ?? "")" } ?? "no bridge"
+                // `cap:<base64>`: what a script prints, read without a step —
+                // Blender's own numbers to hold the app's against.
+                case _ where token.hasPrefix("cap:"):
+                    guard let data = Data(base64Encoded: String(token.dropFirst("cap:".count))),
+                          let script = String(data: data, encoding: .utf8) else { said = "cap:<base64>"; break }
+                    said = bridge?.capture(script)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? "?"
+                // `normals`: the normals the 3D View shades the active mesh
+                // with (`MeshData.shadingNormal`), corner by corner, against
+                // the corner normals Blender's Solid view draws, read from
+                // Blender's evaluated mesh; and, as the control, the vertex
+                // normals the 3D View drew before against the same.
+                case "normals":
+                    guard let obj = scene.active, let bridge else { said = "no active object"; break }
+                    said = obj.shadingReport(bridge)
+                // The 3D cursor, as the Sidebar's View tab writes it.
+                case _ where token.hasPrefix("cursor:"):
+                    let c = token.dropFirst("cursor:".count).split(separator: ";").compactMap { Float($0) }
+                    guard c.count == 3 else { said = "cursor:x;y;z"; break }
+                    bridge?.run(ToolsBpy.setCursor(SIMD3(c[0], c[1], c[2])))
+                    said = "the cursor shows \(scene.cursor); the pointer: \(meshPointer.pythonArguments())"
                 case _ where token.hasPrefix("adjust:"):
                     let pair = token.dropFirst("adjust:".count).split(separator: "=").map(String.init)
                     said = "no adjustable operator"
@@ -613,8 +932,14 @@ struct LayoutWorkspace: View {
                     // Blender left in object mode underneath.
                     guard parts.count == 2, let next = InteractionMode(rawValue: parts[1]), next.isBrushMode,
                           next != .sculpt else { said = "mode:vertexPaint|weightPaint|texturePaint"; break }
-                    if editing { bridge?.run(Bpy.setMode(.object), undo: "Toggle Edit Mode") }
-                    scene.setMode(next)
+                    if editing { bridge?.run(Bpy.setMode(.object), undo: UndoStep.editMode) }
+                    // Weight Paint and Vertex Paint are Blender's own here, as
+                    // the mode menu enters them; Texture Paint the app's.
+                    if PaintModeBpy.modes.contains(next), session.usesRealBlender {
+                        enterPaintMode(next)
+                    } else {
+                        scene.setMode(next)
+                    }
                 case "proportional":
                     // The Proportional menu's toggle and its Size items.
                     bridge?.run(ToolsBpy.proportional(parts.count > 1 && parts[1] == "on", editing: editing))
@@ -672,15 +997,12 @@ struct LayoutWorkspace: View {
                     TransformGizmo.apply(result, session: session)
                     let preview = obj.mesh.vertices.map(\.position)
                     let python = TransformGizmo.python(result, session: session)
-                    TransformGizmo.rollBack(session)
-                    // As endGizmo does: nothing sent when the mirror leaves
+                    // As endGizmo does, through the same call: rolled back,
+                    // then performed — or nothing sent when the mirror leaves
                     // Blender nothing to transform.
+                    TransformGizmo.rollBack(session)
                     let blenderBefore = blenderVertices(blenderSide())
-                    if let why = TransformGizmo.nothingToCommit(session) {
-                        bridge?.showReport(session.gizmo.mode.undoName, why)
-                    } else {
-                        bridge?.run(python, undo: session.gizmo.mode.undoName)
-                    }
+                    if let bridge { TransformGizmo.commit(result, session: session, bridge: bridge) }
                     let shown = obj.mesh.vertices.map(\.position)
                     let blender = blenderVertices(blenderSide())
                     func gap(_ x: [SIMD3<Float>], _ y: [SIMD3<Float>]) -> String {
@@ -771,8 +1093,8 @@ struct LayoutWorkspace: View {
                 case "object": setEditing(false)
                 case "undo":   session.performUndo()
                 case "redo":   session.performRedo()
-                case "all":    bridge.run(selectAllCommand("SELECT"), undo: "Select All")
-                case "none":   bridge.run(selectAllCommand("DESELECT"), undo: "Deselect")
+                case "all":    bridge.run(selectAllCommand("SELECT"), undo: SelectMenu.selectAllUndo)
+                case "none":   bridge.run(selectAllCommand("DESELECT"), undo: SelectMenu.selectAllUndo)
                 case "delete": deleteSelected()
                 case "stale-mesh-tap":
                     scene.editSelection.vertices = [0]
@@ -943,8 +1265,9 @@ struct LayoutWorkspace: View {
                 case "data":
                     let pair = token.dropFirst("data:".count).split(separator: "=", maxSplits: 1).map(String.init)
                     guard pair.count == 2, let object = scene.active else { said = "data:property=value"; break }
-                    bridge.run(PointsBpy.set(pair[0], to: pair[1], object: object.name), undo: pair[0])
-                    said = "settings now \(String(describing: object.dataSettings))"
+                    let outcome = bridge.run(PointsBpy.set(pair[0], to: pair[1], object: object.name), undo: pair[0])
+                    said = (outcome.succeeded ? "" : "FAILED \(outcome.error ?? ""); ")
+                        + "settings now \(String(describing: object.dataSettings)); \(BudgetProbe.report(bridge))"
                 case "lattice-mod":
                     // The Modifiers panel: Add Modifier ▸ Lattice, then its
                     // Object field, through the same two calls it makes.
@@ -952,7 +1275,7 @@ struct LayoutWorkspace: View {
                         said = "lattice-mod:Mesh:Lattice"; break
                     }
                     bridge.select(Bpy.select(mesh.name))
-                    bridge.run(Bpy.addModifier(.lattice, on: mesh.mesh), undo: "Add Modifier")
+                    bridge.run(Bpy.addModifier(.lattice, on: mesh.mesh), undo: UndoStep.addModifier)
                     guard let modifier = mesh.modifiers.last(where: { $0.kind == .lattice }) else {
                         said = "no Lattice row came back"; break
                     }
@@ -1012,7 +1335,31 @@ struct LayoutWorkspace: View {
             Button("Select") { select(.pattern(pattern)) }
             Button("Cancel", role: .cancel) {}
         } message: { Text("Objects whose names match, such as Wheel* or Cube.00?") }
-        .focusedSceneValue(\.objectAddActions, keysLive ? ObjectAddActions(add: { bridge?.add($0, at: scene.cursor, view: camera) }) : nil)
+        // Blender's invoke for Move / Link to New Collection: a Name field
+        // holding the name Blender would give it, and Create.
+        .alert(newCollection?.link == true ? "Link to New Collection" : "Move to New Collection",
+               isPresented: Binding(get: { newCollection != nil }, set: { if !$0 { newCollection = nil } })) {
+            TextField("Name", text: $newCollectionName)
+                .autocorrectionDisabled()
+            Button("Create") {
+                if let pending = newCollection {
+                    bridge?.run(CollectionsBpy.move(to: pending.parent, link: pending.link,
+                                                    newCollection: newCollectionName))
+                }
+                newCollection = nil
+            }
+            Button("Cancel", role: .cancel) { newCollection = nil }
+        }
+        .onChange(of: scene.localView) { before, after in localViewChanged(from: before, to: after) }
+        .modifier(ReferenceImagePicker(request: $imageRequest) { kind, data, name in
+            bridge?.addReferenceImage(kind, data: data, name: name, at: scene.cursor, view: camera)
+        })
+        .sheet(item: $bodyTextObject) { text in
+            BodyTextSheet(scene: scene, bridge: bridge, object: text) { bodyTextObject = nil }
+                .presentationDetents([.medium])
+        }
+        .focusedSceneValue(\.objectAddActions, keysLive ? ObjectAddActions(add: { bridge?.add($0, at: scene.cursor, view: camera) },
+                                                                          addImage: session.usesRealBlender ? { imageRequest = $0 } : nil) : nil)
         // The keyboard. Withdrawn while a sheet covers the view, while the
         // operator search is open, and while a text field has the keyboard —
         // so a letter typed into the Outliner or the search is a letter.
@@ -1024,6 +1371,12 @@ struct LayoutWorkspace: View {
         .onChange(of: scene.mode) { _, mode in
             if !mode.isBrushMode, tool.isBrush { tool = .select }
         }
+        // Loop Cut's ring and the Knife's path belong to the tool, the mode
+        // and the object they were made with.
+        .onChange(of: tool) { _, next in CutToolActions.keep(for: next, scene: scene) }
+        .task(id: measureKey) { await measureChanged() }
+        .onChange(of: scene.mode) { _, _ in CutToolActions.keep(for: tool, scene: scene) }
+        .onChange(of: scene.activeID) { _, _ in CutToolActions.keep(for: tool, scene: scene) }
         .onChange(of: scene.mode) { _, mode in if mode == .texturePaint, let obj = scene.active { TexturePaintSetup.prepare(obj, scene: scene, bridge: bridge) } }
         // Entered from a script, it waited for the script to end.
         .onChange(of: session.isRunning) { _, running in
@@ -1031,6 +1384,100 @@ struct LayoutWorkspace: View {
                 TexturePaintSetup.prepare(obj, scene: scene, bridge: bridge)
             }
         }
+        // Blender's orientation and its matrix, read back whenever what they
+        // depend on may have moved: any command or undo (the revision), the
+        // object selection a tap changes without one, the mode — and, for
+        // Normal in Edit Mode, the viewport's edit selection, which the
+        // bridge hands Blender first (`captureWithSelection`).
+        .task(id: orientationKey) { refreshOrientation() }
+        // Test All Features' way to this view's own functions (`featureTestDoor`).
+        .task(id: bridge == nil) { await FeatureTestDoor.hold(featureTestDoor) }
+        #if DEBUG
+        .task(id: bridge == nil) { await runTransformOps() }
+        .task(id: bridge == nil) { await runRelationsOps() }
+        #if DEBUG
+        .task(id: bridge == nil) { await runTextImageOps() }
+        #endif
+        #endif
+    }
+
+    /// What Blender's orientation matrix may change with. The frame too: a
+    /// frame change is a `capture` (TimelineDriver.setFrame), which moves no
+    /// revision, and an animated rotation — the object's or its parent's —
+    /// turns Local, Gimbal, Parent and Normal. Without it the gizmo kept the
+    /// last frame's axes and committed them as `orient_matrix`, axes Blender
+    /// no longer held (round 4's review of group 5).
+    private struct OrientationKey: Equatable {
+        var revision: Int
+        var running: Bool
+        var mode: InteractionMode
+        var active: UUID?
+        var selection: Set<UUID>
+        var edit: [Set<Int>]
+        var history: [EditElement]
+        var activeFace: Int?
+        var frame: Int
+        var subframe: Float
+    }
+
+    private var orientationKey: OrientationKey {
+        // Only Normal follows the edit selection; anything else would read
+        // Blender again for every tap.
+        let followsSelection = scene.orientation.type == .normal && scene.mode == .edit
+        let edit = scene.editSelection
+        return OrientationKey(revision: session.backendRevision, running: session.isRunning,
+                              mode: scene.mode, active: scene.activeID, selection: scene.selection,
+                              edit: followsSelection ? [edit.vertices, edit.edges, edit.faces] : [],
+                              history: followsSelection ? edit.history : [],
+                              activeFace: followsSelection ? edit.activeFace : nil,
+                              frame: scene.frameCurrent, subframe: scene.animation.subframe)
+    }
+
+    private func refreshOrientation() {
+        guard let bridge, session.usesRealBlender, !session.isRunning,
+              let state = bridge.orientationState() else { return }
+        if scene.orientation != state { scene.orientation = state }
+    }
+
+    /// The header's Orientation menu: Blender's slot, written through the
+    /// bridge — a setting, so no undo step, as the pivot's and the snap's —
+    /// and shown as Blender then holds it.
+    private func setOrientation(_ value: TransformOrientation) {
+        guard let bridge else { return }
+        bridge.run(OrientationBpy.set(value))
+        refreshOrientation()
+    }
+
+    /// Blender's Orientation menu, the header's Transform Orientation: the
+    /// seven built-in orientations by their names, the one Blender holds
+    /// ticked. Before round 4 the only picker was ToolHeader's, which was
+    /// never on screen, and every gizmo was Global.
+    private var orientationMenu: some View {
+        let state = scene.orientation
+        return Menu {
+            ForEach(TransformOrientation.allCases) { value in
+                Button { setOrientation(value) } label: {
+                    Label(value.label, systemImage: state.type == value ? "checkmark" : value.icon)
+                }
+            }
+            if state.type == nil, let name = state.customName {
+                Label(name, systemImage: "checkmark")
+            }
+            if let why = state.unavailable {
+                Divider()
+                Text(why)
+            }
+        } label: {
+            if compactHeader {
+                settingLabel(icon: (state.type ?? .global).icon, active: state.type != .global)
+            } else {
+                menuLabel(state.label, icon: (state.type ?? .global).icon, active: state.type != .global)
+            }
+        }
+        .accessibilityLabel("Orientation")
+        .accessibilityValue(state.label)
+        // The simulator's stand-in has Global alone.
+        .disabled(!session.usesRealBlender)
     }
 
     // MARK: selecting
@@ -1040,10 +1487,76 @@ struct LayoutWorkspace: View {
     /// What is selected afterwards is what the mirror reads back.
     private func select(_ command: SelectMenu.Command) {
         guard let bridge, !session.isRunning else { return }
-        switch command.action(editing: editing) {
+        // In Local View every row takes only what Local View holds, as
+        // Blender's do under its view: the bridge runs them there
+        // (`LocalViewBpy.scoped`).
+        // Where the 3D View looks, for Side of Active's View axis.
+        let view = SelectMenu.ViewDirection(forward: simd_normalize(camera.target - camera.eye), up: camera.trueUp)
+        // Blender's select mode, as the mirror read it back: Select Linked ▸
+        // Linked (and Ctrl+L) start their Delimit from it, as Blender's do.
+        switch command.action(editing: editing, view: view, selectMode: scene.selectMode) {
         case .run(let python, let undo): bridge.run(python, undo: undo)
         case .perform(let op):          bridge.perform(op)
         }
+    }
+
+    /// Blender's pick selections for a finger, over the view's top left
+    /// while a mesh is being edited with anything but Loop Cut or the Knife:
+    /// Select (an ordinary tap), then Loop Select, Edge Ring Select, Pick
+    /// Shortest Path and Select Linked, each named as Blender names the
+    /// operator, and the toggle for what Shift adds in Blender's keymap —
+    /// to an ordinary click its Toggle Selection. The Select menu has the
+    /// same rows.
+    @ViewBuilder private var pickBar: some View {
+        if editing, !editingPoints, tool != .loopCut, tool != .knife {
+            HStack(spacing: 2) {
+                pickSegment(nil, label: "Select", icon: "cursorarrow.click")
+                ForEach(SelectPick.allCases, id: \.self) { item in
+                    pickSegment(item, label: item.operatorName, icon: item.icon)
+                }
+                shiftToggle(pick?.shiftLabel ?? SelectPick.toggleLabel)
+            }
+            .padding(2)
+            .background(BTheme.header.opacity(0.92))
+            .clipShape(RoundedRectangle(cornerRadius: 8))
+            .overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(BTheme.outline, lineWidth: BTheme.Metric.hairline))
+            .padding(10)
+        }
+    }
+
+    /// What Shift adds, for a finger: Blender's name for it.
+    private func shiftToggle(_ label: String) -> some View {
+        Button { pickShift.toggle() } label: {
+            Text(label).font(BTheme.Font.ui(11))
+                .foregroundStyle(pickShift ? Color.white : BTheme.text)
+                .padding(.horizontal, 8).frame(height: 28)
+                .background(pickShift ? BTheme.select : Color.clear)
+                .clipShape(RoundedRectangle(cornerRadius: 6))
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel(label)
+        .accessibilityValue(pickShift ? "On" : "Off")
+    }
+
+    private func pickSegment(_ item: SelectPick?, label: String, icon: String) -> some View {
+        Button {
+            // What Shift adds differs from pick to pick; a new pick starts
+            // without it.
+            if pick != item { pickShift = false }
+            pick = item
+        } label: {
+            Image(systemName: icon)
+                .font(.system(size: 12, weight: .medium))
+                .foregroundStyle(pick == item ? Color.white : BTheme.text)
+                .frame(width: 32, height: 28)
+                .background(pick == item ? BTheme.select : Color.clear)
+                .clipShape(RoundedRectangle(cornerRadius: 6))
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel(label)
+        .accessibilityValue(pick == item ? "On" : "Off")
     }
 
     #if DEBUG
@@ -1172,7 +1685,7 @@ struct LayoutWorkspace: View {
                 else { said = "no such switch" }
             case _ where token.hasPrefix("+"):
                 guard let obj, let kind = ModifierKind(rawValue: String(token.dropFirst())) else { said = "no such kind"; break }
-                bridge.run(Bpy.addModifier(kind, on: obj.mesh), undo: "Add Modifier")
+                bridge.run(Bpy.addModifier(kind, on: obj.mesh), undo: UndoStep.addModifier)
             case "mod" where parts.count >= 3:
                 guard let modifier = obj?.modifiers.first(where: { $0.name == parts[1] }), let obj else {
                     said = "no such modifier"; break
@@ -1248,7 +1761,12 @@ struct LayoutWorkspace: View {
                             hasActive: scene.active != nil,
                             vertexGroups: scene.active?.meshGroups?.groups.count,
                             choose: { choose($0) }, send: select,
-                            askPattern: { askingPattern = true })
+                            askPattern: { askingPattern = true },
+                            pick: pick, pickShift: pickShift,
+                            setPick: { if pick != $0 { pickShift = false }; pick = $0 },
+                            setPickShift: { pickShift = $0 },
+                            // As the 3D View is handed `pick` (`body`).
+                            picks: editing && !editingPoints)
         } label: { menuLabel("Select", icon: "cursorarrow.rays") }
         .disabled(scene.objects.isEmpty)
     }
@@ -1317,7 +1835,7 @@ struct LayoutWorkspace: View {
     /// `BpyBridge.sculptEnd` as it ends, so this is the simulator's alone.
     private func keepStroke(_ object: BKObject) {
         guard !session.usesRealBlender else { return }
-        undo.push("Sculpt Stroke", scene)
+        undo.push(scene.sculpt.brush.label + " Brush", scene)
         session.autosave?.schedule(scene)
     }
 
@@ -1331,9 +1849,17 @@ struct LayoutWorkspace: View {
     /// mode they need — `primitive_cube_add` there crashes Blender (measured in
     /// 5.2.1). Returns whether it refused.
     private func refusedInSculptMode(_ what: String) -> Bool {
-        guard sculptingInBlender else { return false }
-        bridge?.showReport(what, "Blender's Sculpt Mode has no \(what). Leave Sculpt Mode first.")
-        return true
+        if sculptingInBlender {
+            bridge?.showReport(what, "Blender's Sculpt Mode has no \(what). Switch to Object Mode first.")
+            return true
+        }
+        // Blender's Weight Paint and Vertex Paint headers have View and
+        // Weights / Paint menus, and none of the object and mesh operations.
+        if paintingInBlender {
+            bridge?.showReport(what, "Blender's \(scene.mode.label) has no \(what). Switch to Object Mode first.")
+            return true
+        }
+        return false
     }
 
     // MARK: keyboard
@@ -1345,6 +1871,7 @@ struct LayoutWorkspace: View {
             isRunning: session.isRunning,
             hasActiveObject: scene.active != nil,
             editing: editing,
+            editingMesh: editing && !editingPoints,
             selectMode: scene.selectMode,
             // Held while a sculpt stroke is down, or points are being
             // dragged (BpySession.gestureHold).
@@ -1353,17 +1880,29 @@ struct LayoutWorkspace: View {
             canRedo: session.gestureHold == nil
                 && (session.usesRealBlender ? session.backendCanRedo : undo.canRedo),
             setTool: { choose($0) },
+            knifeConfirm: tool == .knife && editing && scene.knifePath != nil
+                ? { CutToolActions.knifeDone(scene: scene, camera: camera, bridge: bridge) } : nil,
+            knifeCancel: tool == .knife && editing && scene.knifePath != nil
+                ? { CutToolActions.knifeCancel(scene) } : nil,
+            rulerRemove: tool == .measure && scene.activeRuler != nil ? { MeasureActions.remove(scene) } : nil,
             deleteSelected: deleteSelected,
             duplicate: { duplicateSelected() },
             selectAll: {
-                bridge?.run(selectAllCommand("SELECT"), undo: "Select All")
+                bridge?.run(selectAllCommand("SELECT"), undo: SelectMenu.selectAllUndo)
             },
             deselectAll: {
-                bridge?.run(selectAllCommand("DESELECT"), undo: "Deselect")
+                bridge?.run(selectAllCommand("DESELECT"), undo: SelectMenu.selectAllUndo)
             },
             invertSelection: {
-                bridge?.run(selectAllCommand("INVERT"), undo: "Invert Selection")
+                bridge?.run(selectAllCommand("INVERT"), undo: SelectMenu.selectAllUndo)
             },
+            // Blender's L and Shift+L, under the pointer: the 3D View that
+            // has the pointer answers (SelectPickInput.swift).
+            selectLinkedPick: editing && !editingPoints ? { deselect in
+                NotificationCenter.default.post(name: SelectPickKeys.linked, object: nil,
+                                                userInfo: ["deselect": deselect])
+            } : nil,
+            selectRow: { select($0) },
             toggleEditing: toggleEditing,
             setSelectMode: setSelectMode,
             mesh: {
@@ -1375,7 +1914,10 @@ struct LayoutWorkspace: View {
                                        + (activeIsLattice ? "lattice's" : "curve's") + " tools.")
                     return
                 }
-                if !refusedInSculptMode($0.displayName) { bridge?.perform(LastOperator.mesh($0, spinningAround: scene.active?.location, symmetry: scene.active?.symmetry)) }
+                if !refusedInSculptMode($0.displayName) {
+                    bridge?.perform(LastOperator.mesh($0, spinningAround: scene.active?.location,
+                                                      symmetry: scene.active?.symmetry, pointer: meshPointer))
+                }
             },
             // Blender adds at the 3D cursor and leaves the view where it is.
             // This used to re-frame the whole scene after every add.
@@ -1394,16 +1936,23 @@ struct LayoutWorkspace: View {
             frameSelected: { camera.frameSelected(in: scene) },
             view: { camera.snap(to: $0) },
             lookThroughCamera: cameraToLookThrough == nil ? nil : { lookThroughCamera() },
-            aimCameraAtView: cameraToLookThrough == nil ? nil : { aimCameraAtView() },
+            aimCameraAtView: cameraToAlign == nil ? nil : { aimCameraAtView() },
             togglePerspective: { camera.isOrthographic.toggle() },
             toggleWireframe: { shading = shading == .wireframe ? .solid : .wireframe },
             toggleXRay: { options.xray.toggle() },
             zoom: { camera.dolly(factor: $0) },
             undo: { session.performUndo() },
             redo: { session.performRedo() },
-            showOutliner: { panel = "Scene" },
-            showObjectDetails: { panel = "Object Details" },
-            editTarget: canEditPoints ? (activeIsLattice ? "Lattice" : "Curve") : "Mesh")
+            showOutliner: { show("Outliner") },
+            showProperties: { show("Properties") },
+            sidebarShown: showsSidebar,
+            toggleSidebar: { showsSidebar.toggle() },
+            collections: scene.collections,
+            run: { bridge?.run($0) },
+            askNewCollection: askNewCollection,
+            inLocalView: scene.localView != nil,
+            canToggleLocalView: session.usesRealBlender && !session.isRunning
+                && (scene.localView != nil || !scene.selection.isEmpty || editing))
     }
 
     /// Delete, Backspace or X — and More ▸ Delete Selected. Objects in object
@@ -1411,6 +1960,12 @@ struct LayoutWorkspace: View {
     /// Whatever was tapped since Blender last reported its selection reaches
     /// Blender first, in the same evaluation.
     private func deleteSelected() {
+        // With the Measure tool, Blender's Delete (and X) removes the active
+        // ruler (`view3d.ruler_remove` in its tool keymap).
+        if tool == .measure, scene.activeRuler != nil {
+            MeasureActions.remove(scene)
+            return
+        }
         guard !refusedInSculptMode("Delete") else { return }
         guard let bridge, scene.active != nil else { return }
         if editingPoints {
@@ -1424,7 +1979,7 @@ struct LayoutWorkspace: View {
             runPoints(PointsBpy.delete(segments: false))
             return
         }
-        bridge.run(Bpy.deleteSelection(editing: editing, mode: scene.selectMode), undo: "Delete")
+        bridge.run(Bpy.deleteSelection(editing: editing, mode: scene.selectMode), undo: UndoStep.delete)
     }
 
     /// Object ▸ Show/Hide, or Mesh ▸ Show/Hide while editing: H, Shift+H and
@@ -1454,7 +2009,7 @@ struct LayoutWorkspace: View {
             bridge.showReport("Separate", "Separate works on meshes here.")
             return
         }
-        bridge.run(Bpy.separate(type), undo: "Separate")
+        bridge.run(Bpy.separate(type), undo: UndoStep.separate)
     }
 
     /// Shade Smooth / Shade Flat, from the Object menu.
@@ -1462,7 +2017,7 @@ struct LayoutWorkspace: View {
         guard !refusedInSculptMode(smooth ? "Shade Smooth" : "Shade Flat") else { return }
         guard let bridge, scene.active != nil, !session.isRunning else { return }
         bridge.run(smooth ? Bpy.shadeSmooth : Bpy.shadeFlat,
-                   undo: smooth ? "Shade Smooth" : "Shade Flat")
+                   undo: smooth ? UndoStep.shadeSmooth : UndoStep.shadeFlat)
     }
 
     /// What Set Origin and Apply may do, and what they would do to.
@@ -1474,6 +2029,39 @@ struct LayoutWorkspace: View {
     /// is left to `refusedInSculptMode`, which says why in words.
     private var objectRelations: ObjectRelationState {
         ObjectRelationState(scene: scene, editing: editing, isRunning: session.isRunning)
+    }
+
+    /// Opens Move / Link to New Collection's prompt with the name Blender's
+    /// invoke proposes (`BKE_collection_new_name_get`).
+    private func askNewCollection(_ parent: Int, _ link: Bool) {
+        newCollectionName = scene.collections?.newName(inside: parent) ?? "Collection"
+        newCollection = (parent, link)
+    }
+
+    /// Local View came or went in Blender — the toggle, Remove from Local
+    /// View emptying it, an Undo past the step that entered it. Entering
+    /// frames what it holds as Blender's Frame Selected does
+    /// (`LocalViewFraming`), from the view as it is, leaving camera view as
+    /// Blender does; leaving puts back the view it was entered from.
+    private func localViewChanged(from before: LocalViewState?, to after: LocalViewState?) {
+        if before == nil, let after {
+            beforeLocalView = (camera, cameraView)
+            cameraView = nil
+            // Each object's box as Blender's `BKE_object_minmax` makes it: an
+            // empty, a light or a camera is its location ± its scale.
+            let held = scene.objects.filter { after.objects.contains($0.name) }
+            let aspect = Float(viewportSize.width / max(viewportSize.height, 1))
+            if let box = LocalViewFraming.box(of: held),
+               let framed = LocalViewFraming.frame(lo: box.lo, hi: box.hi, fovY: camera.fovY,
+                                                   aspect: aspect > 0 ? aspect : 1, clipStart: camera.near) {
+                camera.target = framed.centre
+                camera.distance = framed.distance
+            }
+        } else if before != nil, after == nil, let kept = beforeLocalView {
+            camera = kept.camera
+            cameraView = kept.cameraView
+            beforeLocalView = nil
+        }
     }
 
     /// An Object menu row that runs an adjustable operator: Blender's own,
@@ -1512,7 +2100,7 @@ struct LayoutWorkspace: View {
     /// not the object. Elsewhere in Edit Mode (a curve's or a lattice's
     /// points) it is refused in words rather than copying the whole object.
     private func duplicateSelected() {
-        guard !refusedInSculptMode("Duplicate") else { return }
+        guard !refusedInSculptMode("Duplicate Objects") else { return }
         guard let bridge, let active = scene.active, !session.isRunning else { return }
         if editing {
             guard active.hasEditMode else {
@@ -1520,10 +2108,12 @@ struct LayoutWorkspace: View {
                                   + "\(active.name) is not a mesh. Leave Edit Mode to duplicate the object.")
                 return
             }
-            bridge.run(Bpy.duplicateElements, undo: "Duplicate")
+            // Mesh ▸ Duplicate is `mesh.duplicate_move`, whose step Blender's
+            // undo history names after it (measured in 5.2.1).
+            bridge.run(Bpy.duplicateElements, undo: UndoStep.duplicateElements)
             return
         }
-        bridge.run(Bpy.duplicate, undo: "Duplicate Objects")
+        bridge.run(Bpy.duplicate, undo: UndoStep.duplicateObjects)
     }
 
     /// Tab, from the viewport's own key command (see ViewportMTKView).
@@ -1550,91 +2140,348 @@ struct LayoutWorkspace: View {
         }
     }
 
-    // MARK: tool row
-
-    /// One row: what the tools act on, the tool in hand, then what to do.
-    ///
-    /// The row is at least as wide as the screen, so Edit Mesh and More sit at
-    /// its far end, and it scrolls when a narrow window cannot fit it.
-    private var toolRow: some View {
-        GeometryReader { geo in
-            ScrollView(.horizontal, showsIndicators: false) {
-                HStack(spacing: 8) {
-                    if editing { editingChip }
-                    transformTools
-                    Rectangle().fill(BTheme.outline).frame(width: 1, height: 24)
-                    // Blender's header order between the tool buttons and the
-                    // menus: the pivot point, the magnet, proportional editing.
-                    pivotMenu
-                    snapMenu
-                    proportionalMenu
-                    // Blender's mirror row: X, Y and Z, and Topology Mirror in
-                    // its popover — in edit, sculpt and the paint modes, where
-                    // its header draws them.
-                    if showsSymmetry { symmetryControl }
-                    Rectangle().fill(BTheme.outline).frame(width: 1, height: 24)
-                    if editingPoints {
-                        pointsMenus
-                    } else if editing {
-                        selectMenu
-                        // The operations a mesh edit is mostly made of, one tap
-                        // away; the rest are in the Mesh menu beside them.
-                        ForEach([LastOperator.Mesh.extrude, .bevel, .inset, .subdivide], id: \.self) { op in
-                            Button { bridge?.perform(LastOperator.mesh(op, spinningAround: scene.active?.location, symmetry: scene.active?.symmetry)) } label: {
-                                Text(op.displayName)
-                                    .padding(.horizontal, 10).frame(height: 40)
-                                    .contentShape(Rectangle())
-                            }
+    /// The Properties editor for the active object, in the editors' dock
+    /// (`editorsDock`): a camera's or a light's own settings, else the tabs
+    /// of `PropertiesView`, with the Data API one tap below either.
+    @ViewBuilder private var propertiesEditor: some View {
+        // A camera or a light has no mesh to show, and until now had no
+        // settings either: the sheet went straight to the RNA browser, where
+        // `energy` is a row of JSON.
+        if let object = scene.active, object.overlayDisplay != nil {
+            ScrollView {
+                VStack(alignment: .leading, spacing: 0) {
+                    CameraLightPanel(scene: scene, session: session, bridge: bridge,
+                                     object: object, camera: $camera,
+                                     lookThrough: { lookThroughCamera(object) })
+                    if session.usesRealBlender {
+                        // Blender's Outliner shows the RNA tree as its Data
+                        // API display mode.
+                        NavigationLink("Data API") {
+                            BlenderDataBrowser(bridge: bridge, startPath: "bpy.context.object",
+                                               revision: session.backendRevision)
+                                .toolbar(.visible, for: .navigationBar)
                         }
-                        meshMenu
-                    } else if sculptingInBlender {
-                        // Blender's sculpt header: the mode, then the brush
-                        // and its settings, then Dyntopo, Remesh, Multires,
-                        // Mask and Face Sets. No Add or Mesh menu: Blender's
-                        // Sculpt Mode has neither.
-                        sculptMenu
-                        SculptHeader(scene: scene, session: session, bridge: bridge)
-                    } else {
-                        if scene.mode == .object { selectMenu }
-                        addMenu
-                        meshMenu
-                        sculptMenu
-                        if scene.mode == .texturePaint { TexturePaintHeader(scene: scene, tool: tool) }
-                        Button { panel = "Scene" } label: {
-                            Label("Scene", systemImage: "square.3.layers.3d")
-                                .padding(.horizontal, 10).frame(height: 40)
-                                .contentShape(Rectangle())
-                        }
+                        .font(BTheme.Font.ui(12))
+                        .padding(.horizontal, 12).padding(.vertical, 10)
                     }
-                    Spacer(minLength: 8)
-                    if !editing {
-                        Button { setEditing(true) } label: {
-                            Label(canEditPoints ? (activeIsLattice ? "Edit Lattice" : "Edit Curve") : "Edit Mesh",
-                                  systemImage: "pencil")
-                                .padding(.horizontal, 12).frame(height: 40)
-                                .background(BTheme.widget)
-                                .clipShape(RoundedRectangle(cornerRadius: 8))
-                                .overlay {
-                                    RoundedRectangle(cornerRadius: 8)
-                                        .strokeBorder(BTheme.outline, lineWidth: BTheme.Metric.hairline)
-                                }
-                                .opacity(canEdit || canEditPoints ? 1 : 0.4)
-                        }
-                        .disabled(!(canEdit || canEditPoints))
-                    }
-                    moreMenu
                 }
-                .padding(.horizontal, 12)
-                .frame(minWidth: geo.size.width, minHeight: geo.size.height, alignment: .leading)
             }
+        } else if scene.active != nil {
+            // A mesh got the RNA browser and nothing else, on exactly the
+            // backend where it matters: no Transform fields, no modifier
+            // stack, no material — so a part could not be placed at a number,
+            // only dragged. The Properties editor is what Blender shows here,
+            // and the browser stays one tap away, the way the camera and light
+            // panel already does.
+            VStack(spacing: 0) {
+                PropertiesView(scene: scene, session: session, bridge: bridge)
+                if session.usesRealBlender {
+                    BEditorDivider(.horizontal)
+                    NavigationLink("Data API") {
+                        BlenderDataBrowser(bridge: bridge, startPath: "bpy.context.object",
+                                           revision: session.backendRevision)
+                            .toolbar(.visible, for: .navigationBar)
+                    }
+                    .font(BTheme.Font.ui(12))
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.horizontal, 12).padding(.vertical, 10)
+                }
+            }
+        } else if session.usesRealBlender {
+            BlenderDataBrowser(bridge: bridge, startPath: "bpy.context.object", revision: session.backendRevision)
+        } else { PropertiesView(scene: scene, session: session, bridge: bridge) }
+    }
+
+    // MARK: the header, the toolbar and the editors' dock
+
+    /// Blender's 3D View header: the mode menu, then the menus for what is
+    /// being worked on, then — at the far end — the transform settings, the
+    /// editors' dock and More.
+    ///
+    /// The tools moved out of it to the toolbar (`toolShelf`), where Blender
+    /// keeps them. With them in it the row was 1,774 points wide in Object
+    /// Mode and 2,507 in Edit Mode: on an iPad Air 11-inch held upright (820
+    /// points) Select, Add, Mesh, the mode menu, the Outliner, Edit Mode and
+    /// More lay past the screen's edge with nothing to say they were there,
+    /// and Edit Mode and More did on every iPad, in either orientation
+    /// (measured with `-ui-audit`, November 1). The transform settings are
+    /// icons, as Blender's header draws them, and on a narrow window the
+    /// menus' titles lose their icons and the mirror row folds into one menu.
+    /// The mode menu, the editors' button and More are pinned at the two
+    /// ends; between them, a mode whose header still does not fit (Blender's
+    /// Sculpt Mode header, 1,300 points with its brush settings) scrolls, and
+    /// a fade and a chevron at the edge say so. In the sculpt and paint modes
+    /// the transform settings go, as they go from Blender's header there.
+    private var headerRow: some View {
+        HStack(spacing: 4) {
+            modeMenu
+            GeometryReader { geo in
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(spacing: 4) {
+                        if editing, !editingPoints { selectModeControl }
+                        if editingPoints {
+                            pointsMenus
+                        } else if editing {
+                            selectMenu
+                            meshMenu
+                        } else if sculptingInBlender {
+                            // Blender's sculpt header: the brush and its
+                            // settings, then Dyntopo, Remesh, Multires, Mask
+                            // and Face Sets. No Add or Mesh menu: Blender's
+                            // Sculpt Mode has neither.
+                            sculptMenu
+                            SculptHeader(scene: scene, session: session, bridge: bridge)
+                        } else if paintingInBlender {
+                            // Blender's Weight Paint and Vertex Paint headers:
+                            // the brush and its settings. No Add or Mesh menu:
+                            // neither mode has them.
+                            sculptMenu
+                            PaintModeHeader(scene: scene, session: session, bridge: bridge)
+                        } else {
+                            if scene.mode == .object { selectMenu }
+                            addMenu
+                            meshMenu
+                            // The brushes, in the modes that have them.
+                            if scene.mode != .object { sculptMenu }
+                            if scene.mode == .texturePaint { TexturePaintHeader(scene: scene, tool: tool) }
+                        }
+                        Spacer(minLength: 4)
+                        // Blender's header order at its right end: the
+                        // orientation, the pivot point, the magnet,
+                        // proportional editing — in Object and Edit Mode —
+                        // then the mirror row in the modes that draw it.
+                        if scene.mode == .object || editing {
+                            orientationMenu
+                            pivotMenu
+                            snapMenu
+                            proportionalMenu
+                        }
+                        if showsSymmetry { symmetryControl }
+                    }
+                    .frame(minWidth: geo.size.width, minHeight: geo.size.height, alignment: .leading)
+                    .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { headerContentWidth = $0 }
+                }
+                .modifier(ScrolledToEnd(atEnd: $headerScrolledToEnd))
+                .overlay(alignment: .trailing) {
+                    if headerContentWidth > geo.size.width + 1, !headerScrolledToEnd {
+                        ZStack(alignment: .trailing) {
+                            LinearGradient(colors: [BTheme.header.opacity(0), BTheme.header],
+                                           startPoint: .leading, endPoint: .trailing)
+                                .frame(width: 44)
+                            Image(systemName: "chevron.right")
+                                .font(.system(size: 11, weight: .semibold))
+                                .foregroundStyle(BTheme.textDim)
+                                .padding(.trailing, 4)
+                        }
+                        .allowsHitTesting(false)
+                    }
+                }
+            }
+            Rectangle().fill(BTheme.outline).frame(width: 1, height: 24).padding(.horizontal, 2)
+            editorsToggle
+            moreMenu
         }
-        .frame(height: 56)
+        .padding(.horizontal, compactHeader ? 4 : 8)
+        .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { headerWidth = $0 }
+        .frame(height: 52)
         .buttonStyle(.plain).font(.system(size: 13, weight: .medium))
         .foregroundStyle(BTheme.text).background(BTheme.header)
         .overlay(alignment: .bottom) {
             Rectangle().fill(BTheme.editorOutline).frame(height: BTheme.Metric.hairline)
         }
         .disabled(session.isRunning)
+    }
+
+    /// A narrow window: an upright iPad (820 points for an 11-inch, 1032 for
+    /// a 13-inch, 744 for the mini) or a window beside another app. Edit
+    /// Mode's full header needs about 1,050 points.
+    private var compactHeader: Bool { headerWidth < 1_100 }
+
+    /// Blender's mode menu, the header's first control: the mode the active
+    /// object is in, and every mode it can go to. Edit Mode was a button at
+    /// the row's far end, Sculpt Mode, Vertex Paint and Weight Paint were rows
+    /// of a menu titled Sculpt, and leaving Edit Mode was a button inside a
+    /// chip; Blender has one menu for all of them, and so does this.
+    private var modeMenu: some View {
+        let current: InteractionMode = scene.mode
+        return Menu {
+            Button { toObjectMode() } label: {
+                Label(InteractionMode.object.label,
+                      systemImage: current == .object ? "checkmark" : InteractionMode.object.icon)
+            }
+            if canEdit || canEditPoints {
+                Button { if !editing { setEditing(true) } } label: {
+                    Label(InteractionMode.edit.label,
+                          systemImage: current == .edit ? "checkmark" : InteractionMode.edit.icon)
+                }
+            }
+            if canEdit {
+                Button { if current != .sculpt { choose(.sculptDraw) } } label: {
+                    Label(InteractionMode.sculpt.label,
+                          systemImage: current == .sculpt ? "checkmark" : InteractionMode.sculpt.icon)
+                }
+                // Blender's own Vertex Paint and Weight Paint, with its module.
+                if session.usesRealBlender {
+                    ForEach(PaintModeBpy.modes, id: \.self) { mode in
+                        Button { if current != mode { enterPaintMode(mode) } } label: {
+                            Label(mode.label, systemImage: current == mode ? "checkmark" : mode.icon)
+                        }
+                    }
+                }
+                // Texture Paint is the app's own: its brushes paint the image
+                // in Swift and keep the stroke in Blender.
+                Button { if current != .texturePaint { choose(.paintDraw) } } label: {
+                    Label(InteractionMode.texturePaint.label,
+                          systemImage: current == .texturePaint ? "checkmark" : InteractionMode.texturePaint.icon)
+                }
+            }
+        } label: { menuLabel(current.label, icon: current.icon, active: current != .object) }
+        .disabled(scene.active == nil)
+    }
+
+    /// The mode menu's Object Mode: out of Edit Mode as its Tab does, out of
+    /// a sculpt or paint mode as picking a tool that needs none does
+    /// (`ActiveTool.mode(whenChosenFrom:)`).
+    private func toObjectMode() {
+        if editing { setEditing(false) } else if scene.mode != .object { choose(.select) }
+    }
+
+    /// Blender's toolbar, down the 3D View's left edge: the select tools,
+    /// Cursor, Move, Rotate, Scale and Measure, and in a mesh's Edit Mode the
+    /// tools and actions a mesh edit is mostly made of — Extrude, Inset,
+    /// Bevel, Subdivide, Loop Cut and Knife (the rest are in the Mesh menu).
+    /// Each is an icon with its name under it, 56 points square: a finger's
+    /// size, where the header's buttons were 36 points tall. It scrolls when a
+    /// short window cannot fit it.
+    private var toolShelf: some View {
+        ScrollView(.vertical, showsIndicators: false) {
+            VStack(spacing: 2) {
+                selectToolMenu
+                // Blender's toolbar order: the select tools, Cursor, the
+                // transforms, then Measure (after Annotate, which is not built).
+                ForEach([ActiveTool.cursor, .move, .rotate, .scale, .measure], id: \.self) { item in
+                    Button { choose(item) } label: {
+                        shelfItem(item.label, icon: item.icon, active: tool == item)
+                    }
+                    .accessibilityLabel(item.label)
+                }
+                if editing, !editingPoints {
+                    Rectangle().fill(BTheme.outline).frame(width: 36, height: 1).padding(.vertical, 4)
+                    ForEach([LastOperator.Mesh.extrude, .inset, .bevel, .subdivide], id: \.self) { op in
+                        Button {
+                            bridge?.perform(LastOperator.mesh(op, spinningAround: scene.active?.location,
+                                                              symmetry: scene.active?.symmetry))
+                        } label: {
+                            shelfItem(op.toolLabel, icon: shelfIcon(op), active: false)
+                        }
+                        .accessibilityLabel(op.toolLabel)
+                    }
+                    // Tools, not actions: with one in hand a tap shows the
+                    // ring a loop cut will cross, or adds a point to the
+                    // knife's path (CutToolInput.swift).
+                    ForEach([ActiveTool.loopCut, .knife], id: \.self) { item in
+                        Button { choose(item) } label: {
+                            shelfItem(item.label, icon: item.icon, active: tool == item)
+                        }
+                        .accessibilityLabel(item.label)
+                    }
+                }
+            }
+            .padding(.vertical, 6)
+            .frame(maxWidth: .infinity)
+        }
+        .frame(width: 64)
+        .buttonStyle(.plain)
+        .foregroundStyle(BTheme.text)
+        .background(BTheme.header)
+        .overlay(alignment: .trailing) {
+            Rectangle().fill(BTheme.editorOutline).frame(width: BTheme.Metric.hairline)
+        }
+        .disabled(session.isRunning)
+    }
+
+    /// The toolbar's icons for the Edit Mode actions: the tools' own where
+    /// Blender's toolbar has the tool.
+    private func shelfIcon(_ op: LastOperator.Mesh) -> String {
+        switch op {
+        case .extrude: return ActiveTool.extrudeRegion.icon
+        case .inset:   return ActiveTool.insetFaces.icon
+        case .bevel:   return ActiveTool.bevel.icon
+        default:       return "square.grid.2x2"
+        }
+    }
+
+    private func shelfItem(_ title: String, icon: String, active: Bool) -> some View {
+        VStack(spacing: 3) {
+            Image(systemName: icon).font(.system(size: 17, weight: .medium))
+            Text(title)
+                .font(.system(size: 9, weight: .medium))
+                .lineLimit(2).multilineTextAlignment(.center)
+                .minimumScaleFactor(0.8)
+        }
+        .foregroundStyle(active ? Color.white : BTheme.text)
+        .frame(width: 56, height: 56)
+        .background(active ? BTheme.select : Color.clear)
+        .clipShape(RoundedRectangle(cornerRadius: 8))
+        .contentShape(Rectangle())
+    }
+
+    /// The Outliner over the Properties editor, as Blender's default layout
+    /// has them beside the 3D View; side by side under it when the window is
+    /// taller than wide. The header's button (`editorsToggle`) shows and hides
+    /// them, and More ▸ Properties shows them.
+    private func editorsDock(wide: Bool, height: CGFloat) -> some View {
+        let layout = wide ? AnyLayout(VStackLayout(spacing: 0)) : AnyLayout(HStackLayout(spacing: 0))
+        return layout {
+            NavigationStack {
+                OutlinerView(scene: scene, session: session, bridge: bridge)
+                    .toolbar(.hidden, for: .navigationBar)
+            }
+            // A third of a column, at most 260 points: the Properties
+            // editor is where most of the reading is.
+            .frame(width: wide ? nil : 300, height: wide ? min(260, height * 0.34) : nil)
+            BEditorDivider(wide ? .horizontal : .vertical)
+            NavigationStack {
+                propertiesEditor
+                    .toolbar(.hidden, for: .navigationBar)
+            }
+        }
+        .background(BTheme.properties)
+        .overlay(alignment: wide ? .leading : .top) {
+            BEditorDivider(wide ? .vertical : .horizontal)
+        }
+    }
+
+    /// Shows or hides the Outliner and the Properties editor.
+    private var editorsToggle: some View {
+        Button { showsEditors.toggle() } label: {
+            settingLabel(icon: "sidebar.right", active: showsEditors, chevron: false)
+        }
+        .accessibilityLabel("Outliner and Properties")
+        .accessibilityValue(showsEditors ? "Shown" : "Hidden")
+    }
+
+    /// Shows `name`'s panel: the Outliner and Properties in the dock, any
+    /// other (Render, Tool Settings, …) as a sheet.
+    private func show(_ name: String) {
+        if name == "Outliner" || name == "Properties" { showsEditors = true } else { panel = name }
+    }
+
+    /// A header setting drawn as Blender draws it, an icon: 44 points.
+    private func settingLabel(icon: String, active: Bool = false, chevron: Bool = true) -> some View {
+        HStack(spacing: 3) {
+            Image(systemName: icon)
+            if chevron {
+                Image(systemName: "chevron.down")
+                    .font(.system(size: 7, weight: .semibold))
+                    .opacity(0.55)
+            }
+        }
+        .foregroundStyle(active ? Color.white : BTheme.text)
+        .frame(minWidth: 44, minHeight: 44)
+        .background(active ? BTheme.select : Color.clear)
+        .clipShape(RoundedRectangle(cornerRadius: 8))
+        .contentShape(Rectangle())
     }
 
     /// Edit Mode on a curve or a lattice: Blender's Select rows for its
@@ -1644,18 +2491,18 @@ struct LayoutWorkspace: View {
     /// said in words rather than read as done.
     @ViewBuilder private var pointsMenus: some View {
         Menu {
-            Button("All") { bridge?.run(selectAllCommand("SELECT"), undo: "Select All") }
-            Button("None") { bridge?.run(selectAllCommand("DESELECT"), undo: "Deselect") }
-            Button("Invert") { bridge?.run(selectAllCommand("INVERT"), undo: "Invert Selection") }
+            Button("All") { bridge?.run(selectAllCommand("SELECT"), undo: SelectMenu.selectAllUndo) }
+            Button("None") { bridge?.run(selectAllCommand("DESELECT"), undo: SelectMenu.selectAllUndo) }
+            Button("Invert") { bridge?.run(selectAllCommand("INVERT"), undo: SelectMenu.selectAllUndo) }
             Divider()
             Text("Tap a point; a knot takes its handles. Shift adds.")
         } label: { menuLabel("Select", icon: "cursorarrow.rays") }
         if activeIsLattice {
             Menu {
                 Button(PointsBpy.makeRegular.label) { runPoints(PointsBpy.makeRegular) }
-                Menu("Flip") {
+                Menu("Flip (Distortion Free)") {
                     ForEach(["U", "V", "W"], id: \.self) { axis in
-                        Button(axis) { runPoints(PointsBpy.flip(axis)) }
+                        Button(PointsBpy.flip(axis).label) { runPoints(PointsBpy.flip(axis)) }
                     }
                 }
                 Divider()
@@ -1689,31 +2536,6 @@ struct LayoutWorkspace: View {
         }
     }
 
-    /// "Editing Cylinder", what a tap picks in it, and the way out of it.
-    private var editingChip: some View {
-        HStack(spacing: 8) {
-            Image(systemName: "pencil").foregroundStyle(BTheme.active)
-            Text("Editing \(scene.active?.name ?? "Mesh")").lineLimit(1)
-            // Vertex, edge and face are a mesh's; a curve or a lattice has
-            // points only.
-            if !editingPoints { selectModeControl }
-            Button { setEditing(false) } label: {
-                Text("Done").font(BTheme.Font.ui(12))
-                    .padding(.horizontal, 10).frame(height: 28)
-                    .background(BTheme.widget)
-                    .clipShape(RoundedRectangle(cornerRadius: 6))
-                    .contentShape(Rectangle())
-            }
-        }
-        .padding(.leading, 12).padding(.trailing, 6)
-        .frame(height: 40)
-        .background(BTheme.select.opacity(0.16))
-        .clipShape(RoundedRectangle(cornerRadius: 10))
-        .overlay {
-            RoundedRectangle(cornerRadius: 10).strokeBorder(BTheme.select.opacity(0.55), lineWidth: 1)
-        }
-    }
-
     /// Vertex, edge or face — Blender's three header buttons in edit mode, and
     /// its 1, 2 and 3. A tap picks whichever of the three this says.
     private var selectModeControl: some View {
@@ -1721,14 +2543,15 @@ struct LayoutWorkspace: View {
             ForEach(MeshSelectMode.allCases) { mode in
                 Button { setSelectMode(mode) } label: {
                     Image(systemName: mode.icon)
-                        .font(.system(size: 12, weight: .medium))
+                        .font(.system(size: 15, weight: .medium))
                         .foregroundStyle(scene.selectMode == mode ? Color.white : BTheme.text)
-                        .frame(width: 30, height: 28)
+                        .frame(width: 44, height: 40)
                         .background(scene.selectMode == mode ? BTheme.select : Color.clear)
                         .clipShape(RoundedRectangle(cornerRadius: 6))
                         .contentShape(Rectangle())
                 }
-                .accessibilityLabel("\(mode.label) Select")
+                // Blender's Mesh Select Mode rows.
+                .accessibilityLabel(mode.label)
             }
         }
         .padding(2)
@@ -1736,94 +2559,254 @@ struct LayoutWorkspace: View {
         .clipShape(RoundedRectangle(cornerRadius: 8))
     }
 
-    /// Select, Move, Rotate and Scale as one control, because only one of them
-    /// is ever the tool: four separate buttons read as four things to do.
-    private var transformTools: some View {
-        HStack(spacing: 2) {
-            // Select is a menu of Blender's four select tools: a tap, and the
-            // three drags that select more than one thing at a time — a box, a
-            // painted circle, a lasso. All, None and Invert moved to the
-            // Select menu, where Blender has them.
-            Menu {
-                Button { choose(.select) } label: {
-                    Label("Tap to Select", systemImage: tool == .select ? "checkmark" : ActiveTool.select.icon)
+    /// The toolbar's first button: Blender's four select tools under one,
+    /// as its toolbar keeps them under one button — a tap, and the three
+    /// drags that select more than one thing at a time (a box, a painted
+    /// circle, a lasso). All, None and Invert are in the Select menu, where
+    /// Blender has them.
+    private var selectToolMenu: some View {
+        Menu {
+            // Blender's toolbar names: Tweak, Select Box, Select Circle,
+            // Select Lasso (5.2.1, tests/names/reference).
+            ForEach([ActiveTool.select, .boxSelect, .circleSelect, .lassoSelect], id: \.self) { t in
+                Button { choose(t) } label: {
+                    Label(t.label, systemImage: tool == t ? "checkmark" : t.icon)
                 }
-                Button { choose(.boxSelect) } label: {
-                    Label("Drag a Box", systemImage: tool == .boxSelect ? "checkmark" : ActiveTool.boxSelect.icon)
-                }
-                Button { choose(.circleSelect) } label: {
-                    Label("Paint with a Circle",
-                          systemImage: tool == .circleSelect ? "checkmark" : ActiveTool.circleSelect.icon)
-                }
-                Button { choose(.lassoSelect) } label: {
-                    Label("Draw a Lasso", systemImage: tool == .lassoSelect ? "checkmark" : ActiveTool.lassoSelect.icon)
-                }
-                // The tool's mode, Blender's header buttons: Circle has three.
-                if tool.isRegionSelect {
-                    let circle = tool == .circleSelect
-                    let current = regionAction.forRegion(circle: circle)
-                    Menu("Mode: \(current.label)") {
-                        ForEach(SelectAction.regionModes(circle: circle)) { mode in
-                            Button { regionAction = mode } label: {
-                                Label(mode.label, systemImage: current == mode ? "checkmark" : mode.icon)
-                            }
+            }
+            // The tool's mode, Blender's header buttons: Circle has three.
+            if tool.isRegionSelect {
+                let circle = tool == .circleSelect
+                let current = regionAction.forRegion(circle: circle)
+                Menu("Mode: \(current.label)") {
+                    ForEach(SelectAction.regionModes(circle: circle)) { mode in
+                        Button { regionAction = mode } label: {
+                            Label(mode.label, systemImage: current == mode ? "checkmark" : mode.icon)
                         }
                     }
                 }
-                // Blender's tool setting for Select Circle, shown with it.
-                if tool == .circleSelect {
-                    Menu("Circle Radius: \(Int(circleRadius)) pt") {
-                        ForEach([10, 25, 50, 100] as [CGFloat], id: \.self) { r in
-                            Button { circleRadius = r } label: {
-                                Label("\(Int(r)) pt", systemImage: circleRadius == r ? "checkmark" : "")
-                            }
+            }
+            // Blender's tool setting for Select Circle, shown with it.
+            if tool == .circleSelect {
+                Menu("Radius: \(Int(circleRadius)) pt") {
+                    ForEach([10, 25, 50, 100] as [CGFloat], id: \.self) { r in
+                        Button { circleRadius = r } label: {
+                            Label("\(Int(r)) pt", systemImage: circleRadius == r ? "checkmark" : "")
                         }
                     }
                 }
-                Divider()
-                Text("Shift adds, Ctrl or ⌘ takes away, both intersect (Box and Lasso). "
-                     + "X-Ray (View Style) selects what the surface hides.")
-            } label: {
-                segment(tool.isRegionSelect ? tool.label : "Select",
-                        icon: tool.isRegionSelect ? tool.icon : ActiveTool.select.icon,
-                        active: tool == .select || tool.isRegionSelect)
             }
-            ForEach([ActiveTool.move, .rotate, .scale], id: \.self) { item in
-                Button { choose(item) } label: {
-                    segment(item.label, icon: item.icon, active: tool == item)
-                }
-            }
-        }
-        .padding(2)
-        .frame(height: 40)
-        .background(BTheme.field)
-        .clipShape(RoundedRectangle(cornerRadius: 10))
-        .overlay {
-            RoundedRectangle(cornerRadius: 10).strokeBorder(BTheme.outline, lineWidth: BTheme.Metric.hairline)
+            Divider()
+            Text("Shift adds, Ctrl or ⌘ takes away, both intersect (Box and Lasso). "
+                 + "X-Ray (Viewport Shading) selects what the surface hides.")
+        } label: {
+            shelfItem(tool.isRegionSelect ? tool.label : ActiveTool.select.label,
+                      icon: tool.isRegionSelect ? tool.icon : ActiveTool.select.icon,
+                      active: tool == .select || tool.isRegionSelect)
         }
     }
 
-    private func segment(_ title: String, icon: String, active: Bool) -> some View {
-        Label(title, systemImage: icon)
-            .foregroundStyle(active ? Color.white : BTheme.text)
-            .padding(.horizontal, 12)
-            .frame(height: 36)
-            .background(active ? BTheme.select : Color.clear)
+    /// Blender's toolbar's Loop Cut and Knife: tools, not actions — with one
+    /// in hand a tap (or a pointer over an edge) shows the ring a loop cut
+    /// will cross, or adds a point to the knife's path (CutToolInput.swift).
+    /// Whether a mesh is in Blender's Edit Mode, which Edit Mode's overlays
+    /// measure.
+    private var editingMesh: Bool {
+        editing && !editingPoints && session.usesRealBlender && scene.active?.hasEditMode == true
+    }
+
+    /// The Cursor tool's settings, as Blender's tool header draws them
+    /// (`_defs_view3d_generic.cursor`: Surface Project, Orientation), each
+    /// written where Blender's toolbar keeps it and shown as Blender holds it
+    /// (`scene.cursorState`, read back every pass).
+    @ViewBuilder private var cursorToolBar: some View {
+        if tool == .cursor, scene.mode == .object || scene.mode == .edit {
+            let state = scene.cursorState
+            HStack(spacing: 10) {
+                Label(ActiveTool.cursor.label, systemImage: ActiveTool.cursor.icon)
+                    .font(BTheme.Font.ui(12)).foregroundStyle(BTheme.active)
+                Toggle(CursorTool.surfaceProjectLabel, isOn: Binding(
+                    get: { scene.cursorState.surfaceProject },
+                    set: { bridge?.run(CursorTool.settingsPython(surfaceProject: $0)) }))
+                    .toggleStyle(.button).font(BTheme.Font.ui(11))
+                Menu {
+                    ForEach(CursorTool.Orientation.allCases) { o in
+                        Button { bridge?.run(CursorTool.settingsPython(orientation: o)) } label: {
+                            Label(o.label, systemImage: state.orientation == o ? "checkmark" : "")
+                        }
+                    }
+                } label: {
+                    Text("\(CursorTool.orientationLabel): \(state.orientation.label)").font(BTheme.Font.ui(11))
+                }
+                Text("Tap to place the 3D cursor; drag from it to move it.")
+                    .font(BTheme.Font.ui(11)).foregroundStyle(BTheme.textDim)
+            }
+            .buttonStyle(.bordered)
+            .padding(.horizontal, 10).padding(.vertical, 6)
+            .background(BTheme.header.opacity(0.92))
             .clipShape(RoundedRectangle(cornerRadius: 8))
-            .contentShape(Rectangle())
+            .padding(10)
+            .disabled(session.isRunning || !session.usesRealBlender)
+        }
     }
 
+    /// The Measure tool's bar: what it does, and Ruler Remove (Blender's X and
+    /// Delete with the tool, `view3d.ruler_remove`).
+    @ViewBuilder private var measureToolBar: some View {
+        if tool == .measure {
+            HStack(spacing: 10) {
+                Label(RulerTool.label, systemImage: ActiveTool.measure.icon)
+                    .font(BTheme.Font.ui(12)).foregroundStyle(BTheme.active)
+                Text(measureHint).font(BTheme.Font.ui(11)).foregroundStyle(BTheme.textDim)
+                Button(RulerTool.removeLabel) { MeasureActions.remove(scene) }
+                    .font(BTheme.Font.ui(11))
+                    .disabled(scene.activeRuler == nil)
+            }
+            .buttonStyle(.bordered)
+            .padding(.horizontal, 10).padding(.vertical, 6)
+            .background(BTheme.header.opacity(0.92))
+            .clipShape(RoundedRectangle(cornerRadius: 8))
+            .padding(10)
+        }
+    }
+
+    /// The Measure tool's hint: Blender's tooltip's, for a finger and a
+    /// keyboard, and why the object being edited is not snapped to.
+    private var measureHint: String {
+        var text = "Drag for a ruler; drag a ruler's line for an angle. "
+            + (scene.tools.useSnap ? "Snap is on: the ends snap (Ctrl turns it off)."
+                                   : "Snap (the header's magnet) or Ctrl snaps the ends.")
+        if editing, let why = RulerTool.excluded(scene.objects, edited: scene.active).refusal {
+            text += " " + why
+        }
+        return text
+    }
+
+    /// What Edit Mode's overlays are worked out from: any command or undo,
+    /// the mode, the object, the viewport's selection, the switches, and
+    /// Global or Local (the Sidebar's, the same 3D View flag in Blender) —
+    /// and the view, which matters only once a read was culled to it.
+    private struct MeasureKey: Equatable {
+        var revision: Int
+        var running: Bool
+        var editing: Bool
+        var active: UUID?
+        var edit: [Set<Int>]
+        var overlays: MeasureOverlays
+        var global: Bool
+        var view: [Float]
+
+        /// The same read but for the view.
+        func sameRead(as other: MeasureKey) -> Bool {
+            var a = self, b = other
+            a.view = []; b.view = []
+            return a == b
+        }
+    }
+
+    private var measureKey: MeasureKey {
+        let edit = scene.editSelection
+        return MeasureKey(revision: session.backendRevision, running: session.isRunning, editing: editingMesh,
+                          active: scene.activeID, edit: [edit.vertices, edit.edges, edit.faces],
+                          overlays: options.measure, global: !measureLocal,
+                          view: [camera.target.x, camera.target.y, camera.target.z, camera.distance,
+                                 camera.azimuth, camera.elevation, camera.fovY, camera.isOrthographic ? 1 : 0,
+                                 Float(viewportSize.width), Float(viewportSize.height)])
+    }
+
+    /// The view the overlays are drawn in, as the read culls to it: the
+    /// Canvas's own (`MeasureOverlay`, `snapView`).
+    private var measureView: simd_float4x4 { camera.snapView(viewportSize).viewProjection }
+
+    /// Runs on every change of `measureKey`. A change of the view alone
+    /// reads again only when the last read was culled to its view, and only
+    /// once the view has rested for a quarter of a second: an orbit is a new
+    /// view every frame, and each read of a mesh of 490,000 faces costs about
+    /// half a second (measured in desktop 5.2.1, `_blenderkit_measure`).
+    private func measureChanged() async {
+        let key = measureKey
+        if let last = measuredFor, last.sameRead(as: key) {
+            guard last.view != key.view, scene.editMeasurements?.thinning?.culled == true else { return }
+            try? await Task.sleep(nanoseconds: 250_000_000)
+            if Task.isCancelled { return }
+        }
+        refreshMeasurements()
+        measuredFor = key
+    }
+
+    /// Reads Edit Mode's statistics and measurements from Blender, after
+    /// handing it the viewport's selection (`captureWithSelection`).
+    private func refreshMeasurements() {
+        guard editingMesh, options.measure.any, let bridge, !session.isRunning else {
+            if scene.editMeasurements != nil { scene.editMeasurements = nil }
+            return
+        }
+        #if DEBUG
+        let started = Date()
+        #endif
+        let text = bridge.captureWithSelection(options.measure.python(global: !measureLocal, view: measureView))
+        let read = text.flatMap(EditMeasurements.init(json:))
+        #if DEBUG
+        // `-measure-ops` times the read on the main thread, as the app makes it.
+        if ProcessInfo.processInfo.arguments.contains("-measure-ops") {
+            print(String(format: "[bk] measure read: %.1f ms, %d bytes, %d labels%@", Date().timeIntervalSince(started) * 1000,
+                         text?.utf8.count ?? 0, read?.count ?? 0,
+                         read?.thinning.map { " (\($0.inView) in view, every \($0.every), culled \($0.culled))" } ?? ""))
+            fflush(stdout)
+        }
+        #endif
+        if scene.editMeasurements != read { scene.editMeasurements = read }
+    }
+
+    /// What the cutting tool in hand says and offers, over the view's top
+    /// left: Blender's status bar for it. The Knife's Cut Through, Undo,
+    /// Cancel and Confirm are its modal keys' names in Blender
+    /// (`knifetool_modal_keymap`, editmesh_knife.cc).
+    @ViewBuilder private var cutToolBar: some View {
+        if editing, !editingPoints, tool == .loopCut || tool == .knife {
+            HStack(spacing: 10) {
+                Label(tool.label, systemImage: tool.icon).font(BTheme.Font.ui(12)).foregroundStyle(BTheme.active)
+                if tool == .loopCut {
+                    Text(session.usesRealBlender
+                         ? "Point at an edge to see the loop it cuts, then tap or click that edge to cut. "
+                           + "Number of Cuts, Smoothness and the slide are in the panel after."
+                         : "Loop Cut needs Blender: the simulator's stand-in has no 3D View.")
+                        .font(BTheme.Font.ui(11)).foregroundStyle(BTheme.textDim)
+                } else {
+                    let count = scene.knifePath?.points.count ?? 0
+                    Text(count == 0 ? "Tap points on the mesh." : "\(count) point\(count == 1 ? "" : "s")")
+                        .font(BTheme.Font.ui(11)).foregroundStyle(BTheme.textDim)
+                    Toggle("Cut Through", isOn: Binding(get: { scene.knifeCutThrough },
+                                                        set: { scene.knifeCutThrough = $0 }))
+                        .toggleStyle(.button).font(BTheme.Font.ui(11))
+                    Button("Undo") { CutToolActions.knifeUndoPoint(scene) }
+                    .disabled(count == 0)
+                    Button("Cancel") { CutToolActions.knifeCancel(scene) }
+                        .disabled(count == 0)
+                    Button("Confirm") { CutToolActions.knifeDone(scene: scene, camera: camera, bridge: bridge) }
+                        .disabled(count < 2 || session.isRunning)
+                }
+            }
+            .buttonStyle(.bordered)
+            .padding(.horizontal, 10).padding(.vertical, 6)
+            .background(BTheme.header.opacity(0.92))
+            .clipShape(RoundedRectangle(cornerRadius: 8))
+            .padding(10)
+        }
+    }
+
+    /// A header menu's title. On a narrow window (`compactHeader`) the icon
+    /// goes, as Blender's header shows its menus: the words.
     private func menuLabel(_ title: String, icon: String, active: Bool = false) -> some View {
         HStack(spacing: 6) {
-            Image(systemName: icon)
+            if !compactHeader { Image(systemName: icon) }
             Text(title)
             Image(systemName: "chevron.down")
                 .font(.system(size: 8, weight: .semibold))
                 .opacity(0.55)
         }
         .foregroundStyle(active ? Color.white : BTheme.text)
-        .padding(.horizontal, 10)
-        .frame(height: 40)
+        .padding(.horizontal, compactHeader ? 8 : 10)
+        .frame(minHeight: 44)
         .background(active ? BTheme.select : Color.clear)
         .clipShape(RoundedRectangle(cornerRadius: 8))
         .contentShape(Rectangle())
@@ -1837,7 +2820,8 @@ struct LayoutWorkspace: View {
                     bridge?.perform(LastOperator.add(kind, at: scene.cursor))
                 }
             }
-            ObjectAddItems { bridge?.add($0, at: scene.cursor, view: camera) }
+            ObjectAddItems(add: { bridge?.add($0, at: scene.cursor, view: camera) },
+                           addImage: session.usesRealBlender ? { imageRequest = $0 } : nil)
             Divider()
             Button("Image to 3D Model…", systemImage: "photo.artframe") { panel = "Image to 3D Model" }
         } label: { menuLabel("Add", icon: "plus") }
@@ -1847,34 +2831,92 @@ struct LayoutWorkspace: View {
     /// actions rather than modes — you press Bevel, it bevels, and the panel
     /// that appears is where the width gets chosen. Nothing to switch into
     /// first.
+    ///
+    /// Made of Blender's own menus (`LastOperator.Mesh.Group`): Select ▸
+    /// Select Loops, its Mesh menu's submenus and rows in that menu's order,
+    /// then the Vertex, Edge and Face menus its header has beside Mesh.
     private var meshMenu: some View {
         Menu {
-            // Grouped as Blender groups them. Forty-odd operators in one
-            // flat column is a column nobody reads to the bottom of.
-            ForEach(LastOperator.Mesh.Group.allCases, id: \.self) { group in
-                Menu(group.rawValue) {
-                    ForEach(LastOperator.Mesh.allCases.filter { $0.group == group }, id: \.self) { op in
-                        Button(op.menuLabel) {
-                            bridge?.perform(LastOperator.mesh(op, spinningAround: scene.active?.location, symmetry: scene.active?.symmetry))
-                        }
-                        // A selection or an edge flag is all these change,
-                        // and only Edit Mode shows either (`editModeOnly`).
-                        .disabled(op.editModeOnly && !editing)
-                    }
-                    if group == .cut { knifeProjectMenu }
-                    if group == .deform { shearRow }
+            // Normals ▸ Average is drawn inside Normals (`Group.parent`).
+            ForEach(LastOperator.Mesh.Group.allCases.filter { $0.parent == nil }, id: \.self) { group in
+                if group.isInline {
+                    // Separate (while editing), Bisect, Knife Project and
+                    // Symmetrize: rows of Blender's Mesh menu itself, in its
+                    // order after Split.
+                    if editing { SeparateMenu(run: separate) }
+                    meshRows(group)
+                } else {
+                    if group == .vertex { Divider() }
+                    Menu(group.rawValue) { meshRows(group) }
                 }
-            }
-            if editing {
-                // Where Blender's edit-mode Mesh menu has them: Separate
-                // after Split, Show/Hide near the end.
-                Divider()
-                SeparateMenu(run: separate)
-                ShowHideMenu(editing: true, run: showHide)
+                if group == .normals, editing { ShowHideMenu(editing: true, run: showHide) }
             }
         } label: { menuLabel("Mesh", icon: "cube.transparent") }
         // Every one of these needs edit mode, which a light does not have.
         .disabled(!canEdit)
+    }
+
+    /// One of the Mesh menu's groups, its rows in Blender's order.
+    @ViewBuilder private func meshRows(_ group: LastOperator.Mesh.Group) -> AnyView {
+        // Type-erased: Normals draws Average inside it, a recursion an opaque
+        // `some View` cannot name.
+        AnyView(ForEach(group.rows, id: \.self) { op in
+            // Blender's Vertex menu: Extrude to Cursor or Add before Bevel
+            // Vertices, and Rip Vertices, Rip Vertices and Fill before Rip
+            // Vertices and Extend (MeshMenuTools).
+            if op == .bevelVertices { extrudeToCursorRow }
+            if op == .ripVerticesExtend {
+                ForEach(MeshMenuTools.ripRows, id: \.self) { row in
+                    Button {} label: {
+                        Text(row)
+                        Text(MeshMenuTools.ripRefusal)
+                    }
+                    .disabled(true)
+                }
+            }
+            Button(op.menuLabel) {
+                bridge?.perform(LastOperator.mesh(op, spinningAround: scene.active?.location,
+                                                  symmetry: scene.active?.symmetry, pointer: meshPointer))
+            }
+            // A selection or an edge flag is all these change,
+            // and only Edit Mode shows either (`editModeOnly`).
+            .disabled(op.editModeOnly && !editing)
+            if let nested = LastOperator.Mesh.Group.allCases.first(where: { $0.parent == group && $0.after == op }) {
+                Menu(nested.rawValue) { meshRows(nested) }
+            }
+            // Blender's order: Knife Project and the Knife Topology Tool after
+            // Bisect, Shear after To Sphere, Loop Cut and Slide after Edge
+            // Slide. The two tool rows pick the toolbar's Knife and Loop Cut,
+            // as Blender's rows start the same modal tools.
+            if op == .bisect {
+                knifeProjectMenu
+                Button(CutTool.knife.menuRow.label) { choose(.knife) }.disabled(!editing)
+            }
+            if op == .toSphere { shearRow }
+            if op == .edgeSlide {
+                Button(CutTool.loopCut.menuRow.label) { choose(.loopCut) }.disabled(!editing)
+            }
+        })
+    }
+
+    /// The pointer for the rows Blender runs at the mouse: over the 3D
+    /// cursor, as this 3D View looks at it (`MeshPointer`).
+    private var meshPointer: MeshPointer {
+        MeshPointer(eye: camera.eye, forward: simd_normalize(camera.target - camera.eye), up: camera.trueUp,
+                    orthographic: camera.isOrthographic, cursor: scene.cursor)
+    }
+
+    /// Mesh ▸ Vertex ▸ Extrude to Cursor or Add: Blender's Ctrl+right click
+    /// with the pointer over the 3D cursor. Blender has no redo panel for it
+    /// (no exec), so it runs once, as `bridge.run` with its own undo step.
+    private var extrudeToCursorRow: some View {
+        Button(MeshMenuTools.extrudeToCursor) { extrudeToCursor() }
+            .disabled(!editing)
+    }
+
+    private func extrudeToCursor() {
+        guard let bridge, editing else { return }
+        bridge.run(MeshMenuTools.extrudeToCursorPython(meshPointer), undo: MeshMenuTools.extrudeToCursor)
     }
 
     /// Blender's Mesh ▸ Transform ▸ Shear, through the startup screen's 3D
@@ -1934,11 +2976,19 @@ struct LayoutWorkspace: View {
     private var sculptMenu: some View {
         Menu {
             if session.usesRealBlender {
-                Section("Sculpt") {
-                    if scene.mode == .sculpt {
-                        Button("Leave Sculpt Mode", systemImage: "arrow.uturn.backward") { choose(.select) }
-                    } else {
-                        Button("Sculpt Mode", systemImage: InteractionMode.sculpt.icon) { choose(.sculptDraw) }
+                Section("Mode") {
+                    // Blender's mode menu rows, in and out: Sculpt Mode,
+                    // Vertex Paint and Weight Paint are Blender's own here.
+                    if scene.mode == .sculpt || paintingInBlender {
+                        Button(InteractionMode.object.label, systemImage: InteractionMode.object.icon) { choose(.select) }
+                    }
+                    if scene.mode != .sculpt {
+                        Button(InteractionMode.sculpt.label, systemImage: InteractionMode.sculpt.icon) { choose(.sculptDraw) }
+                    }
+                    ForEach(PaintModeBpy.modes, id: \.self) { mode in
+                        if scene.mode != mode {
+                            Button(mode.label, systemImage: mode.icon) { enterPaintMode(mode) }
+                        }
                     }
                 }
             }
@@ -1953,21 +3003,28 @@ struct LayoutWorkspace: View {
             }
         } label: {
             menuLabel(sculptingInBlender ? (scene.sculptBlender?.brush ?? "Sculpt")
+                      : paintingInBlender ? scene.mode.label
                       : brushActive ? tool.label : "Sculpt",
                       icon: sculptingInBlender ? InteractionMode.sculpt.icon
+                      : paintingInBlender ? scene.mode.icon
                       : brushActive ? tool.icon : "paintbrush.pointed",
-                      active: brushActive || sculptingInBlender)
+                      active: brushActive || sculptingInBlender || paintingInBlender)
         }
         // Sculpting and painting are mesh modes too.
         .disabled(!canEdit)
     }
 
-    /// The camera these two act on: the scene's, or the only one there is, or
-    /// the selected one.
+    /// The camera Active Camera looks through: the selected one when the
+    /// active object is a camera, else the scene's, else the first there is.
     private var cameraToLookThrough: BKObject? {
         if let active = scene.active, case .camera = active.overlayDisplay { return active }
         return scene.sceneCamera ?? scene.cameras.first
     }
+
+    /// The camera Align Active Camera to View aims: the scene's, as Blender's
+    /// `view3d.camera_to_view` aims `scene.camera` (its poll fails without
+    /// one). It aimed the selected camera ahead of it (round 4's review).
+    private var cameraToAlign: BKObject? { scene.sceneCamera }
 
     private func lookThroughCamera(_ chosen: BKObject? = nil) {
         guard let object = chosen ?? cameraToLookThrough,
@@ -1979,9 +3036,9 @@ struct LayoutWorkspace: View {
     }
 
     private func aimCameraAtView() {
-        guard let object = cameraToLookThrough, let bridge else { return }
+        guard let object = cameraToAlign, let bridge else { return }
         _ = bridge.run(Bpy.alignCameraToView(object.name, camera.renderCamera),
-                       undo: "Aim Camera at View")
+                       undo: "Align Camera to View")
     }
 
     // MARK: snapping, the pivot point and proportional editing
@@ -2006,16 +3063,17 @@ struct LayoutWorkspace: View {
         } label: {
             // Lit when the pivot is not Blender's default, which is the one
             // thing the closed control can usefully say.
-            menuLabel("Pivot", icon: scene.tools.pivot.icon,
-                      active: scene.tools.pivot != .medianPoint)
+            // An icon, as Blender's header draws it.
+            settingLabel(icon: scene.tools.pivot.icon, active: scene.tools.pivot != .medianPoint)
         }
+        .accessibilityLabel("Pivot Point")
     }
 
     private var snapMenu: some View {
         Menu {
             Toggle("Snap", isOn: Binding(get: { scene.tools.useSnap },
                                          set: { bridge?.run(ToolsBpy.useSnap($0)) }))
-            Section("Snap To") {
+            Section("Snap Target") {
                 ForEach(SnapElement.allCases) { element in
                     let on = scene.tools.elements.contains(element)
                     Button {
@@ -2029,6 +3087,8 @@ struct LayoutWorkspace: View {
                     // value as it was (measured in 5.2.1).
                     .disabled(on && scene.tools.elements.count == 1)
                 }
+            }
+            Section("Snap Target for Individual Elements") {
                 ForEach(SnapElementIndividual.allCases) { element in
                     Button {
                         var next = scene.tools.individual
@@ -2040,7 +3100,7 @@ struct LayoutWorkspace: View {
                     }
                 }
             }
-            Section("Snap With") {
+            Section("Snap Base") {
                 ForEach(SnapTarget.allCases) { value in
                     Button {
                         bridge?.run(ToolsBpy.target(value))
@@ -2054,8 +3114,11 @@ struct LayoutWorkspace: View {
             // Lit when a drag will snap: the magnet on and an element a drag
             // honours chosen (`snapsDrag`). Lit on the magnet alone, it said
             // snapping was on with only Volume chosen, which no drag uses.
-            menuLabel("Snap", icon: "magnet", active: scene.tools.snapsDrag)
+            // Blender's magnet: SF Symbols has none (a "magnet" image drew
+            // nothing at all), so the snapping point on a grid stands in.
+            settingLabel(icon: "dot.squareshape.split.2x2", active: scene.tools.snapsDrag)
         }
+        .accessibilityLabel("Snap")
     }
 
     // MARK: mesh symmetry
@@ -2083,7 +3146,35 @@ struct LayoutWorkspace: View {
                     undo: SymmetryBpy.undoLabel(flag, mode: scene.mode))
     }
 
-    private var symmetryControl: some View {
+    /// The mirror row; on a narrow window, one menu holding it, so the header
+    /// still fits an upright iPad in Edit Mode.
+    @ViewBuilder private var symmetryControl: some View {
+        if compactHeader {
+            let symmetry = scene.active?.symmetry ?? MeshSymmetry()
+            Menu {
+                Section("Mirror") {
+                    ForEach([SymmetryBpy.Flag.x, .y, .z]) { flag in
+                        Button { toggleSymmetry(flag) } label: {
+                            Label(flag.label, systemImage: flag.isOn(in: symmetry) ? "checkmark" : "")
+                        }
+                    }
+                }
+                if SymmetryBpy.offersTopology(in: scene.mode) {
+                    Button { toggleSymmetry(.topology) } label: {
+                        Label(SymmetryBpy.Flag.topology.label, systemImage: symmetry.topology ? "checkmark" : "")
+                    }
+                }
+            } label: {
+                settingLabel(icon: "arrow.left.and.right.righttriangle.left.righttriangle.right",
+                             active: symmetry.isOn)
+            }
+            .accessibilityLabel("Mirror")
+        } else {
+            symmetryRow
+        }
+    }
+
+    private var symmetryRow: some View {
         let symmetry = scene.active?.symmetry ?? MeshSymmetry()
         return HStack(spacing: 2) {
             Image(systemName: "arrow.left.and.right.righttriangle.left.righttriangle.right")
@@ -2117,7 +3208,9 @@ struct LayoutWorkspace: View {
                         .frame(width: 22, height: 36)
                         .contentShape(Rectangle())
                 }
-                .accessibilityLabel("Mirror Options")
+                // Where Blender keeps Topology Mirror: Edit Mode's Options
+                // popover, Weight Paint's Symmetry.
+                .accessibilityLabel(scene.mode == .edit ? "Options" : "Symmetry")
             }
         }
         .padding(2)
@@ -2132,10 +3225,12 @@ struct LayoutWorkspace: View {
     private var proportionalMenu: some View {
         let on = scene.tools.isProportional(editing: editing)
         return Menu {
-            Toggle("Proportional Editing",
+            // `use_proportional_edit` while editing, and
+            // `use_proportional_edit_objects` in Object Mode, by their names.
+            Toggle(editing ? "Proportional Editing" : "Proportional Editing Objects",
                    isOn: Binding(get: { on },
                                  set: { bridge?.run(ToolsBpy.proportional($0, editing: editing)) }))
-            Menu("Falloff") {
+            Menu("Proportional Editing Falloff") {
                 ForEach(MeshEditor.ProportionalFalloff.allCases) { value in
                     Button {
                         bridge?.run(ToolsBpy.falloff(value))
@@ -2146,9 +3241,9 @@ struct LayoutWorkspace: View {
                 }
             }
             // A menu on iOS holds controls, not fields, so the header offers
-            // the sizes a drag actually wants; Transform Tools has the field
+            // the sizes a drag actually wants; Tool Settings has the field
             // for an exact one.
-            Menu("Size") {
+            Menu("Proportional Size") {
                 ForEach(Self.proportionalSizes, id: \.self) { value in
                     Button {
                         bridge?.run(ToolsBpy.size(value))
@@ -2162,8 +3257,9 @@ struct LayoutWorkspace: View {
                    isOn: Binding(get: { scene.tools.connected },
                                  set: { bridge?.run(ToolsBpy.connected($0)) }))
         } label: {
-            menuLabel("Proportional", icon: "circle.dashed", active: on)
+            settingLabel(icon: "circle.dashed", active: on)
         }
+        .accessibilityLabel("Proportional Editing")
     }
 
     /// The sizes Blender's own slider lands on most often. The field in
@@ -2186,32 +3282,73 @@ struct LayoutWorkspace: View {
         }
     }
 
-    /// What is left once the tools, Undo and Edit Mesh have their own places.
+    /// What is left once the tools, Undo and Edit Mode have their own places.
+    /// "More" is the app's own: Blender has no such menu, and every row in it
+    /// is named as Blender names it.
     private var moreMenu: some View {
         Menu {
             Button("Frame All", systemImage: "viewfinder") { camera.frameAll(scene.objects) }
             Button("Frame Selected", systemImage: "scope") { camera.frameSelected(in: scene) }
+            // View ▸ Local View: the selection by itself, through the
+            // borrowed 3D View's own Local View (`_blenderkit_localview`).
+            LocalViewItems(inLocalView: scene.localView != nil,
+                           canToggle: session.usesRealBlender && !session.isRunning
+                               && (scene.localView != nil || !scene.selection.isEmpty || editing),
+                           run: { bridge?.run($0) })
             // What a render will show, without rendering it: Blender's
-            // numpad 0 and its Align Active Camera to View.
-            Button("Look Through Camera", systemImage: "video") { lookThroughCamera() }
-                .disabled(cameraToLookThrough == nil)
-            Button("Aim Camera at This View", systemImage: "camera.metering.center.weighted") {
-                aimCameraAtView()
-            }.disabled(cameraToLookThrough == nil)
-            Menu("View Style") {
+            // View ▸ Cameras ▸ Active Camera (numpad 0) and its View ▸ Align
+            // View ▸ Align Active Camera to View, by their rows' names.
+            Menu("Cameras") {
+                Button("Active Camera", systemImage: "video") { lookThroughCamera() }
+                    .disabled(cameraToLookThrough == nil)
+                Button("Align Active Camera to View", systemImage: "camera.metering.center.weighted") {
+                    aimCameraAtView()
+                }.disabled(cameraToAlign == nil)
+            }
+            // Blender's header popover of the same name, and its four types.
+            Menu("Viewport Shading") {
                 ForEach(ViewportShading.allCases) { value in
-                    Button(value.rawValue) { shading = value }.disabled(!value.isImplemented)
+                    Button(value.label) { shading = value }.disabled(!value.isImplemented)
                 }
                 Divider()
                 // Blender's X-Ray: the surface drawn see-through, and the
                 // select tools taking what it hides, as Blender's do.
                 Toggle("X-Ray", isOn: $options.xray)
             }
+            // Blender's Viewport Overlays popover's Statistics, and its Mesh
+            // Edit Mode popover's Measurement (VIEW3D_PT_overlay,
+            // VIEW3D_PT_overlay_edit_mesh_measurement, which polls for a mesh
+            // in Edit Mode), each read from Blender (EditMeasure.swift).
+            Menu("Viewport Overlays") {
+                Section(MeasureOverlays.textLabel) {
+                    Toggle(MeasureOverlays.statisticsLabel, isOn: $options.measure.statistics)
+                }
+                if !session.usesRealBlender {
+                    Text("Statistics reads Blender's edit mesh, which the simulator's stand-in does not have.")
+                } else if !editingMesh {
+                    Text("Statistics is drawn for a mesh in Edit Mode.")
+                }
+            }
+            if editingMesh {
+                Menu(MeasureOverlays.meshEditModeLabel) {
+                    Section(MeasureOverlays.measurementLabel) {
+                        Toggle(MeasureOverlays.edgeLengthLabel, isOn: $options.measure.edgeLength)
+                        Toggle(MeasureOverlays.edgeAngleLabel, isOn: $options.measure.edgeAngle)
+                        Toggle(MeasureOverlays.faceAreaLabel, isOn: $options.measure.faceArea)
+                        Toggle(MeasureOverlays.faceAngleLabel, isOn: $options.measure.faceAngle)
+                    }
+                }
+            }
             Divider()
-            Button("Object Details") { panel = "Object Details" }
+            // The editors Blender has for these, by their names: the
+            // Properties editor, the Timeline, the Render menu's window, and
+            // Edit ▸ Operator Search.
+            Button("Properties") { show("Properties") }
+            // View ▸ Sidebar, Blender's N.
+            Toggle("Sidebar", isOn: $showsSidebar)
             Toggle("Timeline", isOn: Bindable(scene).animation.showsTimeline)
             Button("Render") { panel = "Render" }
-            Button("All Blender Tools") { showOperations = true }
+            Button("Operator Search") { showOperations = true }
             Divider()
             // Blender has these on the Object menu and on the right-click
             // menu. They were reachable only from a script, and they are the
@@ -2219,7 +3356,10 @@ struct LayoutWorkspace: View {
             // and one that reads as facets — which is most of what makes a
             // model built from primitives look unfinished.
             snapActionsMenu
-            Button("Transform Tools") { panel = "Transform Tools" }
+            // The settings Blender's Tool Settings bar holds (View ▸ Tool
+            // Settings): Pivot Point, Options, Snapping, Proportional
+            // Editing — with room for the numbers a menu cannot hold.
+            Button("Tool Settings") { panel = "Tool Settings" }
             Divider()
             ShadingItems(meshInObjectMode: canEdit && !editing && !session.isRunning,
                          hasObject: scene.active != nil && !session.isRunning,
@@ -2237,21 +3377,28 @@ struct LayoutWorkspace: View {
             Divider()
             // Blender's Object menu order: Duplicate Objects, Duplicate
             // Linked and Join, then Parent and Convert further down.
-            Button("Duplicate", systemImage: "plus.square.on.square") { duplicateSelected() }
+            // Blender's Object ▸ Duplicate Objects, or its Mesh ▸ Duplicate
+            // while editing.
+            Button(editing ? "Duplicate" : "Duplicate Objects", systemImage: "plus.square.on.square") {
+                duplicateSelected()
+            }
                 .keyboardShortcut("d", modifiers: .shift)   // Blender's Shift+D
                 .disabled(scene.active == nil || session.isRunning)
             ObjectRelationItems(state: objectRelations, perform: performObjectRow)
+            ObjectMenuMoreItems(state: objectRelations, collections: scene.collections,
+                                perform: performObjectRow, run: { bridge?.run($0) },
+                                askNewCollection: askNewCollection)
             Divider()
             // Blender's Object ▸ Show/Hide, or the Mesh menu's while editing.
             ShowHideMenu(editing: editing, run: showHide)
                 .disabled(scene.objects.isEmpty || session.isRunning)
-            Button("Delete Selected", role: .destructive) {
+            Button("Delete", role: .destructive) {
                 deleteSelected()
             }.disabled(scene.active == nil)
         } label: {
             Image(systemName: "ellipsis")
                 .font(.system(size: 15, weight: .medium))
-                .frame(width: 40, height: 40)
+                .frame(width: 44, height: 44)
                 .contentShape(Rectangle())
         }
         .accessibilityLabel("More")
@@ -2274,5 +3421,920 @@ enum BottomPanel: String, CaseIterable, Identifiable {
         case .shading:  return "circle.righthalf.filled"
         case .render:   return "photo"
         }
+    }
+}
+
+#if DEBUG
+// MARK: - `-transform-ops`
+
+extension LayoutWorkspace {
+    /// `-transform-ops a,b,…`: the Orientation menu, gizmo drags and their redo
+    /// panel, and the Sidebar's Item tab, through the calls the controls make,
+    /// once a `-eval64` script has finished. Tokens:
+    /// `orient:<GLOBAL|LOCAL|NORMAL|GIMBAL|VIEW|CURSOR|PARENT>` (the menu's
+    /// `setOrientation`), `select:A+B`, `edit`, `object`, `view:<persp:d|top>`,
+    /// `gizmo:<translate|rotate|scale>:<0|1|2|p0|p1|p2|s>:<amount>` (a drag
+    /// through `beginSession`, `resolve`, `snapping`, `apply` and `commit`, as
+    /// the viewport's own; a move's amount in the orientation's units, a
+    /// turn's in degrees, a scale's a factor), `adjust:<key>=<value>` (a redo
+    /// panel row, through `readjust`), `redo-panel` (its title and rows as it
+    /// shows them), `sidebar:on|off`, `local` / `global` (the Item tab's
+    /// pair), `item:<0|1|2>=<v>` (a Median field, `ItemActions.median`),
+    /// `data:<bevel_weight_vert|crease_vert|bevel_weight_edge|crease_edge>=<v>`,
+    /// `dims:<0|1|2>=<v>` (a Dimensions field), `item-state` (what the Item
+    /// tab and the Data tab read), `undo`, `redo`, `ax`, `steps`. After each it
+    /// prints what Blender holds beside what the app shows.
+    func runTransformOps() async {
+        let args = ProcessInfo.processInfo.arguments
+        guard let i = args.firstIndex(of: "-transform-ops"), i + 1 < args.count, let bridge else { return }
+        try? await Task.sleep(nanoseconds: 3_000_000_000)
+        while session.isRunning { try? await Task.sleep(nanoseconds: 100_000_000) }
+        var itemIsGlobal = true
+        for token in args[i + 1].split(separator: ",").map(String.init) {
+            bridge.dismissReport(bridge.report?.id ?? -1)
+            refreshOrientation()
+            let parts = token.split(separator: ":", maxSplits: 3).map(String.init)
+            var said = ""
+            switch parts[0] {
+            case "orient":
+                guard parts.count == 2, let o = TransformOrientation(identifier: parts[1]) else {
+                    said = "orient:<TYPE>"; break
+                }
+                setOrientation(o)
+                said = "Blender's slot " + (bridge.capture("print(bpy.context.scene.transform_orientation_slots[0].type)")?
+                    .trimmingCharacters(in: .whitespacesAndNewlines) ?? "?")
+                    + "; the app holds \(scene.orientation.label) axes \(Self.axesText(scene.orientation.axes))"
+                    + (scene.orientation.unavailable.map { " unavailable: \($0)" } ?? "")
+            case "select":
+                let names = token.dropFirst("select:".count).split(separator: "+").map(String.init)
+                for (k, name) in names.enumerated() { bridge.select(Bpy.select(name, only: k == 0)) }
+            case "edit":   setEditing(true)
+            case "object": setEditing(false)
+            case "view":
+                if parts.count >= 2, parts[1] == "top" { camera.snap(to: .top) }
+                if parts.count >= 3, parts[1] == "persp", let d = Float(parts[2]) {
+                    camera.isOrthographic = false; camera.distance = d
+                }
+                said = "eye \(camera.eye)"
+            case "gizmo":
+                said = gizmoToken(parts, bridge: bridge)
+            case "adjust":
+                let pair = token.dropFirst("adjust:".count).split(separator: "=").map(String.init)
+                let before = Self.blenderPlaces(bridge, scene: scene)
+                said = "no adjustable operator"
+                if pair.count == 2, let v = Double(pair[1]), var op = bridge.adjustable {
+                    op[pair[0]] = v
+                    said = bridge.readjust(op).map { "re-ran \($0.python)" } ?? "REFUSED"
+                }
+                said += "; Blender \(before) -> \(Self.blenderPlaces(bridge, scene: scene))"
+            case "redo-panel":
+                if let op = bridge.adjustable {
+                    said = "\(op.name): " + op.parameters.filter { op.isShown($0) }
+                        .map { "\($0.label) \($0.display)" }.joined(separator: ", ")
+                } else {
+                    said = "no redo panel"
+                }
+            case "sidebar":
+                showsSidebar = parts.count < 2 || parts[1] != "off"
+                try? await Task.sleep(nanoseconds: 1_000_000_000)
+                said = "sidebar \(showsSidebar ? "out" : "in")"
+            case "local":  itemIsGlobal = false
+            case "global": itemIsGlobal = true
+            case "item", "data", "dims":
+                let pair = token.dropFirst(parts[0].count + 1).split(separator: "=").map(String.init)
+                guard pair.count == 2, let v = Float(pair[1]) else { said = "\(parts[0]):<what>=<value>"; break }
+                let outcome: BpyBridge.Outcome?
+                switch parts[0] {
+                case "item":
+                    outcome = Int(pair[0]).map { ItemActions.median(bridge, axis: $0, to: v, global: itemIsGlobal) }
+                case "data":
+                    let row = ItemDataRow(rawValue: pair[0])
+                    let label = ItemActions.state(bridge, global: itemIsGlobal)?.dataRows
+                        .first { $0.row == row }?.label ?? pair[0]
+                    outcome = row.map { ItemActions.data(bridge, $0, label: label, to: v) }
+                default:
+                    outcome = (scene.active?.name).flatMap { name in
+                        Int(pair[0]).map { ItemActions.dimension(bridge, of: name, axis: $0, to: v) }
+                    }
+                }
+                said = outcome.map { $0.succeeded ? "sent \($0.python)" : "FAILED \($0.error ?? "")" } ?? "nothing sent"
+                said += "; " + itemState(bridge, global: itemIsGlobal)
+            case "item-state":
+                said = itemState(bridge, global: itemIsGlobal)
+            case "tap":
+                // What a tap on one vertex leaves in Vertex select mode (the
+                // viewport's `editTapSelection` with Set): the viewport's
+                // selection changed and pending, the redo panel closed —
+                // then time for the views' reads (Normal's refresh, the
+                // Sidebar's), which hand it to Blender early.
+                guard parts.count == 2, let k = Int(parts[1]), scene.mode == .edit else {
+                    said = "tap:<vertex>, in Edit Mode"; break
+                }
+                var selection = EditSelection()
+                selection.vertices = [k]
+                selection.history = [.vertex(k)]
+                scene.editSelection = selection
+                scene.editSelectionPending = true
+                bridge.noteSelectionChanged()
+                try? await Task.sleep(nanoseconds: 800_000_000)
+                said = "the viewport holds vertex \(k) (pending: \(scene.editSelectionPending)); Blender's selection "
+                    + (bridge.capture("""
+                        import bmesh
+                        _o = bpy.context.view_layer.objects.active
+                        print([v.index for v in bmesh.from_edit_mesh(_o.data).verts if v.select])
+                        """)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? "?")
+            case "frame":
+                // The timeline's own frame change (`TimelineDriver.setFrame`,
+                // a capture that moves no revision), then nothing but time:
+                // what the gizmo's axes are once the views' keys have had
+                // their turn, beside Blender's own for the new frame. Not
+                // followed by this loop's refresh, which would hide a key
+                // that missed the frame.
+                guard parts.count == 2, let frame = Int(parts[1]) else { said = "frame:<n>"; break }
+                let driver = TimelineDriver()
+                driver.bind(scene: scene, session: session, bridge: bridge)
+                let before = Self.axesText(scene.orientation.axes)
+                let moved = driver.setFrame(frame)
+                try? await Task.sleep(nanoseconds: 800_000_000)
+                let blender = bridge.capture(OrientationBpy.report)?.split(separator: "\n").last
+                    .flatMap { OrientationState.parse(String($0)) }
+                print("[bk] transform-ops \(token): frame set \(moved ? "" : "REFUSED ")to \(scene.frameCurrent); "
+                      + "the app's \(scene.orientation.label) axes \(before) -> \(Self.axesText(scene.orientation.axes)); "
+                      + "Blender's \(Self.axesText(blender?.axes))")
+                fflush(stdout)
+                continue
+            case "undo": session.performUndo()
+            case "redo": session.performRedo()
+            case "ax":   AccessibilityDump.print("transform-ops")
+            case "steps":
+                said = "Blender's undo steps: " + (bridge.capture("""
+                    import _blenderkit_undo as _bk_u
+                    print([_r[2] + ('*' if _r[3] else '') for _r in (_bk_u.blender_steps() or [])][-10:])
+                    """)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? "?")
+            default:
+                said = "no such token"
+            }
+            try? await Task.sleep(nanoseconds: 300_000_000)
+            refreshOrientation()
+            print("[bk] transform-ops \(token): \(said); redo panel: \(bridge.adjustable?.name ?? "none"); "
+                  + "banner: \(bridge.report.map { "\($0.operation): \($0.message)" } ?? "none")")
+            fflush(stdout)
+        }
+        print("[bk] transform-ops: done"); fflush(stdout)
+    }
+
+    /// One gizmo drag through the 3D View's own gesture code
+    /// (`MetalViewportView.Coordinator.debugDrag`: `beginGizmo`, `updateGizmo`,
+    /// `endGizmo`, in the view on screen), then what Blender holds beside what
+    /// the preview showed.
+    private func gizmoToken(_ parts: [String], bridge: BpyBridge) -> String {
+        guard parts.count == 4, let amount = Float(parts[3]) else { return "gizmo:mode:handle:amount" }
+        let mode: TransformGizmo.Mode = parts[1] == "rotate" ? .rotate : parts[1] == "scale" ? .scale : .translate
+        let handle: TransformGizmo.Handle
+        if let k = Int(parts[2]) { handle = .axis(k) }
+        else if parts[2].hasPrefix("p"), let k = Int(parts[2].dropFirst()) { handle = .plane(k) }
+        else { handle = .screen }
+        var preview: [Float] = [], followers: [Float] = []
+        var readout = "", axes = "none", constrained = false, points = false, held = ""
+        var moved: [String] = []
+        // The commit is a `perform`, which makes a new adjustable operator.
+        let generation = bridge.adjustableGeneration
+        let began = MetalViewportView.Coordinator.debugDrag(mode: mode, handle: handle, amount: amount) { session, result, blender in
+            preview = Self.shownPlaces(scene, session: session)
+            followers = Self.watchedPlaces(scene)
+            readout = TransformGizmo.readout(result, session: session)
+            axes = Self.axesText(simd_float3x3(session.gizmo.axes[0], session.gizmo.axes[1], session.gizmo.axes[2]))
+            constrained = blender
+            points = session.points != nil
+            // An object drag's objects; an edit drag reads the edit mesh.
+            moved = session.edit == nil ? session.snapshot.map(\.object.name) : []
+            // Mid-drag, the bar's Undo as it presses it: refused while Blender
+            // previews the drag (BpySession.constrainedDragOpen), so Blender's
+            // active step stays where it was.
+            if session.edit == nil && blender {
+                let step = { bridge.capture("import _blenderkit_undo as _bk_u\nprint([_r[2] for _r in (_bk_u.blender_steps() or []) if _r[3]][-1:])") ?? "?" }
+                let before = step()
+                self.session.performUndo()
+                held = "\(self.session.gestureHold ?? "no hold"); Undo pressed: step \(before) -> \(step())"
+            }
+        }
+        guard began.hasPrefix("began") else { return began }
+        let outcome = bridge.adjustableGeneration == generation ? nil : bridge.lastOutcome
+        let followersAfter = Self.watchedPlaces(scene)
+        // Blender's places for the objects the drag moved, in the session's
+        // order: in Local View Blender's `selected_objects` read here, with no
+        // view, also lists selected objects the 3D View does not draw.
+        let blender = moved.isEmpty ? Self.blenderPlaces(bridge, scene: scene) : (bridge.capture("""
+            _out = []
+            for _n in [\(moved.map { Bpy.quote($0) }.joined(separator: ", "))]:
+                _m = bpy.data.objects[_n].matrix_world
+                _out.append('%.5f %.5f %.5f' % tuple(_m.translation))
+                _out.append('%.5f %.5f %.5f %.5f %.5f %.5f' % (*_m.col[0].xyz, *_m.col[1].xyz))
+            print(' '.join(_out))
+            """)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? "?")
+        let gap = points ? "(points: -points-ops measures them)" : Self.gap(preview, Self.numbers(blender))
+        return "\(began); axes \(axes); readout \(readout); "
+            + "sent \(outcome.map { $0.succeeded ? $0.python : "FAILED \($0.python): \($0.error ?? "")" } ?? "nothing"); "
+            + "preview vs Blender, worst: \(gap)"
+            + (constrained ? "; Blender previewed it (constrained), mid-drag hold: \(held); every drawn object's place, "
+                + "preview vs after: " + Self.gap(followers, followersAfter) : "")
+    }
+
+    private func itemState(_ bridge: BpyBridge, global: Bool) -> String {
+        var out = ""
+        if scene.mode == .edit, let state = ItemActions.state(bridge, global: global) {
+            out += "\(state.medianTitle) \(state.median.map { String(format: "(%.4f, %.4f, %.4f)", $0.x, $0.y, $0.z) } ?? "-") "
+                + (global ? "Global" : "Local") + "; "
+                + state.dataRows.map { "\($0.label) \(String(format: "%.3f", $0.value))" }.joined(separator: ", ")
+        }
+        if let obj = scene.active, let d = ItemActions.dimensions(bridge, of: obj.name) {
+            out += String(format: " Dimensions (%.4f, %.4f, %.4f)", d.x, d.y, d.z)
+                + String(format: " scale (%.4f, %.4f, %.4f)", obj.scale.x, obj.scale.y, obj.scale.z)
+        }
+        return out
+    }
+
+    private static func axesText(_ m: simd_float3x3?) -> String {
+        guard let m else { return "none" }
+        func v(_ c: SIMD3<Float>) -> String { String(format: "(%.4f, %.4f, %.4f)", c.x, c.y, c.z) }
+        return "X \(v(m.columns.0)) Y \(v(m.columns.1)) Z \(v(m.columns.2))"
+    }
+
+    /// What the preview showed: the edited mesh's vertices in the world, or
+    /// the moving objects' origins, as one list of numbers.
+    private static func shownPlaces(_ scene: BKScene, session: TransformGizmo.Session) -> [Float] {
+        if let edit = session.edit {
+            let m = edit.object.modelMatrix
+            return edit.object.mesh.vertices.flatMap { v -> [Float] in
+                let w = (m * SIMD4(v.position, 1)).xyz
+                return [w.x, w.y, w.z]
+            }
+        }
+        return session.snapshot.flatMap { entry -> [Float] in
+            let m = entry.object.modelMatrix
+            return [m.columns.3.x, m.columns.3.y, m.columns.3.z,
+                    m.columns.0.x, m.columns.0.y, m.columns.0.z, m.columns.1.x, m.columns.1.y, m.columns.1.z]
+        }
+    }
+
+    /// The same list from Blender: the edit mesh in the world, or the selected
+    /// objects' world origins and X and Y axes.
+    private static func blenderPlaces(_ bridge: BpyBridge, scene: BKScene) -> String {
+        bridge.capture("""
+            import bmesh
+            _o = bpy.context.view_layer.objects.active
+            if _o is not None and _o.mode == 'EDIT' and _o.type == 'MESH':
+                _m = _o.matrix_world
+                _bm = bmesh.from_edit_mesh(_o.data)
+                print(' '.join('%.5f %.5f %.5f' % tuple(_m @ v.co) for v in _bm.verts))
+            else:
+                _out = []
+                for _s in bpy.context.selected_objects:
+                    _m = _s.matrix_world
+                    _out.append('%.5f %.5f %.5f' % tuple(_m.translation))
+                    _out.append('%.5f %.5f %.5f %.5f %.5f %.5f' % (*_m.col[0].xyz, *_m.col[1].xyz))
+                print(' '.join(_out))
+            """)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? "?"
+    }
+
+    /// `-object-ops view-stats` / `render-stats`: the last frame each took,
+    /// to tell the next one pixel by pixel what changed.
+    nonisolated(unsafe) static var lastStatsFrame: [String: [UInt8]] = [:]
+
+    /// Every object's drawn world place, in the scene's order.
+    private static func watchedPlaces(_ scene: BKScene) -> [Float] {
+        scene.objects.flatMap { o -> [Float] in
+            let t = o.modelMatrix.columns.3
+            return [t.x, t.y, t.z]
+        }
+    }
+
+    private static func numbers(_ text: String) -> [Float] {
+        text.split(separator: " ").compactMap { Float($0) }
+    }
+
+    private static func gap(_ a: [Float], _ b: [Float]) -> String {
+        guard a.count == b.count, !a.isEmpty else { return "counts \(a.count) vs \(b.count)" }
+        return String(format: "%.2e", zip(a, b).map { abs($0 - $1) }.max() ?? 0)
+    }
+}
+#endif
+
+#if DEBUG
+// MARK: - `-relations-ops`
+
+extension LayoutWorkspace {
+    /// `-relations-ops a,b,…`: the Outliner's collections, Object ▸
+    /// Collection, the Object Constraints tab, the Object menu's Mirror,
+    /// Link/Transfer Data, Make Single User, Copy Modifiers, Randomize and
+    /// Align rows, and Local View — through the commands their controls send
+    /// (`CollectionsBpy`, `ConstraintsBpy`, the `LastOperator` rows,
+    /// `LocalViewBpy`, `select(_:)`), once a `-eval64` script has finished.
+    /// Collections are named, and looked up in the tree the mirror read, as a
+    /// tap finds the row. Tokens:
+    /// `select:A+B` (B active), `new:<parent>`, `rename:<name>=<new>`,
+    /// `delete:<name>`, `delete-h:<name>`, `toggle:<name>:<exclude|hide|selectable|render>`,
+    /// `active:<name>`, `move:<name>`, `link:<name>`, `move-new:<parent>=<name>`,
+    /// `link-new:<parent>=<name>`, `con-add:<TYPE>`, `con-del:<name>`, `con-up:<name>`,
+    /// `con-down:<name>`, `con-first:<name>`, `con-last:<name>`, `con-set:<name>:<prop>=<python>`,
+    /// `con-target:<name>=<object>`, `con-op:<name>:<apply|copy|copy_to_selected|childof_set_inverse|childof_clear_inverse|followpath_path_animate>`,
+    /// `mirror:<0|1|2>:<g|l>`, `links:<TYPE>`, `uvs`, `single:<row>`, `modcopy`,
+    /// `apply:<all|location|rotation|scale>` (Object ▸ Apply's rows), `randomize`,
+    /// `align`, `con-targets:<TYPE>`, `con-copy`, `con-clear`, `adjust:<key>=<value>`,
+    /// `redo-panel`, `add:<primitive>`, `local`, `local-remove`, `all`, `invert`, `sel:<Select menu row>`,
+    /// `delete-selected` (X), `search:<path>[:<key>=<string>]` (the Operator Search's Run), `frame`, `outliner`,
+    /// `gizmo:<mode>:<handle>:<amount>` (as `-transform-ops` has it), `panel:<sheet>`,
+    /// `undo`, `redo`, `steps`, `ax`.
+    /// After each it prints what Blender holds beside what the app shows.
+    func runRelationsOps() async {
+        let args = ProcessInfo.processInfo.arguments
+        guard let i = args.firstIndex(of: "-relations-ops"), i + 1 < args.count, let bridge else { return }
+        try? await Task.sleep(nanoseconds: 3_000_000_000)
+        while session.isRunning { try? await Task.sleep(nanoseconds: 100_000_000) }
+        // A name, or `B/C`: the instance of C under B, for a collection
+        // linked into two parents.
+        func entry(_ name: String) -> CollectionTree.Entry? {
+            guard let tree = scene.collections else { return nil }
+            let chain = name.split(separator: "/").map(String.init)
+            guard chain.count > 1 else { return tree.entries.first { $0.name == name } }
+            return tree.entries.first { e in e.path.map { tree.entry($0)?.name ?? "" } == chain }
+        }
+        for token in args[i + 1].split(separator: ",").map(String.init) {
+            bridge.dismissReport(bridge.report?.id ?? -1)
+            let parts = token.split(separator: ":", maxSplits: 2).map(String.init)
+            let rest = parts.count > 1 ? String(token.dropFirst(parts[0].count + 1)) : ""
+            var said = ""
+            var outcome: BpyBridge.Outcome?
+            switch parts[0] {
+            case "select":
+                let names = rest.split(separator: "+").map(String.init)
+                outcome = bridge.run(Bpy.objectSelection(names, active: names.last), undo: nil)
+            case "new":
+                if let e = entry(rest) { outcome = bridge.run(CollectionsBpy.new(inside: e.uid)) } else { said = "no collection \(rest)" }
+            case "rename":
+                let pair = rest.split(separator: "=").map(String.init)
+                if pair.count == 2, let e = entry(pair[0]) { outcome = bridge.run(CollectionsBpy.rename(e.uid, from: e.name, to: pair[1])) }
+                else { said = "rename:<name>=<new>" }
+            case "delete", "delete-h":
+                if let e = entry(rest) { outcome = bridge.run(CollectionsBpy.delete(e.uid, hierarchy: parts[0] == "delete-h")) }
+                else { said = "no collection \(rest)" }
+            case "toggle":
+                let bits = rest.split(separator: ":").map(String.init)
+                if bits.count == 2, let e = entry(bits[0]), let tree = scene.collections,
+                   let toggle = CollectionsBpy.Toggle(rawValue: bits[1]) {
+                    // What the row's button sends: the state it draws, flipped.
+                    let drawnOn: Bool
+                    switch toggle {
+                    case .exclude: drawnOn = !e.excluded
+                    case .hide: drawnOn = !e.hidden
+                    case .selectable: drawnOn = e.selectable
+                    case .render: drawnOn = e.renders
+                    }
+                    outcome = bridge.run(CollectionsBpy.set(toggle, of: e, in: tree, on: !drawnOn))
+                } else { said = "toggle:<name>:<exclude|hide|selectable|render>" }
+            case "active":
+                if let e = entry(rest), let tree = scene.collections { outcome = bridge.run(CollectionsBpy.setActive(e, in: tree)) }
+                else { said = "no collection \(rest)" }
+            case "move", "link":
+                if let e = entry(rest) { outcome = bridge.run(CollectionsBpy.move(to: e.uid, link: parts[0] == "link")) }
+                else { said = "no collection \(rest)" }
+            case "move-new", "link-new":
+                let pair = rest.split(separator: "=").map(String.init)
+                if pair.count == 2, let e = entry(pair[0]) {
+                    // The prompt's own path: the name it proposes, then Create.
+                    askNewCollection(e.uid, parts[0] == "link-new")
+                    said = "prompt proposed \(newCollectionName)"
+                    newCollectionName = pair[1]
+                    outcome = bridge.run(CollectionsBpy.move(to: e.uid, link: parts[0] == "link-new",
+                                                             newCollection: newCollectionName))
+                    newCollection = nil
+                } else { said = "move-new:<parent>=<name>" }
+            case "con-add":
+                if let obj = scene.active { outcome = bridge.run(ConstraintsBpy.add(rest, to: obj.name)) }
+            case "con-del", "con-up", "con-down", "con-first", "con-last":
+                guard let obj = scene.active else { said = "no active object"; break }
+                let count = obj.constraints.count
+                switch parts[0] {
+                case "con-del": outcome = bridge.run(ConstraintsBpy.remove(rest, of: obj.name))
+                case "con-up": outcome = bridge.run(ConstraintsBpy.move(rest, of: obj.name, by: -1))
+                case "con-down": outcome = bridge.run(ConstraintsBpy.move(rest, of: obj.name, by: 1))
+                case "con-first": outcome = bridge.run(ConstraintsBpy.move(rest, of: obj.name, to: 0))
+                default: outcome = bridge.run(ConstraintsBpy.move(rest, of: obj.name, to: count - 1))
+                }
+            case "con-set":
+                let bits = rest.split(separator: ":", maxSplits: 1).map(String.init)
+                let pair = bits.count == 2 ? bits[1].split(separator: "=", maxSplits: 1).map(String.init) : []
+                if let obj = scene.active, pair.count == 2 {
+                    outcome = bridge.run(ConstraintsBpy.set(pair[0], of: bits[0], on: obj.name, to: pair[1], undo: pair[0]))
+                } else { said = "con-set:<name>:<prop>=<python>" }
+            case "con-target":
+                let pair = rest.split(separator: "=").map(String.init)
+                if let obj = scene.active, !pair.isEmpty {
+                    outcome = bridge.run(ConstraintsBpy.setTarget(pair.count > 1 ? pair[1] : nil, of: pair[0], on: obj.name))
+                }
+            case "con-op":
+                let bits = rest.split(separator: ":").map(String.init)
+                if let obj = scene.active, bits.count == 2, let op = ConstraintsBpy.Operation(rawValue: bits[1]) {
+                    outcome = bridge.run(ConstraintsBpy.operate(op, on: bits[0], of: obj.name))
+                } else { said = "con-op:<name>:<operation>" }
+            case "mirror":
+                let bits = rest.split(separator: ":").map(String.init)
+                performObjectRow(.mirror(axis: Int(bits.first ?? "0") ?? 0, local: bits.count > 1 && bits[1] == "l"))
+            case "links": performObjectRow(.makeLinksData(rest))
+            case "uvs": performObjectRow(.copyUVMaps())
+            case "single":
+                if let row = LastOperator.SingleUser(rawValue: rest) { performObjectRow(.makeSingleUser(row)) }
+                else { said = "single:<object|objectData|objectDataMaterials|materials|objectAnimation|objectDataAnimation>" }
+            case "modcopy": performObjectRow(.copyModifiersToSelected())
+            // Object ▸ Apply ▸ <all|location|rotation|scale>, as its row runs it.
+            case "apply":
+                if let what = Bpy.AppliedTransform(rawValue: rest) { applyTransform(what) }
+                else { said = "apply:<all|location|rotation|scale>" }
+            case "randomize": performObjectRow(.randomizeTransform())
+            case "align": performObjectRow(.alignObjects())
+            case "con-targets": performObjectRow(.addConstraintWithTargets(rest))
+            case "con-copy": performObjectRow(.copyConstraintsToSelected())
+            case "con-clear": performObjectRow(.clearObjectConstraints())
+            case "adjust":
+                let pair = rest.split(separator: "=").map(String.init)
+                said = "no adjustable operator"
+                if pair.count == 2, let v = Double(pair[1]), var op = bridge.adjustable {
+                    op[pair[0]] = v
+                    said = bridge.readjust(op).map { "re-ran \($0.python)" } ?? "REFUSED"
+                }
+            case "redo-panel":
+                if let op = bridge.adjustable {
+                    said = "\(op.name): " + op.parameters.filter { op.isShown($0) }
+                        .map { "\($0.label) \($0.display)" }.joined(separator: ", ")
+                } else { said = "no redo panel" }
+            case "add":
+                // Add ▸ Mesh's row: `perform(LastOperator.add(kind, at: cursor))`.
+                if let kind = PrimitiveKind(rawValue: rest) {
+                    outcome = bridge.perform(LastOperator.add(kind, at: scene.cursor))
+                } else { said = "add:<\(PrimitiveKind.allCases.map(\.rawValue).joined(separator: "|"))>" }
+            case "local": outcome = bridge.run(LocalViewBpy.toggle)
+            case "local-remove": outcome = bridge.run(LocalViewBpy.removeFrom)
+            case "all": select(.all)
+            case "invert": select(.invert)
+            // Any Select menu row (`SelectMenu.Command(token:)`), through the
+            // menu's own `select`, and Delete as X sends it.
+            case "sel":
+                if let command = SelectMenu.Command(token: rest) { select(command) } else { said = "no such row" }
+            case "delete-selected": deleteSelected()
+            // More ▸ Operator Search's Run, as its form sends it
+            // (`OperatorCatalogue.runCommand` through `bridge.run`):
+            // `search:<path>` or `search:<path>:<key>=<string>`.
+            case "search":
+                let bits = rest.split(separator: ":", maxSplits: 1).map(String.init)
+                var arguments: [String: String] = [:]
+                if bits.count == 2, let eq = bits[1].firstIndex(of: "=") {
+                    arguments[String(bits[1][..<eq])] = String(bits[1][bits[1].index(after: eq)...])
+                }
+                let json = (try? JSONSerialization.data(withJSONObject: arguments, options: [.sortedKeys]))
+                    .map { String(decoding: $0, as: UTF8.self) } ?? "{}"
+                outcome = bridge.run(OperatorCatalogue.runCommand(path: bits.first ?? "", json: json),
+                                     undo: bits.first ?? "")
+            case "frame":
+                said = String(format: "camera target (%.4f, %.4f, %.4f) distance %.4f, viewport %.0f x %.0f",
+                              camera.target.x, camera.target.y, camera.target.z, camera.distance,
+                              viewportSize.width, viewportSize.height)
+            case "outliner":
+                said = scene.outlinerTree().map { row -> String in
+                    let pad = String(repeating: ".", count: row.depth)
+                    switch row.item {
+                    case .collection(let e):
+                        return pad + "[\(e.name)\(e.active ? "*" : "")\(e.excluded ? " excl" : "")\(e.hidden ? " hid" : "")\(e.selectable ? "" : " unsel")\(e.renders ? "" : " norender")]"
+                    case .object(let o):
+                        return pad + o.name + (row.excluded ? "(x)" : "") + (o.visible ? "" : "(not drawn)")
+                    }
+                }.joined(separator: " ")
+            case "gizmo":
+                // A gizmo drag, as `-transform-ops gizmo:` makes one: through
+                // the viewport's own session, preview and commit — with
+                // Blender previewing a drag a constraint decides.
+                said = gizmoToken(token.split(separator: ":", maxSplits: 3).map(String.init), bridge: bridge)
+            case "constrained-preview":
+                // The negative control, read by `BpyBridge.beginConstrainedDrag`
+                // itself, so it switches the gizmo's and the fields' path.
+                BpyBridge.debugSkipConstrainedPreview = rest == "off"
+                said = "Blender previews constrained drags: \(!BpyBridge.debugSkipConstrainedPreview)"
+            case "panel":
+                panel = rest.isEmpty ? nil : rest
+                try? await Task.sleep(nanoseconds: 1_500_000_000)
+                said = "panel \(panel ?? "none")"
+            case "undo": session.performUndo()
+            case "redo": session.performRedo()
+            case "ax": AccessibilityDump.print("relations-ops")
+            case "steps":
+                said = "Blender's undo steps: " + (bridge.capture("""
+                    import _blenderkit_undo as _bk_u
+                    print([_r[2] + ('*' if _r[3] else '') for _r in (_bk_u.blender_steps() or [])][-12:])
+                    """)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? "?")
+            default:
+                said = "no such token"
+            }
+            try? await Task.sleep(nanoseconds: 400_000_000)
+            if let outcome, !outcome.succeeded { said += " FAILED: \(outcome.error ?? "?")" }
+            if let report = bridge.report { said += " banner: \(report.operation): \(report.message)" }
+            print("[bk] relations-ops \(token): \(said); app \(Self.relationsShown(scene)); Blender \(Self.relationsHeld(bridge))")
+            fflush(stdout)
+        }
+        print("[bk] relations-ops: done"); fflush(stdout)
+    }
+
+    /// What the app shows: selection, active, Local View, every object's
+    /// drawn state, collections and constraints, the active collection.
+    static func relationsShown(_ scene: BKScene) -> String {
+        let tree = scene.collections
+        let objects = scene.objects.map { o -> String in
+            let colls = tree?.collections(holding: o.name).map(\.name).joined(separator: "+") ?? "-"
+            let cons = o.constraints.map { "\($0.name)\($0.enabled ? "" : "(off)")@\(LastOperator.number(Double($0.influence)))" }
+                .joined(separator: "+")
+            let m = o.modelMatrix.columns.3
+            let sx = simd_length(SIMD3(o.modelMatrix.columns.0.x, o.modelMatrix.columns.0.y, o.modelMatrix.columns.0.z))
+            let det = simd_determinant(o.modelMatrix)
+            return "\(o.name){\(scene.selection.contains(o.id) ? "sel," : "")\(o.visible ? "drawn" : "hidden")\(o.outsideLocalView ? ",notlocal" : "")"
+                + String(format: ",at %.3f %.3f %.3f,sx %.3f,det %.2f", m.x, m.y, m.z, sx, det)
+                + ",in \(colls)" + (cons.isEmpty ? "" : ",cons \(cons)") + "}"
+        }.joined(separator: " ")
+        let local = scene.localView.map { "local[\($0.objects.sorted().joined(separator: "+"))]" } ?? "no local view"
+        return "active \(scene.active?.name ?? "none"); \(local); active collection \(tree?.active?.name ?? "?"); \(objects)"
+    }
+
+    /// The same, from Blender.
+    static func relationsHeld(_ bridge: BpyBridge) -> String {
+        bridge.capture("""
+            import _blenderkit_localview as _bk_lv
+            _vl = bpy.context.view_layer
+            _m = _bk_lv.members()
+            _out = ['active ' + (_vl.objects.active.name if _vl.objects.active else 'none'),
+                    ('local[' + '+'.join(sorted(_m)) + ']') if _m is not None else 'no local view',
+                    'active collection ' + _vl.active_layer_collection.name]
+            for _o in bpy.context.scene.objects:
+                _t = _o.matrix_world.translation
+                _c = '+'.join(c.name for c in _o.users_collection)
+                _k = '+'.join(c.name + ('' if c.enabled else '(off)') + '@%g' % round(c.influence, 4) for c in _o.constraints)
+                _out.append('%s{%s%s,at %.3f %.3f %.3f,sx %.3f,det %.2f,in %s%s}' % (_o.name, 'sel,' if _o.select_get() else '',
+                    'visible' if _o.visible_get() else 'hidden', _t.x, _t.y, _t.z, _o.matrix_world.col[0].xyz.length,
+                    _o.matrix_world.determinant(), _c, (',cons ' + _k) if _k else ''))
+            _cl = []
+            def _walk(_l, _d):
+                _c = _l.collection
+                _cl.append('.' * _d + '[' + _l.name + (' excl' if _l.exclude else '') + (' hid' if _l.hide_viewport else '')
+                           + (' unsel' if _c.hide_select else '') + (' norender' if _c.hide_render else '') + ']'
+                           + ','.join(o.name for o in _c.objects))
+                for _ch in _l.children:
+                    _walk(_ch, _d + 1)
+            _walk(_vl.layer_collection, 0)
+            print('; '.join(_out) + '; tree ' + ' '.join(_cl))
+            """)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? "?"
+    }
+}
+#endif
+
+// MARK: - `-textimage-ops`
+
+#if DEBUG
+extension LayoutWorkspace {
+    /// `-textimage-ops a,b,…` (round 4, group 8): a text object's Body Text
+    /// and Data tab rows, Tab on a text, Add ▸ Image ▸ Reference... and
+    /// Background..., the Empty panel's image rows, and what the 3D View
+    /// draws for the pictures — through the calls the controls make, once a
+    /// `-eval64` script has finished. Tokens:
+    /// `select:<name>`, `add-text`, `body:<text>` (`\n` for a new line; the
+    /// field's own end-of-edit: `NameDraft` then `TextBpy.setBody`),
+    /// `text:<key>=<number or ID>` (a Data tab row), `tab` (whether Tab opened
+    /// the Body Text sheet, then closes it), `image-ref:<file>`,
+    /// `image-bg:<file>`, `image-plane:<file>` (`BpyBridge.addReferenceImage`,
+    /// the pickers' call, which converts the file as it converts theirs),
+    /// `empty:<key>=<python>` (an Empty panel row on the active object),
+    /// `view:<top|front|back|right|left|persp|ortho>`, `orbit:<azimuth°>:<elevation°>`,
+    /// `images` (what `ImageEmptyDraw` draws for this view), `capture:<file.png>`
+    /// (the 3D View's frame, read back, `ViewportRenderer.captureFrame`, with
+    /// how many pixels differ from the background), `culling:old|blender`
+    /// (`ViewportRenderer.surfaceCull`'s negative control),
+    /// `undo`, `redo`, `steps`. After each it prints what the app shows beside
+    /// what Blender holds for the active object.
+    func runTextImageOps() async {
+        let args = ProcessInfo.processInfo.arguments
+        guard let i = args.firstIndex(of: "-textimage-ops"), i + 1 < args.count, let bridge else { return }
+        try? await Task.sleep(nanoseconds: 3_000_000_000)
+        while session.isRunning { try? await Task.sleep(nanoseconds: 100_000_000) }
+        for token in args[i + 1].split(separator: ",").map(String.init) {
+            bridge.dismissReport(bridge.report?.id ?? -1)
+            let head = token.split(separator: ":", maxSplits: 1).map(String.init)
+            let rest = head.count > 1 ? head[1] : ""
+            var said = ""
+            var outcome: BpyBridge.Outcome?
+            switch head[0] {
+            case "select":
+                outcome = bridge.run(Bpy.objectSelection([rest], active: rest), undo: nil)
+            case "add-text":
+                outcome = bridge.add(.text, at: scene.cursor, view: camera)
+            case "body":
+                guard let obj = scene.active, case .text(let settings)? = obj.dataSettings else {
+                    said = "the active object shows no text"
+                    break
+                }
+                let typed = rest.replacingOccurrences(of: "\\n", with: "\n")
+                if let text = NameDraft(text: typed).ending(over: settings.body) {
+                    outcome = bridge.run(TextBpy.setBody(text, object: obj.name), undo: TextBpy.bodyUndo)
+                } else {
+                    said = "unchanged, nothing sent"
+                }
+            case "text":
+                let pair = rest.split(separator: "=", maxSplits: 1).map(String.init)
+                guard pair.count == 2, let obj = scene.active,
+                      let label = TextSettings.rows.first(where: { $0.key == pair[0] })?.label else {
+                    said = "text:<key>=<value> on a text object"
+                    break
+                }
+                let python = Float(pair[1]).map { TextBpy.python(pair[0], $0) } ?? "'\(pair[1])'"
+                outcome = bridge.run(TextBpy.set(pair[0], to: python, object: obj.name), undo: label)
+            case "tab":
+                toggleEditing()
+                try? await Task.sleep(nanoseconds: 800_000_000)
+                said = "Body Text sheet " + (bodyTextObject.map { "opened on \($0.name)" } ?? "not opened")
+                    + "; mode \(scene.mode.bpyMode)"
+                bodyTextObject = nil
+            case "image-ref", "image-bg", "image-plane":
+                let url = URL(fileURLWithPath: rest)
+                guard let data = try? Data(contentsOf: url) else { said = "cannot read \(rest)"; break }
+                let kind: ReferenceImages.Kind = head[0] == "image-ref" ? .reference
+                    : head[0] == "image-bg" ? .background : .plane
+                outcome = bridge.addReferenceImage(kind, data: data, name: url.lastPathComponent,
+                                                   at: scene.cursor, view: camera)
+            case "empty":
+                let pair = rest.split(separator: "=", maxSplits: 1).map(String.init)
+                guard pair.count == 2, let obj = scene.active else { said = "empty:<key>=<python>"; break }
+                outcome = bridge.run(ReferenceImages.set(pair[0], to: pair[1], object: obj.name), undo: pair[0])
+            case "view":
+                if let viewpoint = ViewportCamera.Viewpoint(rawValue: rest) {
+                    camera.snap(to: viewpoint)
+                } else {
+                    camera.isOrthographic = rest == "ortho"
+                }
+                said = "camera \(camera.isOrthographic ? "orthographic" : "perspective") eye \(camera.eye)"
+            case "orbit":
+                let degrees = rest.split(separator: ":").compactMap { Float($0) }
+                if degrees.count == 2 {
+                    camera.azimuth = degrees[0] * .pi / 180
+                    camera.elevation = degrees[1] * .pi / 180
+                }
+                said = "camera eye \(camera.eye)"
+            case "images":
+                let view = OverlayView(camera: camera, size: CGSize(width: 800, height: 600))
+                let quads = ImageEmptyDraw.quads(in: scene, view: view)
+                said = "\(quads.count) pictures drawn: " + quads.map {
+                    "\($0.object) pass \($0.pass) blend \($0.alphaBlend) tint \($0.tint) file \(($0.file as NSString).lastPathComponent)"
+                }.joined(separator: " | ")
+                for obj in scene.objects {
+                    guard case .empty(let e)? = obj.overlayDisplay, e.kind == .image else { continue }
+                    said += "; \(obj.name): frame \(e.frameVisible(perspective: view.isPerspective)) "
+                        + "picture \(e.pictureVisible(world: obj.modelMatrix, view: view)) depth \(e.depth.rawValue) "
+                        + "side \(e.side.rawValue) alpha \(e.useAlpha) \(e.color.w) data \(e.imageHasData)"
+                }
+            case "capture":
+                guard let device = MTLCreateSystemDefaultDevice(),
+                      let renderer = ViewportRenderer(device: device, scene: scene, camera: camera),
+                      let frame = renderer.captureFrame(points: CGSize(width: 800, height: 600), scale: 1,
+                                                        clear: MTLClearColor(red: 0.188, green: 0.188,
+                                                                             blue: 0.188, alpha: 1))
+                else { said = "capture failed"; break }
+                said = Self.writePNG(frame, to: rest)
+                // How much of the frame is not the background (0.188 grey,
+                // 48 in a byte): what the surfaces and overlays cover.
+                var covered = 0, left = 0
+                for k in stride(from: 0, to: frame.rgba.count, by: 4)
+                where abs(Int(frame.rgba[k]) - 48) + abs(Int(frame.rgba[k + 1]) - 48) + abs(Int(frame.rgba[k + 2]) - 48) > 6 {
+                    covered += 1
+                    if (k / 4) % frame.width < frame.width / 2 { left += 1 }
+                }
+                said += "; \(covered) of \(frame.width * frame.height) px differ from the background "
+                    + "(left half \(left), right half \(covered - left))"
+                let view = OverlayView(camera: camera, size: CGSize(width: 800, height: 600))
+                // The centres of the picture's four quarters, bottom left,
+                // bottom right, top left, top right (uv from the frame's
+                // bottom-left corner), where the view shows them: a picture
+                // with four colours tells a turn or a flip from the right way
+                // up, which one with two halves could not (round 4's review).
+                for quad in ImageEmptyDraw.quads(in: scene, view: view) {
+                    for (u, v) in [(Float(0.25), Float(0.25)), (0.75, 0.25), (0.25, 0.75), (0.75, 0.75)] {
+                        let c = quad.corners
+                        let bottom = c[0] + (c[1] - c[0]) * u, top = c[3] + (c[2] - c[3]) * u
+                        guard let p = view.project(bottom + (top - bottom) * v) else { continue }
+                        let x = min(max(Int(p.x), 0), frame.width - 1), y = min(max(Int(p.y), 0), frame.height - 1)
+                        let k = (y * frame.width + x) * 4
+                        said += "; \(quad.object) uv (\(u), \(v)) at (\(x), \(y)) is RGB \(frame.rgba[k]) \(frame.rgba[k + 1]) \(frame.rgba[k + 2])"
+                    }
+                }
+                // Control: the same pixel with the overlays off (no pictures).
+                if let first = ImageEmptyDraw.quads(in: scene, view: view).first,
+                   let p = view.project(first.corners[0] + (first.corners[1] - first.corners[0]) * 0.25
+                                        + (first.corners[3] - first.corners[0]) * 0.5) {
+                    var off = ViewportOptions()
+                    off.showOverlays = false
+                    if let device = MTLCreateSystemDefaultDevice(),
+                       let bare = ViewportRenderer(device: device, scene: scene, camera: camera) {
+                        bare.options = off
+                        if let plain = bare.captureFrame(points: CGSize(width: 800, height: 600), scale: 1,
+                                                         clear: MTLClearColor(red: 0.188, green: 0.188, blue: 0.188, alpha: 1)) {
+                            let x = min(max(Int(p.x), 0), plain.width - 1), y = min(max(Int(p.y), 0), plain.height - 1)
+                            let k = (y * plain.width + x) * 4
+                            said += "; control, overlays off: (\(x), \(y)) is RGB \(plain.rgba[k]) \(plain.rgba[k + 1]) \(plain.rgba[k + 2])"
+                        }
+                    }
+                }
+            // `culling:old` / `culling:blender`, as `-object-ops` has them,
+            // so a capture before and after is one run.
+            case "culling":
+                ViewportRenderer.debugCullBackFaces = rest == "old"
+                said = "surface passes cull \(ViewportRenderer.surfaceCull == .back ? "back faces" : "nothing")"
+            case "undo": session.performUndo()
+            case "redo": session.performRedo()
+            case "steps":
+                said = "Blender's undo steps: " + (bridge.capture("""
+                    import _blenderkit_undo as _bk_u
+                    print([_r[2] + ('*' if _r[3] else '') for _r in (_bk_u.blender_steps() or [])][-10:])
+                    """)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? "?")
+            default:
+                said = "no such token"
+            }
+            try? await Task.sleep(nanoseconds: 400_000_000)
+            if let outcome, !outcome.succeeded { said += " FAILED: \(outcome.error ?? "?")" }
+            if let report = bridge.report { said += " banner: \(report.operation): \(report.message)" }
+            if head[0] == "text" || head[0] == "body" { said += "; " + BudgetProbe.report(bridge) }
+            print("[bk] textimage-ops \(token): \(said); app \(Self.textImageShown(scene)); Blender \(Self.textImageHeld(bridge))")
+            fflush(stdout)
+        }
+        print("[bk] textimage-ops: done"); fflush(stdout)
+    }
+
+    /// The active object as the app shows it: a text's body and settings, an
+    /// image empty's picture settings, the drawn vertex count.
+    static func textImageShown(_ scene: BKScene) -> String {
+        guard let obj = scene.active else { return "no active object" }
+        var out = "\(obj.name) \(obj.blenderType) \(obj.mesh.vertices.count) verts"
+        if case .text(let t)? = obj.dataSettings {
+            out += " body=\(t.body.debugDescription) " + TextSettings.rows.map { "\($0.key)=\(t.values[$0.key] ?? "-")" }
+                .joined(separator: " ")
+        }
+        if case .empty(let e)? = obj.overlayDisplay {
+            out += " \(e.kind.rawValue) image=\(e.imageName) data=\(e.imageHasData) depth=\(e.depth.rawValue) "
+                + "side=\(e.side.rawValue) ortho=\(e.showOrthographic) persp=\(e.showPerspective) "
+                + "axis=\(e.onlyAxisAligned) alpha=\(e.useAlpha) opacity=\(e.color.w) size=\(e.size) "
+                + "offset=\(e.imageOffset) file=\((e.imageFile as NSString).lastPathComponent)"
+        }
+        return out
+    }
+
+    /// The same, read from Blender.
+    static func textImageHeld(_ bridge: BpyBridge) -> String {
+        bridge.capture("""
+            import bpy
+            _o = bpy.context.view_layer.objects.active
+            if _o is None:
+                print('no active object')
+            elif _o.type == 'FONT':
+                _d = _o.data
+                _e = _o.evaluated_get(bpy.context.evaluated_depsgraph_get())
+                _m = _e.to_mesh()
+                print(_o.name, _o.mode, len(_m.vertices), 'verts body=%r' % _d.body, ' '.join('%s=%s' % (_k, getattr(_d, _k)) for _k in ('resolution_u', 'fill_mode', 'offset', 'extrude', 'bevel_depth', 'bevel_resolution', 'size', 'shear', 'align_x', 'align_y', 'space_character', 'space_word', 'space_line', 'offset_x', 'offset_y')))
+                _e.to_mesh_clear()
+            elif _o.type == 'EMPTY':
+                _i = _o.data
+                print(_o.name, _o.empty_display_type, 'image=%s' % (_i.name if _i else None), 'packed=%s' % (bool(_i.packed_file) if _i else None), 'size=%s' % ((tuple(_i.size) if _i else None),), 'depth=%s side=%s ortho=%s persp=%s axis=%s alpha=%s opacity=%.3f dsize=%.3f offset=%s rot=%s' % (_o.empty_image_depth, _o.empty_image_side, _o.show_empty_image_orthographic, _o.show_empty_image_perspective, _o.show_empty_image_only_axis_aligned, _o.use_empty_image_alpha, _o.color[3], _o.empty_display_size, tuple(round(_c, 3) for _c in _o.empty_image_offset), tuple(round(_c, 3) for _c in _o.rotation_euler)))
+            else:
+                print(_o.name, _o.type)
+            """)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? "?"
+    }
+
+    static func writePNG(_ frame: (width: Int, height: Int, rgba: [UInt8]), to path: String) -> String {
+        var pixels = frame.rgba
+        let written: Bool = pixels.withUnsafeMutableBytes { raw in
+            guard let context = CGContext(data: raw.baseAddress, width: frame.width, height: frame.height,
+                                          bitsPerComponent: 8, bytesPerRow: frame.width * 4,
+                                          space: CGColorSpaceCreateDeviceRGB(),
+                                          bitmapInfo: CGImageAlphaInfo.noneSkipLast.rawValue),
+                  let image = context.makeImage(),
+                  let destination = CGImageDestinationCreateWithURL(URL(fileURLWithPath: path) as CFURL,
+                                                                    "public.png" as CFString, 1, nil)
+            else { return false }
+            CGImageDestinationAddImage(destination, image, nil)
+            return CGImageDestinationFinalize(destination)
+        }
+        return written ? "captured \(frame.width) x \(frame.height) to \(path)" : "could not write \(path)"
+    }
+}
+#endif
+
+#if DEBUG
+extension BKObject {
+    /// DEBUG launch hooks (`-object-ops normals`, `-sculpt-stroke`): the
+    /// normals the 3D View shades this mesh with (`MeshData.shadingNormal`),
+    /// corner by corner, against the corner normals Blender's Solid view
+    /// draws, read from Blender's evaluated mesh; and, as the control, the
+    /// vertex normals the 3D View drew before against the same. Only for the
+    /// active object, which is the one the capture reads.
+    func shadingReport(_ bridge: BpyBridge) -> String {
+        let held = bridge.capture("""
+            import json
+            _o = bpy.context.view_layer.objects.active
+            if _o.mode == 'EDIT':
+                _o.update_from_editmode()
+            _e = _o.evaluated_get(bpy.context.evaluated_depsgraph_get())
+            _m = _e.to_mesh()
+            _m.calc_loop_triangles()
+            _hidden = _o.mode == 'EDIT'
+            _n = [round(_c, 6) for _t in _m.loop_triangles
+                  if not (_hidden and _m.polygons[_t.polygon_index].hide)
+                  for _l in _t.loops for _c in _m.corner_normals[_l].vector]
+            print(json.dumps({'domain': _m.normals_domain, 'n': _n}))
+            _e.to_mesh_clear()
+            """) ?? ""
+        guard let data = held.data(using: .utf8),
+              let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let domain = json["domain"] as? String,
+              let flat = (json["n"] as? [NSNumber])?.map(\.floatValue) else {
+            return "Blender's corner normals unread: \(held)"
+        }
+        guard flat.count == 3 * mesh.indices.count else {
+            return "Blender has \(flat.count / 3) triangle corners, the app \(mesh.indices.count)"
+        }
+        // atan2 in doubles: acos of a Float dot cannot tell 0° from 0.028°.
+        func degrees(_ a: SIMD3<Float>, _ b: SIMD3<Float>) -> Float {
+            let x = SIMD3<Double>(a), y = SIMD3<Double>(b)
+            return Float(atan2(simd_length(simd_cross(x, y)), simd_dot(x, y)) * 180 / .pi)
+        }
+        var shaded: Float = 0, byVertex: Float = 0
+        for c in mesh.indices.indices {
+            let blender = SIMD3(flat[3 * c], flat[3 * c + 1], flat[3 * c + 2])
+            shaded = max(shaded, degrees(mesh.shadingNormal(corner: c), blender))
+            byVertex = max(byVertex, degrees(mesh.vertices[Int(mesh.indices[c])].normal, blender))
+        }
+        return "Blender's \(domain) normals; the 3D View shades \(name) by its "
+            + "\(mesh.shadingFits ? "\(mesh.shadingDomain)" : "vertex") normals, \(mesh.indices.count) corners, "
+            + "worst \(String(format: "%.4f", shaded))° from Blender's; "
+            + "control, the vertex normals: worst \(String(format: "%.4f", byVertex))°"
+    }
+}
+#endif
+
+/// Whether a horizontal scroll view shows its content's end, for the fade
+/// that says a header runs on past the screen (`LayoutWorkspace.headerRow`).
+/// iOS 17 cannot tell, and keeps the fade while the content is wider than the
+/// view.
+private struct ScrolledToEnd: ViewModifier {
+    @Binding var atEnd: Bool
+
+    func body(content: Content) -> some View {
+        if #available(iOS 18.0, *) {
+            content.onScrollGeometryChange(for: Bool.self) { g in
+                g.contentOffset.x + g.containerSize.width >= g.contentSize.width - 2
+            } action: { _, end in atEnd = end }
+        } else {
+            content
+        }
+    }
+}
+
+// MARK: - Test All Features
+
+extension LayoutWorkspace {
+    /// The functions of this view Test All Features calls as its controls
+    /// do, which live in its private state: the toolbar's tool (`choose`),
+    /// the mode menu's Weight Paint and Vertex Paint (`enterPaintMode`), and
+    /// Viewport Shading and X-Ray, set as their menu rows set them, and the
+    /// view's camera, which its gestures move. Thin wrappers, nothing more
+    /// (`FeatureTestRunner`).
+    var featureTestDoor: FeatureTestLayoutDoor {
+        FeatureTestLayoutDoor(camera: { camera },
+                              setCamera: { camera = $0 },
+                              choose: { choose($0) },
+                              enterPaintMode: { enterPaintMode($0) },
+                              setShading: { shading = $0 },
+                              shading: { shading },
+                              setXRay: { options.xray = $0 },
+                              tool: { tool })
+    }
+}
+
+/// The 3D View's bottom row: the active object's name, and what the drag under
+/// way is doing ("Orbit  40°, 25°"). A view of its own so that a drag, which
+/// changes the readout every step, redraws this row and not the whole 3D View
+/// (`MetalViewportView.Coordinator.moveCamera`).
+private struct ViewportInfoRow: View {
+    var scene: BKScene
+
+    var body: some View {
+        VStack {
+            Spacer()
+            HStack {
+                Text(scene.active?.name ?? "Tap an object to select it")
+                    .font(.system(size: 13, weight: .medium))
+                Spacer()
+                if let readout = scene.dragReadout { Text(readout).font(.system(size: 12, design: .monospaced)) }
+            }.padding(14).background(BTheme.header.opacity(0.9))
+        }.allowsHitTesting(false)
     }
 }

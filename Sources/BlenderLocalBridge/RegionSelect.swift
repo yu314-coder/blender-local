@@ -418,18 +418,24 @@ public enum RegionSelect {
         func isReal(_ e: Int) -> Bool { real.isEmpty || real.contains(e) }
 
         let view = ProjectedMesh(mesh: mesh, clip: viewProjection * model, size: size)
-        let area = region.bounds
+        // Only what the 3D View shows can be taken: Blender projects the
+        // elements with V3D_PROJ_TEST_CLIP_WIN and clips an edge to the region
+        // (`mesh_foreachScreenVert`, `mesh_foreachScreenEdge_clip_bb_segment`).
+        // A drag that left the view took elements beyond its edge (round 3's
+        // review).
+        let shown = CGRect(origin: .zero, size: size)
+        let area = region.bounds.intersection(shown)
+        guard !area.isNull, area.width > 0 || area.height > 0 else { return selection }
         // A scale of -1 on one axis turns the object inside out, and its
         // faces wind the other way on screen (`DepthBuffer.init`).
-        let linear = simd_float3x3(model.columns.0.xyz, model.columns.1.xyz, model.columns.2.xyz)
         let depth = seeThrough ? nil
             : DepthBuffer(view: view, mesh: mesh, covering: area.insetBy(dx: -2, dy: -2), size: size,
-                          mirrored: simd_determinant(linear) < 0)
+                          mirrored: FaceWinding.isMirrored(model))
 
         switch mode {
         case .vertex:
             for i in mesh.vertices.indices where !hidden.contains(i) {
-                guard let s = view.screen[i], area.insetBy(dx: -1, dy: -1).contains(s),
+                guard let s = view.screen[i], Self.inView(s, size), area.insetBy(dx: -1, dy: -1).contains(s),
                       region.contains(s) else { continue }
                 if let depth, !depth.isVisible(s, depth: view.depth[i]) { continue }
                 selection.vertices.insert(i)
@@ -442,12 +448,15 @@ public enum RegionSelect {
                 let a = Int(mesh.edges[2 * e]), b = Int(mesh.edges[2 * e + 1])
                 guard a < view.screen.count, b < view.screen.count,
                       !hidden.contains(a), !hidden.contains(b),
-                      let sa = view.screen[a], let sb = view.screen[b] else { continue }
+                      let ea = view.screen[a], let eb = view.screen[b],
+                      let (sa, sb) = Self.clip(ea, eb, to: shown) else { continue }
                 // Nothing of an edge whose box misses the region's can meet it.
                 let box = CGRect(x: min(sa.x, sb.x), y: min(sa.y, sb.y),
                                  width: abs(sa.x - sb.x), height: abs(sa.y - sb.y))
                 guard box.insetBy(dx: -1, dy: -1).intersects(area) else { continue }
-                let whole = region.contains(sa) && region.contains(sb)
+                // Whole only when the whole edge is in the view, and in the
+                // region; otherwise what the view shows of it may meet it.
+                let whole = sa == ea && sb == eb && region.contains(sa) && region.contains(sb)
                 let meets = whole || region.touches(sa, sb)
                 guard meets else { continue }
                 if let depth, !depth.edgeShows(from: sa, view.depth[a], to: sb, view.depth[b],
@@ -487,12 +496,39 @@ public enum RegionSelect {
                     let centre = corners.reduce(SIMD3<Float>.zero) { $0 + mesh.vertices[$1].position }
                         / Float(corners.count)
                     guard let s = ProjectedMesh.project(centre, clip: viewProjection * model, size: size),
-                          region.contains(s) else { continue }
+                          Self.inView(s, size), region.contains(s) else { continue }
                     members.forEach { selection.faces.insert($0) }
                 }
             }
         }
         return selection
+    }
+
+    /// Whether a projected point is in the view, by Blender's own test
+    /// (`V3D_PROJ_TEST_CLIP_WIN` in view3d_project.cc): strictly inside, so a
+    /// point on the view's edge is out.
+    static func inView(_ p: CGPoint, _ size: CGSize) -> Bool {
+        p.x > 0 && p.y > 0 && p.x < size.width && p.y < size.height
+    }
+
+    /// The part of the segment a–b inside `rect` (Liang–Barsky), or nil when
+    /// none of it is; the ends that are inside come back unchanged.
+    static func clip(_ a: CGPoint, _ b: CGPoint, to rect: CGRect) -> (CGPoint, CGPoint)? {
+        var t0: CGFloat = 0, t1: CGFloat = 1
+        let dx = b.x - a.x, dy = b.y - a.y
+        for (p, q) in [(-dx, a.x - rect.minX), (dx, rect.maxX - a.x),
+                       (-dy, a.y - rect.minY), (dy, rect.maxY - a.y)] {
+            if p == 0 {
+                if q < 0 { return nil }
+                continue
+            }
+            let r = q / p
+            if p < 0 { if r > t1 { return nil }; if r > t0 { t0 = r } }
+            else { if r < t0 { return nil }; if r < t1 { t1 = r } }
+        }
+        let start = t0 == 0 ? a : CGPoint(x: a.x + t0 * dx, y: a.y + t0 * dy)
+        let end = t1 == 1 ? b : CGPoint(x: a.x + t1 * dx, y: a.y + t1 * dy)
+        return (start, end)
     }
 
     /// The objects a region selects: any part of them for a box, the origin
@@ -511,7 +547,7 @@ public enum RegionSelect {
         return candidates.compactMap { candidate in
             guard candidate.visible,
                   let s = BoxSelect.project(candidate.origin, viewProjection: viewProjection, size: size),
-                  region.contains(s) else { return nil }
+                  RegionSelect.inView(s, size), region.contains(s) else { return nil }
             return candidate.name
         }
     }
@@ -616,7 +652,41 @@ public extension BKObject {
         case .edge:   own.edges = action.applyRegion(current.edges, inside: hit.edges)
         case .face:   own.faces = action.applyRegion(current.faces, inside: hit.faces)
         }
-        return EditSelection.implied(by: own, mode: mode, mesh: mesh, topology: editTopology)
+        var selection = EditSelection.implied(by: own, mode: mode, mesh: mesh, topology: editTopology)
+        // Blender's selection order: a Set gesture deselects everything first,
+        // which clears it (BM_mesh_elem_hflag_disable_test); the others leave
+        // it, and the push keeps only the entries still selected. The active
+        // face survives a deselect-all in Blender, so it is carried either way.
+        if action != .set { selection.history = current.history }
+        selection.activeFace = current.activeFace
+        return selection
+    }
+
+    /// Whether a Box, Circle or Lasso select that leaves `selection`
+    /// (`regionSelection`) changes what Blender holds, from `current`, as
+    /// Blender's own gesture decides it: CANCELLED, and no undo step, when it
+    /// changes nothing.
+    ///
+    /// A Set deselects everything first (`SEL_OP_USE_PRE_DESELECT` in
+    /// `do_mesh_box_select`, `do_lasso_select_mesh`, `mesh_circle_select`,
+    /// view3d_select.cc), and that counts as a change whenever anything was
+    /// selected (`totvertsel`) — and it clears Blender's selection order. So
+    /// a Set over exactly what is selected still finishes, and leaves the
+    /// order empty. The viewport compared the select mode's elements alone
+    /// and pushed nothing there, so it kept drawing Blender's old active
+    /// element white, and Ctrl+click, Next Active and Side of Active started
+    /// from an element Blender's own box would have dropped (round 4's
+    /// review, measured in 5.2.1: a box Set over the one selected vertex,
+    /// FINISHED, `select_history` 1 → 0). The other actions change only what
+    /// they select or deselect.
+    static func regionChanges(_ selection: EditSelection, from current: EditSelection,
+                              mode: MeshSelectMode, action: SelectAction) -> Bool {
+        if action == .set, !current.isEmpty { return true }
+        switch mode {
+        case .vertex: return selection.vertices != current.vertices
+        case .edge:   return selection.edges != current.edges
+        case .face:   return selection.faces != current.faces
+        }
     }
 
     /// Why a Box, Circle or Lasso select in Edit Mode cannot be handed to the
@@ -642,19 +712,32 @@ public extension BKObject {
     ///
     /// For the real Blender only: the simulator's stand-in reads the
     /// interface's selection and is never pushed this way.
+    ///
+    /// Loop Cut and the Knife refuse in the same words, with their own last
+    /// ones (`CutTool.refusal`): an edge picked over a rebuilt mesh is no
+    /// index of Blender's, so the ring shown and the edge cut would be some
+    /// other edge's.
     func editRegionRefusal() -> String? {
+        editRegionRefusal(picking: "a selection made over them", toDo: "select here")
+    }
+
+    func editRegionRefusal(picking what: String, toDo: String) -> String? {
         if let topology = editTopology, topology.describes(editCage), topology.describes(mesh) { return nil }
         if let undrawn = undrawnVertexCount {
             return "\(name) has \(undrawn) vertices, more than the viewport draws, so it is shown as its "
                 + "bounds and has no vertices here to pick."
         }
-        // The kinds that only move vertices leave the elements Blender's; the
-        // rest make new ones. One hidden in the viewport changes nothing.
-        let deforming: Set<ModifierKind> = [.smooth, .cast, .simpleDeform, .displace, .wave, .shrinkwrap,
-                                            .laplacianSmooth, .correctiveSmooth, .lattice, .weightedNormal,
-                                            .multires]
+        // The kinds that only move vertices (Blender's OnlyDeform,
+        // `onlyDeforms`) or change only normals or data leave the elements
+        // Blender's; the rest make new ones. One hidden in the viewport
+        // changes nothing. A list kept here missed round 4's Curve, Hook,
+        // Armature, Surface Deform and Mesh Deform, so the banner said a Hook
+        // "rebuilds the mesh" (round 4's review).
+        func keepsElements(_ kind: ModifierKind) -> Bool {
+            kind.onlyDeforms || [.weightedNormal, .normalEdit, .dataTransfer, .multires].contains(kind)
+        }
         let shown = modifiers.filter(\.showInViewport)
-        let rebuilding = shown.filter { !deforming.contains($0.kind) }
+        let rebuilding = shown.filter { !keepsElements($0.kind) }
         let names = (rebuilding.isEmpty ? shown : rebuilding).map(\.name)
         guard !names.isEmpty else {
             return "The viewport's mesh of \(name) does not line up with Blender's yet. Try again once it redraws."
@@ -662,9 +745,9 @@ public extension BKObject {
         let list = names.count == 1 ? "its modifier \(names[0]) rebuilds"
             : "its modifiers \(names.dropLast().joined(separator: ", ")) and \(names.last!) rebuild"
         return "In Edit Mode \(list) the mesh the viewport draws, so the vertices on screen are not "
-            + "Blender's and a selection made over them cannot be handed to it. Hide "
+            + "Blender's and \(what) cannot be handed to it. Hide "
             + (names.count == 1 ? "the modifier" : "them") + " in the viewport, or apply "
-            + (names.count == 1 ? "it" : "them") + ", to select here."
+            + (names.count == 1 ? "it" : "them") + ", to \(toDo)."
     }
 }
 
@@ -737,6 +820,67 @@ struct ProjectedMesh {
 /// The mesh rasterised over part of the view: the nearest depth, and which
 /// triangle it belongs to, at the centre of each view point.
 ///
+/// Which way an object's faces wind on screen, for the renderer and for
+/// selection alike.
+public enum FaceWinding {
+    /// Whether `model` turns space inside out: a negative determinant, a
+    /// scale of -1 on one axis (or on all three). Every face then winds the
+    /// other way on screen, and Blender flips its front face for the object
+    /// so a face turned towards the view still draws as one.
+    public static func isMirrored(_ model: simd_float4x4) -> Bool {
+        let linear = simd_float3x3(SIMD3(model.columns.0.x, model.columns.0.y, model.columns.0.z),
+                                   SIMD3(model.columns.1.x, model.columns.1.y, model.columns.1.z),
+                                   SIMD3(model.columns.2.x, model.columns.2.y, model.columns.2.z))
+        return simd_determinant(linear) < 0
+    }
+
+    /// Whether the viewport's surface passes cull back faces: no. Blender's
+    /// 3D View draws both sides of a face unless its shading's Backface
+    /// Culling is on, and desktop 5.2.1 has `shading.show_backface_culling`
+    /// False on all five startup screens (Layout, Modeling, Scripting,
+    /// Animation, Geometry Nodes; round 4's review). The renderer culled
+    /// them in Solid mode, so an open mesh seen from behind drew nothing
+    /// where Blender draws its face, while region select (`DepthBuffer`,
+    /// both sides as Blender's selection draws them) took that face.
+    /// `ViewportRenderer.surfaceCull` follows this.
+    public static let cullsBackFaces = false
+
+    /// Whether the viewport's surface passes draw the triangle a, b, c (in
+    /// the object's space): every one in front of the camera, front or back
+    /// facing, unless `culling` (the rule before, `cullsBackFaces` true),
+    /// which keeps only the front-facing ones (`isFrontFacing`).
+    public static func isDrawn(_ a: SIMD3<Float>, _ b: SIMD3<Float>, _ c: SIMD3<Float>,
+                               model: simd_float4x4, viewProjection: simd_float4x4,
+                               culling: Bool = cullsBackFaces) -> Bool {
+        guard culling else {
+            let clip = viewProjection * model
+            return [a, b, c].contains { (clip * SIMD4($0, 1)).w > 0 }
+        }
+        return isFrontFacing(a, b, c, model: model, viewProjection: viewProjection)
+    }
+
+    /// Whether the triangle a, b, c (in the object's space) faces the view:
+    /// Metal takes the triangles that wind the front-facing way in
+    /// normalized device coordinates (y up) as front facing, and the
+    /// renderer makes that anticlockwise, or clockwise for a mirrored object
+    /// (`ViewportRenderer.frontFacing`); a back face is lit from its own side
+    /// (Shaders.metal's `facing_normal`). `flipsMirrored: false` is the rule
+    /// it had before, anticlockwise for every object.
+    public static func isFrontFacing(_ a: SIMD3<Float>, _ b: SIMD3<Float>, _ c: SIMD3<Float>,
+                                     model: simd_float4x4, viewProjection: simd_float4x4,
+                                     flipsMirrored: Bool = true) -> Bool {
+        let clip = viewProjection * model
+        func ndc(_ p: SIMD3<Float>) -> SIMD2<Float>? {
+            let q = clip * SIMD4(p, 1)
+            return q.w > 0 ? SIMD2(q.x / q.w, q.y / q.w) : nil
+        }
+        guard let pa = ndc(a), let pb = ndc(b), let pc = ndc(c) else { return false }
+        let e1 = pb - pa, e2 = pc - pa
+        let anticlockwise = e1.x * e2.y - e1.y * e2.x > 0
+        return anticlockwise != (flipsMirrored && isMirrored(model))
+    }
+}
+
 /// Blender's selection buffer, as far as selection needs it. Every triangle is
 /// drawn, front- or back-facing, as Blender draws the edit mesh; the triangles
 /// of hidden faces never reach the viewport's mesh, so they hide nothing.

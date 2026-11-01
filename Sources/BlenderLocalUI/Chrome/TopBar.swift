@@ -2,10 +2,13 @@ import SwiftUI
 
 /// The two workspaces. Blender ships eleven (Layout, Modeling, Sculpting,
 /// UV Editing, …, Scripting); these are the two this app provides, and they
-/// appear as workspace tabs in the topbar exactly as Blender's do.
+/// appear as workspace tabs in the topbar exactly as Blender's do, under
+/// Blender's names: the 3D Viewport with the Outliner, Properties and
+/// Timeline to hand is Blender's Layout workspace (it was "3D View" here
+/// until round 4, which is the name of no Blender workspace).
 enum Workspace: String, CaseIterable, Identifiable {
     case scripting     = "Scripting"
-    case layout        = "3D View"
+    case layout        = "Layout"
     case shading       = "Shading"
     case rendering     = "Rendering"
 
@@ -72,14 +75,17 @@ struct TopBar: View {
     var bridge: BpyBridge?
     @Binding var showSearch: Bool
     @State private var savedFiles: [URL] = []
+    /// Preferences, from the gear or File ▸ Preferences….
+    @State private var showPreferences = false
 
     var body: some View {
         HStack(spacing: 12) {
-            FileMenu(scene: scene, session: session, bridge: bridge, savedFiles: $savedFiles)
+            FileMenu(scene: scene, session: session, bridge: bridge, savedFiles: $savedFiles,
+                     showPreferences: $showPreferences)
                 .frame(maxWidth: .infinity, alignment: .leading)
             Picker("Workspace", selection: $workspace) {
                 Text("Scripting").tag(Workspace.scripting)
-                Text("3D View").tag(Workspace.layout)
+                Text(Workspace.layout.rawValue).tag(Workspace.layout)
             }.pickerStyle(.segmented).frame(maxWidth: 300)
             // Undo, Redo and what the last run did, the same on both tabs.
             //
@@ -100,6 +106,22 @@ struct TopBar: View {
                 RunStatusPill(session: session)
             }
             .frame(maxWidth: .infinity, alignment: .trailing)
+            // Preferences, where Test All Features and the Self-Test are: the
+            // last thing on the bar, its size fixed, so a bar too narrow for
+            // everything squeezes the rest before it.
+            Button { showPreferences = true } label: {
+                Image(systemName: "gearshape")
+                    .font(.system(size: 15, weight: .medium))
+                    .foregroundStyle(BTheme.text)
+                    .frame(width: 44, height: 44)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .hoverEffect(.highlight)
+            .accessibilityLabel("Preferences")
+            .help("Preferences")
+            .fixedSize()
+            .layoutPriority(1)
         }
         .padding(.horizontal, 12).frame(height: 48)
         .background(BTheme.topbar)
@@ -107,6 +129,17 @@ struct TopBar: View {
             Rectangle().fill(BTheme.editorOutline).frame(height: BTheme.Metric.hairline)
         }
         .onAppear { savedFiles = SceneDocument.listSaved() }
+        .sheet(isPresented: $showPreferences) {
+            PreferencesSheet(scene: scene, session: session, bridge: bridge, workspace: $workspace)
+        }
+        #if DEBUG
+        // `-self-test` and `-feature-test` open Preferences at launch
+        // (`SelfTestLaunch`, `FeatureTestLaunch`).
+        .onAppear {
+            guard SelfTestLaunch.requested || FeatureTestLaunch.requested else { return }
+            DispatchQueue.main.asyncAfter(deadline: .now() + 3) { showPreferences = true }
+        }
+        #endif
     }
 
     private var canUndo: Bool {
@@ -127,7 +160,7 @@ struct TopBar: View {
             Image(systemName: icon)
                 .font(.system(size: 14, weight: .medium))
                 .foregroundStyle(BTheme.text.opacity(enabled ? 1 : 0.35))
-                .frame(width: 36, height: 32)
+                .frame(width: 44, height: 44)
                 .contentShape(Rectangle())
         }
         .buttonStyle(.plain)

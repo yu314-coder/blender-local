@@ -153,7 +153,9 @@ func body(_ action: SelectMenu.Action) -> String {
     }
 }
 for item in SelectMenu.MeshItem.allCases {
-    emit("MESH \(item.rawValue)", item.operation.executedPython)
+    // As LayoutWorkspace.select sends the row in Vertex mode, the mode
+    // verify.py runs the rows in (Linked's Delimit follows it).
+    emit("MESH \(item.rawValue)", item.operation(view: nil, selectMode: .vertex).executedPython)
     emit("NAME \(item.call)", item.operatorName)
 }
 for type in SelectMenu.SimilarType.allCases {

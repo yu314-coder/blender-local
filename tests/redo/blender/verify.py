@@ -16,6 +16,18 @@ CALLS = sys.argv[-1]
 ROOT = pathlib.Path(__file__).resolve().parents[3]
 fail = 0
 
+# Subdivide Edge-Ring's call asks `_blenderkit_loopcut` whether it cut
+# anything (`LastOperator.unchanged`); the app has it on sys.path. Loaded by
+# path, for the reason the knife's modules are below.
+# The Mesh menu's round-4 rows (group 6) ask `_blenderkit_meshmenu` what the
+# selection allows, and Rip Vertices and Extend runs under
+# `_blenderkit_context`'s borrowed 3D View.
+for _module in ("_blenderkit_multires", "_blenderkit_loopcut", "_blenderkit_context", "_blenderkit_meshmenu"):
+    _spec = importlib.util.spec_from_file_location(
+        _module, ROOT / "Resources" / "python" / "site" / (_module + ".py"))
+    sys.modules[_module] = importlib.util.module_from_spec(_spec)
+    _spec.loader.exec_module(sys.modules[_module])
+
 def check(label, ok, detail=""):
     global fail
     print(("  PASS  " if ok else "  FAIL  ") + label + ("" if ok else "  " + str(detail)))
@@ -107,10 +119,75 @@ def one_vertex(bm, at):
     at(0, 0).select = True
 
 
+def two_rungs(bm, at):
+    """Two edges of one ring, across the quad between them: (-0.2, 0)-(0, 0)
+    and (-0.2, 0.2)-(0, 0.2). Subdivide Edge-Ring cuts that quad; on a whole
+    cube selected it finds no ring and cuts nothing (measured in 5.2.1), which
+    the row refuses in words."""
+    bm.edges.get((at(-0.2, 0), at(0, 0))).select_set(True)
+    bm.edges.get((at(-0.2, 0.2), at(0, 0.2))).select_set(True)
+
+
 def two_vertices(bm, at):
     """Opposite corners of one quad, with no edge between them."""
     at(-0.2, -0.2).select = True
     at(0, 0).select = True
+
+
+def two_vertices_in_order(bm, at):
+    """`two_vertices`, picked one after the other: Merge's At First and At
+    Last merge at the first or the last of Blender's selection order, and
+    are refused in words without one."""
+    for v in (at(-0.2, -0.2), at(0, 0)):
+        v.select = True
+        bm.select_history.add(v)
+
+
+def loose_diagonal(bm, at):
+    """A loose edge across one quad, corner to corner, and everything
+    selected: Weld Edges into Faces splits the selected faces along the
+    selected loose edges on them (alone, the edge changed nothing)."""
+    bm.edges.new((at(-0.2, -0.2), at(0, 0)))
+    for seq in (bm.verts, bm.edges, bm.faces):
+        for e in seq:
+            e.select = True
+
+
+def two_joined_vertices_in_order(bm, at):
+    """Two neighbours of the grid, an edge between them, picked one after the
+    other: every Merge type merges them, Collapse too. On `two_vertices` —
+    no edge between — Collapse changes nothing, which the Merge rows refuse
+    in words since October 20 (`LastOperator.Mesh.unchanged`), and the
+    panel's Type reaches Collapse."""
+    for v in (at(-0.2, -0.2), at(0, -0.2)):
+        v.select = True
+        bm.select_history.add(v)
+
+
+def jittered(bm, at):
+    """The whole grid selected, one vertex moved off it in X, Y and Z, far
+    enough that Smooth Vertices (Laplacian) moves its neighbours at its
+    panel's smallest Lambda factor (1e-7) and with any one axis turned off:
+    on a whole cube it moves nothing, which the row refuses in words since
+    October 20."""
+    from mathutils import Vector
+    at(0, 0).co += Vector((40.0, 30.0, 50.0))
+    for v in bm.verts:
+        v.select = True
+
+
+def crossing_cubes(bm, at):
+    """The meshmenu check's two cubes in place of the grid — a small one
+    through the face of a big one — the small one's faces selected: the
+    Intersect rows cut the unselected faces with the selected ones, and refuse
+    a selection with no face unselected since October 20 (on a whole cube
+    Knife changed nothing and Boolean emptied it, measured in 5.2.1)."""
+    bm.clear()
+    bmesh.ops.create_cube(bm, size=2.0)
+    small = bmesh.ops.create_cube(bm, size=1.0)
+    bmesh.ops.translate(bm, vec=(0.9, 0.3, 0.4), verts=small['verts'])
+    for f in bm.faces:
+        f.select = all(abs(abs(v.co[i] - (0.9, 0.3, 0.4)[i]) - 0.5) < 1e-4 for v in f.verts for i in range(3))
 
 
 def nothing(bm, at):
@@ -142,7 +219,23 @@ EDGE_SCENES = {
     "mesh.markSeam": middle_row, "mesh.clearSeam": middle_row,
     "mesh.markSharp": middle_row, "mesh.clearSharp": middle_row,
     "mesh.deleteLoose": loose_vertex,
+    "mesh.subdivideEdgeRing": lambda bm, at: two_rungs(bm, at),
+    # Round 4's rows that refuse a whole cube in words: At First and At Last
+    # want an order, Connect Vertex Pairs a pair across a face, Extend a
+    # vertex with at most one selected edge, Weld a loose edge on a face.
+    # Merge's Type reaches At Last at the top of its range, so every Merge
+    # row gets an order to run the panel's every value on.
+    "mesh.mergeAtFirst": two_joined_vertices_in_order, "mesh.mergeAtLast": two_joined_vertices_in_order,
+    "mesh.mergeAtCenter": two_joined_vertices_in_order, "mesh.mergeAtCursor": two_joined_vertices_in_order,
+    "mesh.mergeCollapse": two_joined_vertices_in_order,
+    "mesh.smoothLaplacian": jittered,
+    "mesh.intersectKnife": crossing_cubes, "mesh.intersectBoolean": crossing_cubes,
+    "mesh.connectVertexPairs": two_vertices, "mesh.ripVerticesExtend": one_vertex,
+    "mesh.weldEdgesIntoFaces": loose_diagonal,
 }
+# Edge select mode: two selected vertices of a rung do not select the rung
+# between them in vertex mode's flush the way two edges do in edge mode.
+EDGE_MODE = {"mesh.subdivideEdgeRing"}
 
 
 print("every call the catalogue can produce, run by Blender")
@@ -150,7 +243,7 @@ print("every call the catalogue can produce, run by Blender")
 for name, items in groups.items():
     is_mesh = name.startswith("mesh.")
     if is_mesh and name in EDGE_SCENES:
-        grid_scene(EDGE_SCENES[name])
+        grid_scene(EDGE_SCENES[name], (False, True, False) if name in EDGE_MODE else (True, False, False))
     elif is_mesh:
         # A mesh operator needs something to operate on, with a selection —
         # and is left in OBJECT mode deliberately. Entering edit mode here hid
@@ -349,7 +442,7 @@ for name, items in list(groups.items()):
     if entry is None or first is None:
         continue
     if name in EDGE_SCENES:
-        grid_scene(EDGE_SCENES[name])
+        grid_scene(EDGE_SCENES[name], (False, True, False) if name in EDGE_MODE else (True, False, False))
     else:
         bpy.ops.wm.read_homefile(use_empty=True)
         bpy.ops.mesh.primitive_cube_add(size=2, location=(0, 0, 0))

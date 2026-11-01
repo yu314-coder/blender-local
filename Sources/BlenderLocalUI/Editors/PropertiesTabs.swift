@@ -26,18 +26,8 @@ enum PropertiesTab: String, CaseIterable, Identifiable {
         case .particles:   return "Particles"
         case .physics:     return "Physics"
         case .constraints: return "Constraints"
-        case .data:        return "Object Data"
+        case .data:        return "Data"
         case .material:    return "Material"
-        }
-    }
-
-    /// Short enough to sit under the icon in a 46-point column.
-    var shortLabel: String {
-        switch self {
-        case .data: return "Data"
-        case .material: return "Mat"
-        case .modifiers: return "Mods"
-        default: return label
         }
     }
 
@@ -72,7 +62,8 @@ enum PropertiesTab: String, CaseIterable, Identifiable {
 
     var isImplemented: Bool {
         switch self {
-        case .object, .modifiers, .data, .material, .scene: return true
+        // Constraints since round 4, group 7: Blender's Object Constraints.
+        case .object, .modifiers, .constraints, .data, .material, .scene: return true
         default: return false
         }
     }
@@ -105,14 +96,16 @@ struct PropertiesTabColumn: View {
                         VStack(spacing: 1) {
                             Image(systemName: tab.icon)
                                 .font(.system(size: 13))
-                            Text(tab.shortLabel)
+                            // Blender's tab names (`SpaceProperties.context`,
+                            // 5.2.1), whole: "Mods" and "Mat" were the app's.
+                            Text(tab.label)
                                 .font(BTheme.Font.ui(8))
                                 .lineLimit(1)
                                 .minimumScaleFactor(0.8)
                         }
                         .foregroundStyle(selection == tab ? tab.accent
                                          : tab.accent.opacity(enabled ? 0.6 : 0.25))
-                        .frame(width: 46, height: 36)
+                        .frame(width: 50, height: 36)
                         .background(selection == tab ? BTheme.properties : Color.clear)
                         .clipShape(RoundedRectangle(cornerRadius: 4))
                         .contentShape(Rectangle())
@@ -127,7 +120,7 @@ struct PropertiesTabColumn: View {
             .padding(.vertical, 6)
             .padding(.horizontal, 3)
         }
-        .frame(width: 52)
+        .frame(width: 56)
         .background(BTheme.outliner)
     }
 }

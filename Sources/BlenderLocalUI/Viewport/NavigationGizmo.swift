@@ -87,22 +87,36 @@ struct NavigationGizmo: View {
     }
 }
 
-/// Blender's viewport text, top-left: the view type and the active object's
-/// path through the collection tree.
+/// Blender's viewport text, top-left, as `draw_selected_name` and the view
+/// name write it (view3d_draw.cc): the view type with " (Local)" in Local
+/// View, then the frame, in Object Mode the active collection, and the
+/// active object. It said "(1) Collection" whatever the frame and the
+/// collections were.
 struct ViewportInfoText: View {
     var scene: BKScene
     var camera: ViewportCamera
 
     var body: some View {
         VStack(alignment: .leading, spacing: 1) {
-            Text(camera.isOrthographic ? "User Orthographic" : "User Perspective")
+            Text((camera.isOrthographic ? "User Orthographic" : "User Perspective")
+                 + (scene.localView != nil ? " (Local)" : ""))
                 .font(BTheme.Font.ui(11))
                 .foregroundStyle(BTheme.text.opacity(0.85))
-            Text("(1) Collection" + (scene.active.map { " | \($0.name)" } ?? ""))
+            Text(Self.selectedName(scene))
                 .font(BTheme.Font.ui(11))
                 .foregroundStyle(BTheme.text.opacity(0.85))
         }
         .shadow(color: .black.opacity(0.6), radius: 1, y: 0.5)
+    }
+
+    static func selectedName(_ scene: BKScene) -> String {
+        var text = "(\(scene.frameCurrent))"
+        if scene.mode == .object {
+            text += " " + (scene.collections?.active?.name ?? "Scene Collection")
+            if scene.active != nil { text += " |" }
+        }
+        if let active = scene.active { text += " " + active.name }
+        return text
     }
 }
 

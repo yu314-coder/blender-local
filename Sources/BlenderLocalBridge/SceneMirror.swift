@@ -20,7 +20,9 @@ public enum SceneMirror {
     /// does not draw, `|layerhidden` and `|disabled` for the two reasons the
     /// Outliner shows (Blender's `hide_get()` and `hide_viewport`), `|norender`
     /// for the Outliner's camera column, `|bounds=N` for a mesh sent as its
-    /// bounding box, `|boundbox` for Display As Bounds. Read as flags rather than as a suffix, so one flag cannot
+    /// bounding box, `|boundbox` for Display As Bounds, `|wire` for Display As
+    /// Wire, `|subdivlast` for a mesh in Edit Mode whose last modifier there
+    /// is a Subdivision Surface. Read as flags rather than as a suffix, so one flag cannot
     /// hide another. The mesh is installed with `setEvaluatedMesh`: it is
     /// Blender's evaluated mesh, and the Swift stack never runs over it.
     public static func object(named name: String, kind: String,
@@ -42,7 +44,10 @@ public enum SceneMirror {
         obj.hiddenInViewLayer = flags.contains("layerhidden")
         obj.disabledInViewports = flags.contains("disabled")
         obj.hideRender = flags.contains("norender")
+        obj.outsideLocalView = flags.contains("notlocal")
         obj.displaysBounds = flags.contains("boundbox")
+        obj.displaysWire = flags.contains("wire")
+        obj.subdividesLastInEditMode = flags.contains("subdivlast")
         obj.undrawnVertexCount = undrawnVertexCount(flags)
         obj.symmetry = symmetry(flags)
 
@@ -246,6 +251,106 @@ public enum SceneMirror {
         return true
     }
 
+    /// Gives the mesh just pushed the normals Blender's Solid view shades it
+    /// with (`MeshData.shadingDomain`). True when that changed the mesh, so
+    /// the pass cannot treat the object as unchanged; false when they are
+    /// what it already had; nil for anything malformed.
+    ///
+    /// `domain` is Blender's `normals_domain` (0 POINT, 1 FACE, 2 CORNER);
+    /// for POINT the buffers are empty and the vertex normals already sent
+    /// are what Blender shades with. Otherwise `triangleLoops` is the face
+    /// corner behind each triangle corner, one per entry of the mesh's
+    /// `indices`, and `loopNormals` Blender's `corner_normals`, three floats
+    /// per loop — as `installUVs` takes a map, so no per-corner gather runs in
+    /// Python. A FACE mesh keeps one normal per triangle (its first corner's,
+    /// which every corner of a flat face shares), a third of a CORNER mesh's.
+    ///
+    /// Shade Flat or Smooth, and the Normals menu's custom normals, move no
+    /// vertex and change no vertex normal Blender sends for a flat mesh, so
+    /// the geometry's fast path cannot answer for them; an unchanged set is
+    /// compared in place, with no allocation.
+    @discardableResult
+    public static func installShading(domain: UInt32,
+                                      triangleLoops: UnsafeBufferPointer<UInt32>,
+                                      loopNormals: UnsafeBufferPointer<Float>,
+                                      on obj: BKObject) -> Bool? {
+        let mesh = obj.mesh
+        guard let kind = MeshData.ShadingDomain(rawValue: domain), loopNormals.count % 3 == 0 else { return nil }
+        func byVertex() -> Bool {
+            guard mesh.shadingDomain != .vertex || !mesh.shadingNormals.isEmpty else { return false }
+            var updated = mesh
+            updated.shadingDomain = .vertex
+            updated.shadingNormals = []
+            obj.setEvaluatedMesh(updated)
+            return true
+        }
+        if kind == .vertex {
+            guard triangleLoops.isEmpty, loopNormals.isEmpty else { return nil }
+            return byVertex()
+        }
+        guard !mesh.indices.isEmpty, triangleLoops.count == mesh.indices.count else { return nil }
+        let loopCount = loopNormals.count / 3
+        for loop in triangleLoops where Int(loop) >= loopCount { return nil }
+        // A normal that is not a number (a script's NaN position) would light
+        // its face black or white; the mesh is drawn by its vertex normals
+        // then, as it was before Blender's were carried.
+        for v in loopNormals where !v.isFinite { return byVertex() }
+
+        // A FACE mesh keeps its triangles' first corners, every third one.
+        let step = kind == .triangle ? 3 : 1
+        let kept = triangleLoops.count / step
+        if mesh.shadingDomain == kind, mesh.shadingNormals.count == 3 * kept {
+            var same = true
+            for k in 0..<kept {
+                let loop = 3 * Int(triangleLoops[k * step])
+                if mesh.shadingNormals[3 * k] != loopNormals[loop]
+                    || mesh.shadingNormals[3 * k + 1] != loopNormals[loop + 1]
+                    || mesh.shadingNormals[3 * k + 2] != loopNormals[loop + 2] {
+                    same = false
+                    break
+                }
+            }
+            if same { return false }
+        }
+        var normals = [Float](repeating: 0, count: 3 * kept)
+        for k in 0..<kept {
+            let loop = 3 * Int(triangleLoops[k * step])
+            normals[3 * k] = loopNormals[loop]; normals[3 * k + 1] = loopNormals[loop + 1]
+            normals[3 * k + 2] = loopNormals[loop + 2]
+        }
+        var updated = mesh
+        updated.shadingDomain = kind
+        updated.shadingNormals = normals
+        obj.setEvaluatedMesh(updated)
+        return true
+    }
+
+    /// Where `bk_sync_shading` puts what it carries: during a pass on the
+    /// object the pass just pushed, and outside one — a frame change or a
+    /// sculpt stroke's chunk (`_blenderkit_anim.push_mesh`) — on the object
+    /// of that name on screen, as `carryLocal` does. 1 when taken, 0 when a
+    /// frame change names an object the screen does not hold, -1 for anything
+    /// malformed. `changed` says whether the mesh changed.
+    @discardableResult
+    public static func carryShading(domain: UInt32, triangleLoops: UnsafeBufferPointer<UInt32>,
+                                    loopNormals: UnsafeBufferPointer<Float>, named name: String,
+                                    pass: [BKObject]?, screen: [BKObject],
+                                    index: ObjectNameIndex = ObjectNameIndex(),
+                                    changed: inout Bool) -> Int {
+        let target: BKObject?
+        if let pass {
+            target = pass.last?.name == name ? pass.last : pass.last { $0.name == name }
+        } else {
+            target = index.object(named: name, in: screen)
+        }
+        guard let target else { return pass == nil ? 0 : -1 }
+        guard let result = installShading(domain: domain, triangleLoops: triangleLoops,
+                                          loopNormals: loopNormals, on: target)
+        else { return -1 }
+        changed = result
+        return 1
+    }
+
     /// The map Blender's UV Editor draws when it is not the one the pushed
     /// mesh carries: the object's own mesh, before its modifiers, as a mesh of
     /// its own that only the UV Editor reads (`BKObject.uvLayout`). Nil for
@@ -344,6 +449,10 @@ public enum SceneMirror {
             old.hiddenInViewLayer = fresh.hiddenInViewLayer
             old.disabledInViewports = fresh.disabledInViewports
             old.hideRender = fresh.hideRender
+            if old.outsideLocalView != fresh.outsideLocalView { old.outsideLocalView = fresh.outsideLocalView }
+            // Travels on `fresh`, like the modifier stack, which this loop
+            // throws away for an object already on screen.
+            if old.constraints != fresh.constraints { old.constraints = fresh.constraints }
             // Blender's, from the flags: the header's toggles write it there
             // and show it from here.
             old.symmetry = fresh.symmetry
@@ -392,6 +501,8 @@ public enum SceneMirror {
             old.dependencies = fresh.dependencies
             old.snapPoints = fresh.snapPoints
             old.displaysBounds = fresh.displaysBounds
+            old.displaysWire = fresh.displaysWire
+            old.subdividesLastInEditMode = fresh.subdividesLastInEditMode
             // A curve's or a lattice's points and settings travel on `fresh`
             // too (`carryPoints`); kept from before, Edit Mode would show
             // points Blender no longer has, and Done would leave them drawn.
@@ -414,6 +525,104 @@ public enum SceneMirror {
         scene.objects = merged
         scene.selection = Set(selection.map { idRemap[$0] ?? $0 })
         scene.activeID = active.map { idRemap[$0] ?? $0 }
+    }
+}
+
+// MARK: - Whole records: collections, Local View, constraints
+
+public extension SceneMirror {
+    /// A scene-wide record a pass carried, to be put on the scene when the
+    /// pass ends (`applyScene`).
+    enum SceneRecord: Equatable {
+        case collections(CollectionTree)
+        case localView(LocalViewState?)
+        /// The 3D cursor's rotation and the Cursor tool's settings
+        /// (`_blenderkit_cursor.record`).
+        case cursor(CursorState)
+        /// The scene's units and the ruler's snapping
+        /// (`_blenderkit_cursor.units_record`).
+        case units(UnitSettings, snapTool: String)
+        /// How many files have been loaded in front of the reader
+        /// (`_blenderkit_cursor.file_record`): New, Open, Recover, Revert or a
+        /// script's load, and not the undo history's own checkpoint loads.
+        case fileLoads(Int)
+    }
+
+    /// What `sync_record(kind, name, record)` hands over. A scene-wide one
+    /// comes back to be held until the pass ends; an object's (`constraints`)
+    /// goes onto the object the pass just pushed — or, outside a pass, the
+    /// one on screen. `.failure` for a kind or a record the interface does
+    /// not take, which Python hears as a ValueError.
+    enum Carried: Equatable {
+        case scene(SceneRecord)
+        case object
+        case failure
+    }
+
+    static func carryRecord(kind: String, name: String, record: String,
+                            pass: [BKObject]?, screen: [BKObject]) -> Carried {
+        switch kind {
+        case "collections":
+            guard let tree = CollectionTree(record: record) else { return .failure }
+            return .scene(.collections(tree))
+        case "localview":
+            guard let state = LocalViewState.parse(record) else { return .failure }
+            return .scene(.localView(state))
+        case "cursor":
+            guard let state = CursorState(record: record) else { return .failure }
+            return .scene(.cursor(state))
+        case "units":
+            guard let units = UnitSettings(record: record) else { return .failure }
+            let tool = record.split(separator: ";").first { $0.hasPrefix("snap_tool=") }
+                .map { String($0.dropFirst("snap_tool=".count)) } ?? "GEOMETRY"
+            return .scene(.units(units, snapTool: tool))
+        case "file":
+            guard record.hasPrefix("loads="), let loads = Int(record.dropFirst("loads=".count)), loads >= 0
+            else { return .failure }
+            return .scene(.fileLoads(loads))
+        case "constraints":
+            let target: BKObject?
+            if let pass {
+                target = pass.last?.name == name ? pass.last : pass.last { $0.name == name }
+            } else {
+                target = screen.first { $0.name == name }
+            }
+            guard let target else { return .failure }
+            let stack = ObjectConstraint.stack(from: record)
+            if target.constraints != stack { target.constraints = stack }
+            return .object
+        default:
+            return .failure
+        }
+    }
+
+    /// Puts what a pass carried onto the scene, after its objects are in.
+    static func applyScene(_ records: [SceneRecord], to scene: BKScene) {
+        for record in records {
+            switch record {
+            case .collections(let tree):
+                if scene.collections != tree { scene.collections = tree }
+            case .localView(let state):
+                if scene.localView != state { scene.localView = state }
+            case .cursor(let state):
+                let next = state.merged(onto: scene.cursorState)
+                if scene.cursorState != next { scene.cursorState = next }
+            case .units(let units, let tool):
+                if scene.units != units { scene.units = units }
+                if scene.snapElementsTool != tool { scene.snapElementsTool = tool }
+            case .fileLoads(let loads):
+                // Another file is in front of the reader: what the app kept for
+                // the one before goes with it. The Measure tool's rulers are
+                // the app's (Blender keeps a file's rulers in its own
+                // annotation layer, which the app does not read), and round 4's
+                // review found the old file's drawn over a new or an opened one.
+                if let seen = scene.fileLoads, seen != loads {
+                    if !scene.rulers.isEmpty { scene.rulers = [] }
+                    if scene.activeRuler != nil { scene.activeRuler = nil }
+                }
+                if scene.fileLoads != loads { scene.fileLoads = loads }
+            }
+        }
     }
 }
 

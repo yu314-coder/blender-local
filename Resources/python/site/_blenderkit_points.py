@@ -505,6 +505,14 @@ def mirror():
         import _blenderkit_anim
     except ImportError:
         return
+    # The frame's points priced before Blender evaluates them (_blenderkit_gate):
+    # a curve's points are what a Fit Curve's Array, a bevel or a Remesh after
+    # the curve read, and the frame's evaluation would build them. Refused, the
+    # points are as Blender last evaluated them.
+    import sys
+    gate = sys.modules.get('_blenderkit_gate')
+    if gate is not None:
+        gate.gate('the drag')
     depsgraph = bpy.context.evaluated_depsgraph_get()
     try:
         _mirror_points(drag, depsgraph, _blenderkit, _blenderkit_anim)

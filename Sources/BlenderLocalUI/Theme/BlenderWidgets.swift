@@ -218,6 +218,12 @@ public struct BNumberField: View {
     var commit: ((Float) -> Void)? = nil
 
     @State private var dragStart: Float? = nil
+    /// True while the scrub's drag is live. SwiftUI resets it when the drag
+    /// ends however it ends, including the system cancelling it, which calls
+    /// no `onEnded`: a cancelled scrub of a Transform field used to leave its
+    /// edit, and Blender's preview of it, open with no commit (round 4's
+    /// review of group 7). Either way the scrub ends once (`finishScrub`).
+    @GestureState private var scrubbing = false
     /// The typed value, while it is being typed. Blender's own fields scrub
     /// on a drag and take a number on a click; on a tablet, typing an exact
     /// number is often the only way to get one.
@@ -230,6 +236,16 @@ public struct BNumberField: View {
                 commit: ((Float) -> Void)? = nil) {
         self.label = label; self._value = value; self.step = step
         self.accent = accent; self.unit = unit; self.commit = commit
+    }
+
+    /// The scrub over — the finger lifted, or the system cancelled the drag —
+    /// committed once: what was previewed is what is written, as the gizmo
+    /// commits a cancelled drag too.
+    private func finishScrub() {
+        lastTranslation = 0
+        guard typing == nil, dragStart != nil else { return }
+        dragStart = nil
+        commit?(value)
     }
 
     public var body: some View {
@@ -302,13 +318,12 @@ public struct BNumberField: View {
                     lastTranslation = g.translation.width
                     value = (dragStart ?? value) + Float(g.translation.width) * step
                 }
-                .onEnded { _ in
-                    lastTranslation = 0
-                    guard typing == nil else { return }
-                    dragStart = nil
-                    commit?(value)
-                }
+                .updating($scrubbing) { _, live, _ in live = true }
+                .onEnded { _ in finishScrub() }
         )
+        .onChange(of: scrubbing) { _, live in
+            if !live { finishScrub() }
+        }
         // Scrubbing is a drag and typing is a tap, so without this the field
         // cannot be used by VoiceOver — or by anything else driving the app.
         // Adjustable is what Blender's own fields are: step up, step down.

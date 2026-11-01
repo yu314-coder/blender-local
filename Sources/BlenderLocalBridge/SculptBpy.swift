@@ -56,7 +56,7 @@ public enum SculptStrokeMode: String, CaseIterable, Sendable {
 
     public var label: String {
         switch self {
-        case .normal: return "Normal"
+        case .normal: return "Regular"
         case .invert: return "Invert"
         case .smooth: return "Smooth"
         }
@@ -193,6 +193,17 @@ public struct SculptState: Decodable, Equatable, Sendable {
         }
     }
 
+    /// What Blender's Dyntopo popover calls that field: the property's own
+    /// name (`Sculpt.detail_size`, `detail_percent`,
+    /// `constant_detail_resolution` in 5.2.1).
+    public var detailLabel: String {
+        switch detailType {
+        case "RELATIVE": return "Detail Size"
+        case "BRUSH":    return "Detail Percentage"
+        default:         return "Resolution"
+        }
+    }
+
     public var detailUnit: String {
         switch detailType {
         case "RELATIVE": return "px"
@@ -248,9 +259,13 @@ public struct SculptStrokeEnd: Decodable, Equatable, Sendable {
     public var mirrorMs: [Double]
     /// Why a stroke gathered for the lift (on a Multires level) was not made.
     public var refused: String?
+    /// The name Blender's undo history gave the stroke — its brush's, "Draw
+    /// Brush" — which the app's history records it under too. Nil when the
+    /// stack could not be read.
+    public var step: String?
 
     enum CodingKeys: String, CodingKey {
-        case pushed, counted, chunks, cuts, dabs, strategy, refused
+        case pushed, counted, chunks, cuts, dabs, strategy, refused, step
         case strokeMs = "stroke_ms", mirrorMs = "mirror_ms"
     }
 }
@@ -392,5 +407,9 @@ public enum SculptBpy {
         + "\nimport _blenderkit_sculpt\n_blenderkit_sculpt.refuse_heavy_multires()"
         + "\nbpy.ops.object.mode_set(mode='\(InteractionMode.sculpt.bpyMode)')"
     public static let leave = "bpy.ops.object.mode_set(mode='OBJECT')"
+
+    /// `sculpt.brush_stroke`'s name, which a stroke's failure is reported
+    /// under before Blender has named its step (`SculptStrokeEnd.step`).
+    public static let strokeName = "Sculpt"
     public static let modeUndo = "Sculpt Mode"
 }

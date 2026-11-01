@@ -687,10 +687,16 @@ do {
     check("an empty term lists everything", cat.search("").count == 8)
     check("limit is honoured", cat.search("", limit: 3).count == 3)
 
-    // Labels are humanised from the operator name, which is what makes the
-    // list readable next to the raw path.
-    check("remove_doubles reads as Remove Doubles",
+    // Without a name from Blender a label is the identifier, spaced.
+    check("remove_doubles, with no name from Blender, reads as Remove Doubles",
           cat.entries.first { $0.path == "mesh.remove_doubles" }?.label == "Remove Doubles")
+    // With one — what the backend's probe prints, `path<TAB>name` — it is
+    // Blender's name, which its Operator Search lists and its undo records.
+    let named = OperatorCatalogue.entries(fromProbe: "mesh.remove_doubles\tMerge by Distance\n"
+                                          + "action.clickselect\tSelect Keyframes\nmesh.unnamed\t\nnot a path\n")
+    check("an entry is named as Blender names its operator: Merge by Distance, Select Keyframes",
+          named.map(\.label) == ["Merge by Distance", "Select Keyframes", "Unnamed"], "\(named.map(\.label))")
+
     check("the call is valid Python",
           cat.entries.first { $0.path == "mesh.bevel" }?.call == "bpy.ops.mesh.bevel()")
     check("category is the module",

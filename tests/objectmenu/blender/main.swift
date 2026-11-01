@@ -365,7 +365,7 @@ func replayAll(_ path: String) -> Int32 {
         check("the Bézier and the circle are drawn as wires, as CURVEs",
               bezier?.blenderType == "CURVE" && circle?.blenderType == "CURVE"
                   && bezier?.mesh.isWire == true && circle?.mesh.isWire == true)
-        check("none of them offers Edit Mesh", [text, bezier, circle].allSatisfy { $0?.hasEditMode == false })
+        check("none of them offers Edit Mode", [text, bezier, circle].allSatisfy { $0?.hasEditMode == false })
         scene.activeID = object(scene, "Plane")?.id
         check("all three can cut the plane with Knife Project",
               Set(scene.knifeProjectCutters.map(\.name)).isSuperset(of: ["Text", "BézierCurve", "BézierCircle"]),

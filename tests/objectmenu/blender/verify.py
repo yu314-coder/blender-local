@@ -60,7 +60,7 @@ class Bridge(types.ModuleType):
     def sync_display(self, name, type, data_name, record):
         self.calls.append(dict(call="display", name=name, type=type, dataName=data_name, record=record))
 
-    def sync_edit_selection(self, name, bits, vsel, tpoly, psel, ends, esel, vhide=b'', vco=b''):
+    def sync_edit_selection(self, name, bits, vsel, tpoly, psel, ends, esel, vhide=b'', vco=b'', hist=b''):
         self.calls.append(dict(call="edit", name=name, bits=bits, vsel=b64(vsel), tpoly=b64(tpoly),
                                psel=b64(psel), ends=b64(ends), esel=b64(esel), vhide=b64(vhide)))
 

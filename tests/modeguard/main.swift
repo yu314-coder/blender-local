@@ -278,7 +278,7 @@ let deleteSource = device.sources.last ?? ""
 check("the selection first, then the operator",
       inOrder(deleteSource, ["import bmesh", "bpy.ops.mesh.delete(type='VERT')"]), deleteSource)
 check("and only once", !editRig.scene.editSelectionPending)
-editRig.bridge.run(Bpy.invertSelection(editing: true), undo: "Invert Selection")
+editRig.bridge.run(Bpy.invertSelection(editing: true), undo: SelectMenu.selectAllUndo)
 check("a command with nothing new to hand over sends only itself",
       device.sources.last.map { !$0.contains("import bmesh") } == true, device.sources.last ?? "")
 
@@ -341,7 +341,7 @@ check("Tab asks Blender which mode it is in, and brackets nothing",
 // points, ControlPoints.swift); the sculpt and paint modes stay a mesh's.
 check("and the way in is held to a mesh, a curve or a lattice",
       Bpy.toggleEditMode.contains("_bk_o.type not in ('MESH', 'CURVE', 'LATTICE')"))
-check("as is Edit Mesh itself", Bpy.setMode(.edit).contains("_bk_o.type not in ('MESH', 'CURVE', 'LATTICE')")
+check("as is the Edit Mode button itself", Bpy.setMode(.edit).contains("_bk_o.type not in ('MESH', 'CURVE', 'LATTICE')")
         && Bpy.setMode(.edit).hasSuffix("bpy.ops.object.mode_set(mode='EDIT')"))
 check("and every other mode a mesh alone has",
       InteractionMode.allCases.filter { $0 != .object && $0 != .edit }

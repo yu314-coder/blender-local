@@ -50,6 +50,12 @@ final class ViewportRenderer: NSObject, MTKViewDelegate {
     private var pbrPipeline: MTLRenderPipelineState!
     /// Per-vertex colour, for Vertex Paint and Weight Paint.
     private var attributePipeline: MTLRenderPipelineState!
+    /// The same four, for a mesh Blender shades by its faces' or its
+    /// corners' normals (`MeshData.shadingDomain`), drawn corner by corner.
+    private var meshShadedPipeline: MTLRenderPipelineState!
+    private var meshShadedXrayPipeline: MTLRenderPipelineState!
+    private var pbrShadedPipeline: MTLRenderPipelineState!
+    private var attributeShadedPipeline: MTLRenderPipelineState!
     private var depthState: MTLDepthStencilState!
     private var gridDepthState: MTLDepthStencilState!
     /// Always passes and never writes: for overlays that must stay on top.
@@ -82,6 +88,11 @@ final class ViewportRenderer: NSObject, MTKViewDelegate {
         /// which is drawn by its edges alone (`drawWires`).
         var index: MTLBuffer?
         var count: Int
+        /// Blender's face or corner normals (`MeshData.shadingNormals`), and
+        /// which (`shadingDomain`); nil for a mesh Blender shades by its
+        /// vertex normals, drawn indexed as before.
+        var shading: MTLBuffer?
+        var shadingDomain: UInt32
         var edges: MTLBuffer?
         var edgeCount: Int
         /// Only the edges Blender has, for edit mode's wireframe.
@@ -135,6 +146,12 @@ final class ViewportRenderer: NSObject, MTKViewDelegate {
     /// the gizmo about 700 metres across — built, drawn, and entirely outside
     /// the frame, which looked exactly like a gizmo that was never drawn.
     private(set) var pointSize: CGSize = .zero
+    #if DEBUG
+    /// What the last frame cleared to and its width in pixels, which a DEBUG
+    /// capture repeats (`captureFrame`).
+    private var lastClearColor = MTLClearColor(red: 0, green: 0, blue: 0, alpha: 1)
+    private var lastDrawableWidth: CGFloat = 0
+    #endif
 
     init?(device: MTLDevice, scene: BKScene, camera: ViewportCamera) {
         guard let queue = device.makeCommandQueue() else { return nil }
@@ -177,8 +194,14 @@ final class ViewportRenderer: NSObject, MTKViewDelegate {
               let g = pipeline("grid_vertex", "grid_fragment", blend: true),
               let pt = pipeline("point_vertex", "point_fragment", blend: true),
               let pbr = pipeline("pbr_vertex", "pbr_fragment", blend: false),
-              let attr = pipeline("attribute_vertex", "attribute_fragment", blend: false)
+              let attr = pipeline("attribute_vertex", "attribute_fragment", blend: false),
+              let ms = pipeline("mesh_shaded_vertex", "mesh_fragment", blend: false),
+              let msx = pipeline("mesh_shaded_vertex", "mesh_fragment", blend: true),
+              let pbrs = pipeline("pbr_shaded_vertex", "pbr_fragment", blend: false),
+              let attrs = pipeline("attribute_shaded_vertex", "attribute_fragment", blend: false)
         else { return false }
+        meshShadedPipeline = ms; meshShadedXrayPipeline = msx
+        pbrShadedPipeline = pbrs; attributeShadedPipeline = attrs
         attributePipeline = attr
         pointPipeline = pt
         pbrPipeline = pbr
@@ -406,6 +429,13 @@ final class ViewportRenderer: NSObject, MTKViewDelegate {
                                 length: MemoryLayout<UInt32>.stride * mesh.seamEdges.count,
                                 options: .storageModeShared)
 
+        // Blender's face or corner normals, when it shades this mesh by them.
+        let shading = mesh.shadingFits
+            ? device.makeBuffer(bytes: mesh.shadingNormals,
+                                length: MemoryLayout<Float>.stride * mesh.shadingNormals.count,
+                                options: .storageModeShared)
+            : nil
+
         var shown: [UInt32] = []
         if let hidden = obj.editTopology?.hiddenVertices, !hidden.isEmpty {
             shown = mesh.vertices.indices.filter { !hidden.contains($0) }.map { UInt32($0) }
@@ -416,12 +446,38 @@ final class ViewportRenderer: NSObject, MTKViewDelegate {
                                 options: .storageModeShared)
 
         return MeshBuffers(vertex: vb, index: ib, count: mesh.indices.count,
+                           shading: shading, shadingDomain: shading == nil ? 0 : mesh.shadingDomain.rawValue,
                            edges: eb, edgeCount: mesh.edges.count,
                            realEdges: rb, realEdgeCount: real.count,
                            seams: seamBuffer, seamCount: seamBuffer == nil ? 0 : mesh.seamEdges.count,
                            shownVertices: sb, shownVertexCount: shown.count,
                            hiddenVertexCount: hiddenVertexCount,
                            version: obj.meshVersion)
+    }
+
+    /// Draws `b`'s triangles with the pipeline bound: indexed, by the vertex
+    /// normals, or — for a mesh Blender shades by its faces or corners —
+    /// corner by corner with `shaded` bound in its place (the `*_shaded_vertex`
+    /// functions), `resume` bound again afterwards.
+    private func drawSurface(_ b: MeshBuffers, index: MTLBuffer, encoder: MTLRenderCommandEncoder,
+                             shaded: MTLRenderPipelineState?, resume: MTLRenderPipelineState) {
+        var vertexNormalsOnly = false
+        #if DEBUG
+        vertexNormalsOnly = Self.debugVertexNormalsOnly
+        #endif
+        guard let shading = b.shading, let shaded, !vertexNormalsOnly else {
+            encoder.drawIndexedPrimitives(type: .triangle, indexCount: b.count,
+                                          indexType: .uint32, indexBuffer: index,
+                                          indexBufferOffset: 0)
+            return
+        }
+        encoder.setRenderPipelineState(shaded)
+        encoder.setVertexBuffer(shading, offset: 0, index: 5)
+        encoder.setVertexBuffer(index, offset: 0, index: 6)
+        var domain = b.shadingDomain
+        encoder.setVertexBytes(&domain, length: MemoryLayout<UInt32>.stride, index: 7)
+        encoder.drawPrimitives(type: .triangle, vertexStart: 0, vertexCount: b.count)
+        encoder.setRenderPipelineState(resume)
     }
 
     // MARK: draw
@@ -435,15 +491,55 @@ final class ViewportRenderer: NSObject, MTKViewDelegate {
               let encoder = commands.makeRenderCommandEncoder(descriptor: descriptor)
         else { return }
 
+        let began = CACurrentMediaTime()
         pointSize = view.bounds.size
-        let size = view.drawableSize
+        #if DEBUG
+        lastClearColor = view.clearColor
+        lastDrawableWidth = view.drawableSize.width
+        #endif
+        let frame = encodeFrame(encoder, size: view.drawableSize)
+        // Test All Features reads a feature's time to this frame, and a drag's
+        // frame times from these (`FrameClock`); when it is recording, the
+        // time the frame reached the screen too.
+        // The simulator's drawables have no presented handler; its frames
+        // are timed as drawn.
+        #if !targetEnvironment(simulator)
+        if FrameClock.shared.wantsPresentedTimes {
+            drawable.addPresentedHandler { FrameClock.shared.presented($0.presentedTime) }
+        }
+        #endif
+        if frame.gizmo {
+            drawGizmoAndFinish(encoder: encoder, commands: commands, drawable: drawable,
+                               viewProjection: frame.viewProjection)
+        } else {
+            encoder.endEncoding()
+            commands.present(drawable)
+            commands.commit()
+        }
+        FrameClock.shared.drew(began: began, ended: CACurrentMediaTime())
+    }
+
+    /// Everything a frame draws but the gizmo, into `encoder` at `size`
+    /// pixels: the 3D View's own pass, and what a DEBUG capture reads back
+    /// (`captureFrame`). Returns the view-projection it drew with, and
+    /// whether the gizmo goes on top (not in Wireframe or X-Ray's own pass,
+    /// which never drew one).
+    private func encodeFrame(_ encoder: MTLRenderCommandEncoder,
+                             size: CGSize) -> (viewProjection: simd_float4x4, gizmo: Bool) {
         let aspect = Float(size.width / max(size.height, 1))
         let viewProjection = camera.viewProjection(aspect: aspect)
 
         // MeshBuilder winds faces counter-clockwise when seen from outside,
         // whereas Metal treats clockwise as front-facing by default. Without
         // this the cull modes invert: the solid pass keeps interior faces and
-        // the outline pass covers the whole object.
+        // the outline pass covers the whole object. Each object's own draw
+        // sets it again for its matrix (`frontFacing`).
+        encoder.setFrontFacing(.counterClockwise)
+
+        // ---- image empties' pictures with Depth Back: behind everything,
+        // the grid included (ImageEmptyPass has Blender's order).
+        let images = imageEmptyQuads()
+        drawImageEmpties(images, pass: .back, encoder: encoder, viewProjection: viewProjection)
         encoder.setFrontFacing(.counterClockwise)
 
         // ---- grid (part of Blender's overlays)
@@ -461,6 +557,8 @@ final class ViewportRenderer: NSObject, MTKViewDelegate {
             encoder.drawPrimitives(type: .line, vertexStart: 0, vertexCount: gridVertexCount)
         }
         drawObjectOverlays(encoder, viewProjection: viewProjection, drawableSize: size)
+        // Depth Default without Opacity: depth-written, before the surfaces.
+        drawImageEmpties(images, pass: .scene, encoder: encoder, viewProjection: viewProjection)
 
         if shading == .wireframe {
             // Blender's wireframe draws every edge unshaded, with the
@@ -489,10 +587,9 @@ final class ViewportRenderer: NSObject, MTKViewDelegate {
                                               indexBufferOffset: 0)
             }
             drawEditedPoints(encoder, viewProjection: viewProjection)
-            encoder.endEncoding()
-            commands.present(drawable)
-            commands.commit()
-            return
+            drawImageEmpties(images, pass: .blended, encoder: encoder, viewProjection: viewProjection)
+            drawImageEmpties(images, pass: .front, encoder: encoder, viewProjection: viewProjection)
+            return (viewProjection, false)
         }
 
         // ---- selection outlines (back faces of a slightly inflated hull)
@@ -504,6 +601,7 @@ final class ViewportRenderer: NSObject, MTKViewDelegate {
             // A wire object has no hull to inflate; `drawWires` colours its
             // lines instead, as Blender does.
             guard let b = buffers(for: obj), let index = b.index else { continue }
+            encoder.setFrontFacing(Self.frontFacing(obj.modelMatrix))
             let isActive = obj.id == scene.activeID
             let isSelected = scene.selection.contains(obj.id)
             // A hovered-but-unselected object gets a dimmer rim, so the Pencil
@@ -529,10 +627,11 @@ final class ViewportRenderer: NSObject, MTKViewDelegate {
         if shading == .material && !options.xray {
             encoder.setRenderPipelineState(pbrPipeline)
             encoder.setDepthStencilState(depthState)
-            encoder.setCullMode(.back)
+            encoder.setCullMode(Self.surfaceCull)
             let eye = camera.eye
             for obj in scene.objects where obj.visible {
                 guard let b = buffers(for: obj), let index = b.index else { continue }
+                encoder.setFrontFacing(Self.frontFacing(obj.modelMatrix))
                 if texturePaint.drawMaterial(obj, vertices: b.vertex, encoder: encoder, viewProjection: viewProjection, eye: eye, cameraDistance: camera.distance, resume: pbrPipeline) { continue }
                 let m = obj.material
                 // An unconnected graph renders black in Blender; matching that
@@ -554,16 +653,13 @@ final class ViewportRenderer: NSObject, MTKViewDelegate {
                 encoder.setVertexBuffer(b.vertex, offset: 0, index: 0)
                 encoder.setVertexBytes(&u, length: MemoryLayout<PBRUniforms>.stride, index: 1)
                 encoder.setFragmentBytes(&u, length: MemoryLayout<PBRUniforms>.stride, index: 1)
-                encoder.drawIndexedPrimitives(type: .triangle, indexCount: b.count,
-                                              indexType: .uint32, indexBuffer: index,
-                                              indexBufferOffset: 0)
+                drawSurface(b, index: index, encoder: encoder, shaded: pbrShadedPipeline, resume: pbrPipeline)
             }
             drawWires(encoder, viewProjection: viewProjection)
             drawEditedPoints(encoder, viewProjection: viewProjection)
-            encoder.endEncoding()
-            commands.present(drawable)
-            commands.commit()
-            return
+            drawImageEmpties(images, pass: .blended, encoder: encoder, viewProjection: viewProjection)
+            drawImageEmpties(images, pass: .front, encoder: encoder, viewProjection: viewProjection)
+            return (viewProjection, false)
         }
 
         // ---- vertex attribute display (Vertex Paint / Weight Paint)
@@ -574,11 +670,12 @@ final class ViewportRenderer: NSObject, MTKViewDelegate {
         if scene.mode == .vertexPaint || scene.mode == .weightPaint {
             encoder.setRenderPipelineState(attributePipeline)
             encoder.setDepthStencilState(depthState)
-            encoder.setCullMode(.back)
+            encoder.setCullMode(Self.surfaceCull)
             for obj in scene.objects where obj.visible {
                 guard let b = buffers(for: obj), let index = b.index,
                       let colours = attributeBuffer(for: obj)
                 else { continue }
+                encoder.setFrontFacing(Self.frontFacing(obj.modelMatrix))
                 var u = Uniforms(viewProjection: viewProjection,
                                  model: obj.modelMatrix,
                                  normalMatrix: obj.modelMatrix.inverse.transpose,
@@ -588,14 +685,13 @@ final class ViewportRenderer: NSObject, MTKViewDelegate {
                 encoder.setVertexBytes(&u, length: MemoryLayout<Uniforms>.stride, index: 1)
                 encoder.setVertexBuffer(colours, offset: 0, index: 2)
                 encoder.setFragmentBytes(&u, length: MemoryLayout<Uniforms>.stride, index: 1)
-                encoder.drawIndexedPrimitives(type: .triangle, indexCount: b.count,
-                                              indexType: .uint32, indexBuffer: index,
-                                              indexBufferOffset: 0)
+                drawSurface(b, index: index, encoder: encoder, shaded: attributeShadedPipeline,
+                            resume: attributePipeline)
             }
             drawWires(encoder, viewProjection: viewProjection)
-            drawGizmoAndFinish(encoder: encoder, commands: commands, drawable: drawable,
-                               viewProjection: viewProjection)
-            return
+            drawImageEmpties(images, pass: .blended, encoder: encoder, viewProjection: viewProjection)
+            drawImageEmpties(images, pass: .front, encoder: encoder, viewProjection: viewProjection)
+            return (viewProjection, true)
         }
 
         // ---- shaded surfaces
@@ -603,9 +699,10 @@ final class ViewportRenderer: NSObject, MTKViewDelegate {
         // X-Ray draws every surface without writing depth, so back faces show
         // through the front ones — which is the point of it.
         encoder.setDepthStencilState(options.xray ? gridDepthState : depthState)
-        encoder.setCullMode(options.xray ? .none : .back)
+        encoder.setCullMode(options.xray ? .none : Self.surfaceCull)
         for obj in scene.objects where obj.visible {
             guard let b = buffers(for: obj), let index = b.index else { continue }
+            encoder.setFrontFacing(Self.frontFacing(obj.modelMatrix))
             if texturePaint.drawSolid(obj, vertices: b.vertex, encoder: encoder, scene: scene, viewProjection: viewProjection, xray: options.xray, resume: options.xray ? meshXrayPipeline : meshPipeline) { continue }
             // Solid mode uses Blender's uniform surface grey regardless of the
             // object colour; Material Preview is where the colour shows.
@@ -625,15 +722,17 @@ final class ViewportRenderer: NSObject, MTKViewDelegate {
             // the surface darkened where it is masked (overlay opacity 0.75,
             // Blender's default), with the same studio light as vertex paint.
             let masked = scene.mode == .sculpt && !options.xray ? maskBuffer(for: obj, surface: surface) : nil
+            let surfacePipeline: MTLRenderPipelineState = options.xray ? meshXrayPipeline : meshPipeline
             if let masked {
                 encoder.setRenderPipelineState(attributePipeline)
                 encoder.setVertexBuffer(masked, offset: 0, index: 2)
-            }
-            encoder.drawIndexedPrimitives(type: .triangle, indexCount: b.count,
-                                          indexType: .uint32, indexBuffer: index,
-                                          indexBufferOffset: 0)
-            if masked != nil {
-                encoder.setRenderPipelineState(meshPipeline)
+                drawSurface(b, index: index, encoder: encoder, shaded: attributeShadedPipeline,
+                            resume: attributePipeline)
+                encoder.setRenderPipelineState(surfacePipeline)
+            } else {
+                drawSurface(b, index: index, encoder: encoder,
+                            shaded: options.xray ? meshShadedXrayPipeline : meshShadedPipeline,
+                            resume: surfacePipeline)
             }
         }
         drawWires(encoder, viewProjection: viewProjection)
@@ -649,6 +748,7 @@ final class ViewportRenderer: NSObject, MTKViewDelegate {
             let cage = obj.editCage
             let model = obj.modelMatrix
             let normalMatrix = model.inverse.transpose
+            encoder.setFrontFacing(Self.frontFacing(model))
 
             // Wireframe over the surface, so every edge is visible — Blender's
             // edges, not the diagonals triangulation left in the viewport's own
@@ -797,31 +897,35 @@ final class ViewportRenderer: NSObject, MTKViewDelegate {
                     }
                 }
             }
+            drawActiveElement(encoder, object: obj, cage: cage, buffers: b,
+                              viewProjection: viewProjection, normalMatrix: normalMatrix)
         }
 
         drawEditedPoints(encoder, viewProjection: viewProjection)
 
+        // Depth Default with Opacity, blended over the surfaces back to front;
+        // then Depth Front and In Front, over everything.
+        drawImageEmpties(images, pass: .blended, encoder: encoder, viewProjection: viewProjection)
+        drawImageEmpties(images, pass: .front, encoder: encoder, viewProjection: viewProjection)
+
         // ---- 3D cursor: Blender draws a crosshair at it, and it is where new
         // objects spawn, so it has to be visible to be useful.
         if options.showOverlays {
-            let c = scene.cursor
-            let r = camera.distance * 0.03
-            let red = SIMD4<Float>(0.85, 0.15, 0.15, 1)
-            let white = SIMD4<Float>(0.95, 0.95, 0.95, 1)
-            var verts: [GridVertex] = []
-            for (axis, colour) in [(SIMD3<Float>(1, 0, 0), red),
-                                   (SIMD3<Float>(0, 1, 0), white),
-                                   (SIMD3<Float>(0, 0, 1), red)] {
-                verts.append(GridVertex(position: c - axis * r, color: colour))
-                verts.append(GridVertex(position: c + axis * r, color: colour))
-            }
+            // Where a drag of the Cursor tool has it, until its commit comes
+            // back through the mirror; turned as Blender holds it, and drawn
+            // as Blender's overlay draws it, over everything (its pass has no
+            // depth test) — `CursorGlyph`.
+            let c = scene.cursorPreview ?? scene.cursor
+            let verts = CursorGlyph.lines(location: c, rotation: CursorGlyph.rotation(scene.cursorState),
+                                          view: OverlayView(camera: camera, size: pointSize))
+                .map { GridVertex(position: $0.position, color: $0.colour) }
             var u = Uniforms(viewProjection: viewProjection,
                              model: matrix_identity_float4x4,
                              normalMatrix: matrix_identity_float4x4,
                              baseColor: .one,
                              params: SIMD4(camera.far, 0, 0, 0))
             encoder.setRenderPipelineState(gridPipeline)
-            encoder.setDepthStencilState(gridDepthState)
+            encoder.setDepthStencilState(overlayDepthState)
             encoder.setCullMode(.none)
             if let cursorBuffer = overlayBuffer(verts) {
                 encoder.setVertexBuffer(cursorBuffer, offset: 0, index: 0)
@@ -831,8 +935,126 @@ final class ViewportRenderer: NSObject, MTKViewDelegate {
             }
         }
 
-        drawGizmoAndFinish(encoder: encoder, commands: commands, drawable: drawable,
-                           viewProjection: viewProjection)
+        return (viewProjection, true)
+    }
+
+    #if DEBUG
+    /// DEBUG launch hooks: the frame the 3D View draws, without its gizmo,
+    /// read back as RGBA — how a check sees what is on screen while the
+    /// Mac's screen is locked (round 4, group 8's image empties).
+    /// `points` is the view's size in points (a fresh renderer has drawn
+    /// nothing yet), `scale` pixels per point.
+    func captureFrame(points: CGSize? = nil, scale: Int? = nil,
+                      clear: MTLClearColor? = nil) -> (width: Int, height: Int, rgba: [UInt8])? {
+        if let points { pointSize = points }
+        if let clear { lastClearColor = clear }
+        let scale = scale ?? (pointSize.width > 0 && lastDrawableWidth > 0
+            ? max(1, Int((lastDrawableWidth / pointSize.width).rounded())) : 2)
+        let width = max(1, Int(pointSize.width) * scale), height = max(1, Int(pointSize.height) * scale)
+        let colourDesc = MTLTextureDescriptor.texture2DDescriptor(
+            pixelFormat: .bgra8Unorm, width: width, height: height, mipmapped: false)
+        colourDesc.usage = [.renderTarget, .shaderRead]
+        colourDesc.storageMode = .shared
+        let depthDesc = MTLTextureDescriptor.texture2DDescriptor(
+            pixelFormat: .depth32Float, width: width, height: height, mipmapped: false)
+        depthDesc.usage = .renderTarget
+        depthDesc.storageMode = .private
+        guard let colour = device.makeTexture(descriptor: colourDesc),
+              let depth = device.makeTexture(descriptor: depthDesc),
+              let commands = queue.makeCommandBuffer() else { return nil }
+        let pass = MTLRenderPassDescriptor()
+        pass.colorAttachments[0].texture = colour
+        pass.colorAttachments[0].loadAction = .clear
+        pass.colorAttachments[0].storeAction = .store
+        pass.colorAttachments[0].clearColor = lastClearColor
+        pass.depthAttachment.texture = depth
+        pass.depthAttachment.loadAction = .clear
+        pass.depthAttachment.clearDepth = 1
+        pass.depthAttachment.storeAction = .dontCare
+        guard let encoder = commands.makeRenderCommandEncoder(descriptor: pass) else { return nil }
+        _ = encodeFrame(encoder, size: CGSize(width: width, height: height))
+        encoder.endEncoding()
+        commands.commit()
+        commands.waitUntilCompleted()
+        var bgra = [UInt8](repeating: 0, count: width * height * 4)
+        bgra.withUnsafeMutableBytes { raw in
+            colour.getBytes(raw.baseAddress!, bytesPerRow: width * 4,
+                            from: MTLRegionMake2D(0, 0, width, height), mipmapLevel: 0)
+        }
+        for i in stride(from: 0, to: bgra.count, by: 4) { bgra.swapAt(i, i + 2) }
+        return (width, height, bgra)
+    }
+    #endif
+
+    // MARK: the active element
+
+    /// Blender's active element, white over the selection: the last of its
+    /// selection order (`EditSelection.history`), as the mirror read it back.
+    /// Blender's theme draws the active vertex and edge in Active Vert/Edge
+    /// (#FFFFFF) and fills the active face with it at alpha 0.2
+    /// (`editmesh_active` #FFFFFF33, userdef_default_theme.c). Without it
+    /// nothing on screen said where Pick Shortest Path, Next Active or Side
+    /// of Active would start from. Only while the mirror's topology still
+    /// describes the cage, which is what Blender's indices are into.
+    private func drawActiveElement(_ encoder: MTLRenderCommandEncoder, object obj: BKObject,
+                                   cage: MeshData, buffers b: MeshBuffers,
+                                   viewProjection: simd_float4x4, normalMatrix: simd_float4x4) {
+        let selection = scene.editSelection
+        guard let topology = obj.editTopology, topology.describes(cage) else { return }
+        let face: Int?
+        switch selection.active {
+        case .vertex(let v)? where v < cage.vertices.count && scene.selectMode == .vertex:
+            var dot = Uniforms(viewProjection: viewProjection, model: obj.modelMatrix,
+                               normalMatrix: normalMatrix, baseColor: SIMD4(1, 1, 1, 1),
+                               params: SIMD4(7, camera.distance, 0, 0))
+            encoder.setRenderPipelineState(pointPipeline)
+            encoder.setDepthStencilState(gridDepthState)
+            encoder.setVertexBuffer(b.vertex, offset: 0, index: 0)
+            encoder.setVertexBytes(&dot, length: MemoryLayout<Uniforms>.stride, index: 1)
+            encoder.setFragmentBytes(&dot, length: MemoryLayout<Uniforms>.stride, index: 1)
+            encoder.drawPrimitives(type: .point, vertexStart: v, vertexCount: 1)
+            return
+        case .edge(let e)? where 2 * e + 1 < topology.blenderEdges.count:
+            let ends = [topology.blenderEdges[2 * e], topology.blenderEdges[2 * e + 1]]
+            guard ends.allSatisfy({ Int($0) < cage.vertices.count }),
+                  let ib = device.makeBuffer(bytes: ends, length: MemoryLayout<UInt32>.stride * 2,
+                                             options: .storageModeShared) else { return }
+            var lit = Uniforms(viewProjection: viewProjection, model: obj.modelMatrix,
+                               normalMatrix: normalMatrix, baseColor: SIMD4(1, 1, 1, 1),
+                               params: SIMD4(0, camera.distance, 0, 0))
+            encoder.setRenderPipelineState(outlinePipeline)
+            encoder.setDepthStencilState(coplanarDepthState)
+            encoder.setVertexBuffer(b.vertex, offset: 0, index: 0)
+            encoder.setVertexBytes(&lit, length: MemoryLayout<Uniforms>.stride, index: 1)
+            encoder.setFragmentBytes(&lit, length: MemoryLayout<Uniforms>.stride, index: 1)
+            encoder.drawIndexedPrimitives(type: .line, indexCount: 2, indexType: .uint32,
+                                          indexBuffer: ib, indexBufferOffset: 0)
+            encoder.setDepthStencilState(gridDepthState)
+            return
+        case .face(let f)?:
+            face = f
+        default:
+            face = selection.activeFace
+        }
+        guard scene.selectMode == .face, let face else { return }
+        var picked: [UInt32] = []
+        for (t, p) in topology.trianglePolygons.enumerated() where Int(p) == face && 3 * t + 2 < cage.indices.count {
+            picked += [cage.indices[3 * t], cage.indices[3 * t + 1], cage.indices[3 * t + 2]]
+        }
+        guard !picked.isEmpty,
+              let ib = device.makeBuffer(bytes: picked, length: MemoryLayout<UInt32>.stride * picked.count,
+                                         options: .storageModeShared) else { return }
+        var fill = Uniforms(viewProjection: viewProjection, model: obj.modelMatrix,
+                            normalMatrix: normalMatrix, baseColor: SIMD4(1, 1, 1, 0.2),
+                            params: SIMD4(0, camera.distance, 0, 0))
+        encoder.setRenderPipelineState(meshXrayPipeline)
+        encoder.setDepthStencilState(coplanarDepthState)
+        encoder.setCullMode(.back)
+        encoder.setVertexBuffer(b.vertex, offset: 0, index: 0)
+        encoder.setVertexBytes(&fill, length: MemoryLayout<Uniforms>.stride, index: 1)
+        encoder.setFragmentBytes(&fill, length: MemoryLayout<Uniforms>.stride, index: 1)
+        encoder.drawIndexedPrimitives(type: .triangle, indexCount: picked.count, indexType: .uint32,
+                                      indexBuffer: ib, indexBufferOffset: 0)
     }
 
     // MARK: curve and lattice Edit Mode
@@ -844,6 +1066,45 @@ final class ViewportRenderer: NSObject, MTKViewDelegate {
         if let (obj, cage) = scene.editedPoints, obj.visible {
             drawControlCage(encoder, cage: cage, model: obj.modelMatrix, viewProjection: viewProjection)
         }
+        drawCutPreview(encoder, viewProjection: viewProjection)
+    }
+
+    /// Loop Cut's ring and the Knife's path (`BKScene.cutPreview`), in every
+    /// shading and over everything, as Blender draws its loop cut preview
+    /// with the depth test off (`EDBM_preselect_edgering_draw`) in the
+    /// theme's Gizmo Primary yellow. Only while it is still about the mesh on
+    /// screen (`CutPreview.holds`).
+    private func drawCutPreview(_ encoder: MTLRenderCommandEncoder, viewProjection: simd_float4x4) {
+        guard scene.mode == .edit, let preview = scene.cutPreview, preview.holds(for: scene.active) else { return }
+        let yellow = SIMD4<Float>(0.961, 0.945, 0.302, 1)
+        var u = Uniforms(viewProjection: viewProjection, model: matrix_identity_float4x4,
+                         normalMatrix: matrix_identity_float4x4, baseColor: .one,
+                         // The grid shader fades by distance from the world
+                         // origin; a huge radius keeps these at full strength.
+                         params: SIMD4(1e9, 0, 0, 0))
+        encoder.setCullMode(.none)
+        if !preview.lines.isEmpty, let buffer = overlayBuffer(preview.lines.map { GridVertex(position: $0, color: yellow) }) {
+            encoder.setRenderPipelineState(gridPipeline)
+            encoder.setDepthStencilState(overlayDepthState)
+            encoder.setVertexBuffer(buffer, offset: 0, index: 0)
+            encoder.setVertexBytes(&u, length: MemoryLayout<Uniforms>.stride, index: 1)
+            encoder.setFragmentBytes(&u, length: MemoryLayout<Uniforms>.stride, index: 1)
+            encoder.drawPrimitives(type: .line, vertexStart: 0, vertexCount: preview.lines.count)
+        }
+        guard !preview.points.isEmpty else { return }
+        let vertices = preview.points.map { MeshVertex($0, SIMD3(0, 0, 1)) }
+        guard let vertexBuffer = device.makeBuffer(bytes: vertices,
+                                                   length: MemoryLayout<MeshVertex>.stride * vertices.count,
+                                                   options: .storageModeShared) else { return }
+        var dots = Uniforms(viewProjection: viewProjection, model: matrix_identity_float4x4,
+                            normalMatrix: matrix_identity_float4x4, baseColor: yellow,
+                            params: SIMD4(8, 0, 0, 0))
+        encoder.setRenderPipelineState(pointPipeline)
+        encoder.setDepthStencilState(overlayDepthState)
+        encoder.setVertexBuffer(vertexBuffer, offset: 0, index: 0)
+        encoder.setVertexBytes(&dots, length: MemoryLayout<Uniforms>.stride, index: 1)
+        encoder.setFragmentBytes(&dots, length: MemoryLayout<Uniforms>.stride, index: 1)
+        encoder.drawPrimitives(type: .point, vertexStart: 0, vertexCount: vertices.count)
     }
 
     /// The control points of the curve or lattice being edited, its handles
@@ -992,6 +1253,7 @@ final class ViewportRenderer: NSObject, MTKViewDelegate {
         for obj in scene.objects where obj.visible && !obj.hideRender {
             // Loose edges do not render in Blender either.
             guard let b = buffers(for: obj), let index = b.index else { continue }
+            encoder.setFrontFacing(Self.frontFacing(obj.modelMatrix))
             let m = obj.material
             let connected = obj.shaderGraph.isConnected
             let albedo = texture(for: obj)
@@ -1009,9 +1271,10 @@ final class ViewportRenderer: NSObject, MTKViewDelegate {
             encoder.setVertexBuffer(b.vertex, offset: 0, index: 0)
             encoder.setVertexBytes(&u, length: MemoryLayout<PBRUniforms>.stride, index: 1)
             encoder.setFragmentBytes(&u, length: MemoryLayout<PBRUniforms>.stride, index: 1)
-            encoder.drawIndexedPrimitives(type: .triangle, indexCount: b.count,
-                                          indexType: .uint32, indexBuffer: index,
-                                          indexBufferOffset: 0)
+            // By Blender's face or corner normals where it shades by them, as
+            // Material Preview does: a flat or custom-normal mesh rendered
+            // smooth otherwise.
+            drawSurface(b, index: index, encoder: encoder, shaded: pbrShadedPipeline, resume: pbrPipeline)
         }
         encoder.endEncoding()
         commands.commit()
@@ -1075,6 +1338,57 @@ final class ViewportRenderer: NSObject, MTKViewDelegate {
     }
 
     // MARK: picking
+
+    /// The winding Metal is to treat as front-facing for an object drawn
+    /// with `model`. Blender's faces wind anticlockwise seen from outside,
+    /// and a matrix with a negative determinant — a scale of -1 on one axis,
+    /// or on all three — turns every face's winding round on screen. Blender
+    /// flips its front face for such an object (its draw manager tests the
+    /// object's negative scale), so a face turned towards the view is still
+    /// the one drawn. This renderer kept anticlockwise for every object, and
+    /// culled the faces towards the view of a mirrored object while its
+    /// region select, which flips (`DepthBuffer`), took them (round 3's
+    /// review).
+    static func frontFacing(_ model: simd_float4x4) -> MTLWinding {
+        #if DEBUG
+        if debugOldWinding { return .counterClockwise }
+        #endif
+        return FaceWinding.isMirrored(model) ? .clockwise : .counterClockwise
+    }
+
+    /// What the surface passes (Solid, Material Preview, Weight and Vertex
+    /// Paint) cull: nothing, as Blender's 3D View by default
+    /// (`FaceWinding.cullsBackFaces` has the measurement); a material's own
+    /// Backface Culling is off by default too. This renderer culled back
+    /// faces in Solid mode, so an open mesh seen from behind drew nothing
+    /// where Blender draws the face, while region select took it. A back
+    /// face is lit from its own side (`facing_normal` in Shaders.metal), so
+    /// the front face still matters (`frontFacing`).
+    static var surfaceCull: MTLCullMode {
+        #if DEBUG
+        if debugCullBackFaces { return .back }
+        #endif
+        return FaceWinding.cullsBackFaces ? .back : .none
+    }
+
+    #if DEBUG
+    /// `-object-ops culling:old`: back faces culled, as this renderer did
+    /// before (`surfaceCull`), the in-app negative control for
+    /// `-textimage-ops capture:`; `culling:blender` puts Blender's back.
+    nonisolated(unsafe) static var debugCullBackFaces = false
+
+    /// `-object-ops winding:old`: the rule this renderer had before the flip,
+    /// anticlockwise for every object, so the app itself can show what the
+    /// flip changes (`render-stats` before and after); `winding:blender`
+    /// puts the flip back.
+    nonisolated(unsafe) static var debugOldWinding = false
+
+    /// `-object-ops shading:old`: every surface drawn by its vertex normals,
+    /// as this renderer drew it before Blender's face and corner normals were
+    /// carried (`drawSurface`), the in-app negative control for `view-stats`;
+    /// `shading:blender` puts Blender's back.
+    nonisolated(unsafe) static var debugVertexNormalsOnly = false
+    #endif
 
     /// Ray-casts into the scene and returns the nearest object under the point.
     /// The ray is transformed into each object's local space so the test runs

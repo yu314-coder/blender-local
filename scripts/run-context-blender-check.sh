@@ -15,6 +15,15 @@ if [ ! -x "$BLENDER" ]; then
   echo "  SKIP  desktop Blender not installed at $BLENDER"
   exit 0
 fi
-"$BLENDER" -b --factory-startup --python-exit-code 1 --python tests/context/blender/verify.py 2>&1 \
+# Blender gets a HOME and BLENDER_USER_RESOURCES of its own: even a bare
+# `-b --factory-startup` run writes ~/.thumbnails into HOME (measured), and an
+# operator can write Blender's settings. Other checks run at the same time.
+home="${TMPDIR:-/tmp}/blenderlocal-context-home"
+mkdir -p "$home"
+# From that folder, not the repo: what Blender writes into its working folder
+# stays out of the tree.
+ROOT="$(pwd)"
+cd "$home"
+HOME="$home" BLENDER_USER_RESOURCES="$home/res" "$BLENDER" -b --factory-startup --python-exit-code 1 --python "$ROOT/tests/context/blender/verify.py" 2>&1 \
   | grep -vE '^(Blender [0-9]|Read prefs|$)'
 exit "${PIPESTATUS[0]}"

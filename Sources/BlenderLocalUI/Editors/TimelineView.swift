@@ -162,7 +162,8 @@ struct TimelineView: View {
         }
         .buttonStyle(.plain)
         .hoverEffect(.highlight)
-        .accessibilityLabel("Hide Timeline")
+        // The app's own way to put the Timeline away; Blender closes an area.
+        .accessibilityLabel("Close Area")
     }
 }
 
@@ -212,6 +213,10 @@ enum TimelineColours {
 /// draws an aligned row.
 private struct TimelineButton<Content: View>: View {
     var label: String
+    /// Blender's name for the property that sets this button's direction,
+    /// when it is set ("Last Frame", "Next Keyframe", "Play in Reverse"):
+    /// Blender's tooltip names the operator alone, the same both ways.
+    var value: String? = nil
     var enabled = true
     var on = false
     var width: CGFloat = 30
@@ -230,6 +235,7 @@ private struct TimelineButton<Content: View>: View {
         .hoverEffect(.highlight)
         .disabled(!enabled)
         .accessibilityLabel(label)
+        .accessibilityValue(value ?? "")
         .help(label)
     }
 }
@@ -295,14 +301,15 @@ private struct TimelineAutoKeying: View {
                     .frame(width: 18, height: 26)
                     .background(BTheme.widget)
             }
-            .accessibilityLabel("Auto Keying Settings")
+            .accessibilityLabel("Auto Keyframing")
         }
         .clipShape(RoundedRectangle(cornerRadius: BTheme.Metric.corner))
     }
 }
 
-/// Jump to Endpoint, Jump to Keyframe, Play backwards, Play — or Pause, which
-/// Blender draws twice as wide in place of both play buttons while playing.
+/// Jump to Endpoint, Jump to Keyframe, Play Animation backwards and forwards —
+/// or its pause, which Blender draws twice as wide in place of both play
+/// buttons while playing.
 private struct TimelineTransport: View {
     var scene: BKScene
     var driver: TimelineDriver
@@ -311,30 +318,31 @@ private struct TimelineTransport: View {
         let previous = scene.keyframeJumpTarget(next: false) != nil
         let next = scene.keyframeJumpTarget(next: true) != nil
         HStack(spacing: 1) {
-            TimelineButton(label: "Jump to Start", action: { driver.jumpToEndpoint(end: false) }) {
+            // Blender's tooltips: each operator's name, the same both ways.
+            TimelineButton(label: "Jump to Endpoint", action: { driver.jumpToEndpoint(end: false) }) {
                 Image(systemName: "backward.end.fill").font(.system(size: 10))
             }
-            TimelineButton(label: "Jump to Previous Keyframe", enabled: previous,
+            TimelineButton(label: "Jump to Keyframe", enabled: previous,
                            action: { driver.jumpToKeyframe(next: false) }) {
                 KeyframeJumpIcon(next: false)
             }
             if driver.isPlaying {
-                TimelineButton(label: "Pause Animation", width: 61, action: { driver.pause() }) {
+                TimelineButton(label: "Play Animation", width: 61, action: { driver.pause() }) {
                     Image(systemName: "pause.fill").font(.system(size: 10))
                 }
             } else {
-                TimelineButton(label: "Play Animation in Reverse", action: { driver.play(reverse: true) }) {
+                TimelineButton(label: "Play Animation", value: "Play in Reverse", action: { driver.play(reverse: true) }) {
                     Image(systemName: "play.fill").font(.system(size: 10)).scaleEffect(x: -1, y: 1)
                 }
                 TimelineButton(label: "Play Animation", action: { driver.play() }) {
                     Image(systemName: "play.fill").font(.system(size: 10))
                 }
             }
-            TimelineButton(label: "Jump to Next Keyframe", enabled: next,
+            TimelineButton(label: "Jump to Keyframe", value: "Next Keyframe", enabled: next,
                            action: { driver.jumpToKeyframe(next: true) }) {
                 KeyframeJumpIcon(next: true)
             }
-            TimelineButton(label: "Jump to End", action: { driver.jumpToEndpoint(end: true) }) {
+            TimelineButton(label: "Jump to Endpoint", value: "Last Frame", action: { driver.jumpToEndpoint(end: true) }) {
                 Image(systemName: "forward.end.fill").font(.system(size: 10))
             }
         }

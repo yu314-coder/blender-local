@@ -291,12 +291,18 @@ public struct ControlCageOverlay: Sendable {
 public enum ObjectDataSettings: Equatable, Sendable {
     case curve(CurveSettings)
     case lattice(LatticeSettings)
+    /// A text object's (round 4, group 8): `_blenderkit_text.record`.
+    case text(TextSettings)
 
     /// Nil for a type with no such settings or a record that does not parse.
     public static func parse(type: String, record: String) -> ObjectDataSettings? {
         var values: [String: String] = [:]
         for pair in record.split(separator: ";") {
-            let parts = pair.split(separator: "=", maxSplits: 1).map(String.init)
+            // Empty values are kept: a text whose body was cleared ends its
+            // record with `body=`, and splitting that the default way dropped
+            // the key, so the Data tab lost its text panels and the Body Text
+            // sheet said the text had "not arrived yet" (round 4's review).
+            let parts = pair.split(separator: "=", maxSplits: 1, omittingEmptySubsequences: false).map(String.init)
             if parts.count == 2 { values[parts[0]] = parts[1] }
         }
         func float(_ key: String) -> Float? { values[key].flatMap(Float.init) }
@@ -322,6 +328,8 @@ public enum ObjectDataSettings: Equatable, Sendable {
                                                             values["interpolation_type_w"] ?? ""],
                                             useOutside: values["use_outside"] == "1",
                                             resolutionEditable: values["points_editable"] != "0"))
+        case "FONT":
+            return TextSettings.parse(values).map(ObjectDataSettings.text)
         default:
             return nil
         }
@@ -519,7 +527,7 @@ public enum PointsBpy {
     /// sit on the old and are selected, and the Move tool takes them from
     /// there.
     public static let extrude = Command(
-        label: "Extrude",
+        label: "Extrude Curve and Move",
         python: "bpy.ops.curve.extrude_move(CURVE_OT_extrude={\"mode\": 'TRANSLATION'}, "
             + "TRANSFORM_OT_translate={\"value\": (0, 0, 0)})",
         undo: "Extrude Curve and Move",
@@ -561,9 +569,13 @@ public enum PointsBpy {
         label: "Make Regular", python: "bpy.ops.lattice.make_regular()",
         undo: "Make Regular", refusal: "Make Regular needs a lattice in Edit Mode", needsSelection: false)
 
+    /// Lattice ▸ Flip (Distortion Free), one row per axis, as Blender's
+    /// `lattice.flip` names them (its `axis` enum, 5.2.1).
     public static func flip(_ axis: String) -> Command {
-        Command(label: "Flip \(axis)", python: "bpy.ops.lattice.flip(axis='\(axis)')",
-                undo: "Flip (Distortion)", refusal: "Flip needs a lattice in Edit Mode", needsSelection: false)
+        let label = ["U": "U (X) Axis", "V": "V (Y) Axis", "W": "W (Z) Axis"][axis] ?? axis
+        return Command(label: label, python: "bpy.ops.lattice.flip(axis='\(axis)')",
+                       undo: "Flip (Distortion Free)", refusal: "Flip (Distortion Free) needs a lattice in Edit Mode",
+                       needsSelection: false)
     }
 
     /// H, Shift+H and Alt+H in curve Edit Mode.
@@ -579,8 +591,17 @@ public enum PointsBpy {
 
     /// One setting of the object's curve or lattice, by Blender's property
     /// name. `value` is already Python: a number, or a quoted identifier.
+    ///
+    /// Priced first by the vertex budget (`_blenderkit_budget.price`), for
+    /// every setting: round 4's review found Resolution Preview U, Bevel Depth,
+    /// Bevel Resolution and Extrude sent bare, which grew a curve's base after
+    /// its modifiers had been priced (two Arrays at 64 on a Bézier curve,
+    /// 53,248 vertices, then 18,104,320 by the app's own count). A lattice's
+    /// settings make no mesh, and pass.
     public static func set(_ property: String, to value: String, object name: String) -> String {
-        "bpy.data.objects[\(Bpy.quote(name))].data.\(property) = \(value)"
+        let data = "bpy.data.objects[\(Bpy.quote(name))].data"
+        return "__import__('_blenderkit_budget').price(\(data), \(Bpy.quote(property)), \(value))\n"
+            + "\(data).\(property) = \(value)"
     }
 }
 
@@ -592,7 +613,9 @@ public extension LastOperator {
     static func addLattice(at location: SIMD3<Float>) -> LastOperator {
         let place = SIMD3<Double>(Double(location.x), Double(location.y), Double(location.z))
         var op = LastOperator(
-            name: "Add Lattice", call: "bpy.ops.object.add",
+            // `object.add`'s name: Blender's Add ▸ Lattice row runs it, and
+            // its redo panel and undo step say "Add Object".
+            name: "Add Object", call: "bpy.ops.object.add",
             parameters: [Parameter(key: "radius", label: "Radius", kind: .float,
                                    value: 1, softMin: 0.001, softMax: 100, step: 0.01)],
             location: place, restoration: .removeCreated)

@@ -27,7 +27,11 @@ swiftc -O -o "$WORK/dump" Sources/BlenderLocalBridge/*.swift \
   Sources/BlenderLocalUI/Viewport/ViewportCamera.swift tests/sculpt/blender/main.swift
 "$WORK/dump" > "$WORK/calls.txt"
 echo "  $(grep -c '^###' "$WORK/calls.txt") strings from the Swift, put through Blender $("$BLENDER" --version | head -1 | cut -d' ' -f2)"
+# From the work folder, not the repo: what Blender writes into its working
+# folder stays out of the tree.
+ROOT="$(pwd)"
+cd "$WORK"
 HOME="$WORK/home" BLENDER_USER_RESOURCES="$WORK/home/res" "$BLENDER" -b --factory-startup \
-  --python-exit-code 1 --python tests/sculpt/blender/verify.py -- "$WORK/calls.txt" "$WORK" 2>&1 \
+  --python-exit-code 1 --python "$ROOT/tests/sculpt/blender/verify.py" -- "$WORK/calls.txt" "$WORK" 2>&1 \
   | grep -vE '^(Blender [0-9]|Read prefs|$)'
 exit "${PIPESTATUS[0]}"

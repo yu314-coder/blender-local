@@ -7,6 +7,10 @@ import simd
 /// separators.
 struct ObjectAddItems: View {
     var add: (ObjectAddition) -> Void
+    /// Add ▸ Image ▸ Reference... and Background...: the caller asks for the
+    /// picture (Photos or Files) and adds it (round 4, group 8). Nil hides
+    /// the two rows where nothing can present a picker.
+    var addImage: ((ReferenceImages.Kind) -> Void)? = nil
 
     var body: some View {
         Divider()
@@ -20,6 +24,7 @@ struct ObjectAddItems: View {
         }
         Divider()
         EmptyAddMenu(add: add)
+        ImageAddMenu(add: add, addImage: addImage)
         Divider()
         LightAddMenu(add: add)
         Divider()
@@ -61,6 +66,32 @@ struct EmptyAddMenu: View {
     }
 }
 
+/// `VIEW3D_MT_image_add` ("Add Image", after Empty in Blender's Add menu):
+/// Reference..., Background... and Mesh Plane... ask for a picture, and
+/// Empty Image is `object.empty_add(type='IMAGE')`, in Blender's order. Mesh
+/// Plane... is Blender's core `image.import_as_mesh_planes`
+/// (_blenderkit_images.add_plane); it was left out as an add-on's importer,
+/// which it is not (round 4's review).
+struct ImageAddMenu: View {
+    var add: (ObjectAddition) -> Void
+    var addImage: ((ReferenceImages.Kind) -> Void)?
+
+    var body: some View {
+        Menu {
+            if let addImage {
+                ForEach(ReferenceImages.Kind.allCases, id: \.self) { kind in
+                    Button { addImage(kind) } label: { Label(kind.label, systemImage: kind.icon) }
+                }
+            }
+            Button { add(.empty(.image)) } label: {
+                Label("Empty Image", systemImage: EmptyDisplay.Kind.image.icon)
+            }
+        } label: {
+            Label("Image", systemImage: "photo")
+        }
+    }
+}
+
 /// `VIEW3D_MT_light_add`.
 struct LightAddMenu: View {
     var add: (ObjectAddition) -> Void
@@ -91,6 +122,7 @@ extension BpyBridge {
 /// View publishes it while its keys are live, as it does `ViewportKeyActions`.
 struct ObjectAddActions {
     var add: (ObjectAddition) -> Void
+    var addImage: ((ReferenceImages.Kind) -> Void)? = nil
 }
 
 private struct ObjectAddActionsKey: FocusedValueKey { typealias Value = ObjectAddActions }

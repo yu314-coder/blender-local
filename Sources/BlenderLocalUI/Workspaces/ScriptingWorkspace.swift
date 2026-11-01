@@ -267,7 +267,8 @@ struct ScriptingWorkspace: View {
             } else {
                 // ⌘R lives in the Script menu now; a second binding here would
                 // fight it for the key.
-                BPrimaryButton("Run", icon: "play.fill", shortcut: "⌘R") { editor.source(run) }
+                // Blender's Text editor's Run Script.
+                BPrimaryButton("Run Script", icon: "play.fill", shortcut: "⌘R") { editor.source(run) }
             }
         }
         .padding(.horizontal, 8)
@@ -441,6 +442,13 @@ struct ScriptDocument: Sendable {
     var name: String
     var text: String
     var url: URL?
+    /// The DEBUG `-eval64` hook's script, shown in the editor and never
+    /// written over the reader's draft (`saveDraft`). The hook used to write
+    /// its script into `.draft.py` so the editor would show it, and that left
+    /// whatever the last hook ran as the reader's script: round 4's final
+    /// review found the container's draft was a group 8 fixture that deleted
+    /// every object, one press of Run from wiping the scene.
+    var isLaunchScript = false
 
     init() {
         name = "untitled.py"
@@ -486,6 +494,8 @@ struct ScriptDocument: Sendable {
             try text.write(to: target, atomically: true, encoding: .utf8)
             url = target
             name = target.lastPathComponent
+            // Saved by name, it is the reader's script now.
+            isLaunchScript = false
             Self.remember(target)
             return "Saved \(name)"
         } catch {
@@ -504,13 +514,37 @@ struct ScriptDocument: Sendable {
     }
 
     func saveDraft() {
+        // The hook's script is the hook's, not the reader's: the draft and
+        // the file last opened stay as the reader left them.
+        guard !isLaunchScript else { return }
         try? text.write(to: Self.draftURL, atomically: true, encoding: .utf8)
         UserDefaults.standard.set(name, forKey: Self.lastOpenedKey)
     }
 
+    #if DEBUG
+    /// The script `-eval64 <base64>` runs once at launch (RootView), read from
+    /// the arguments; nil without the flag.
+    static let launchSource: String? = {
+        let args = ProcessInfo.processInfo.arguments
+        guard let i = args.firstIndex(of: "-eval64"), i + 1 < args.count,
+              let data = Data(base64Encoded: args[i + 1]) else { return nil }
+        return String(data: data, encoding: .utf8)
+    }()
+    #endif
+
     /// What to open on launch: the file last opened if it is still there, the
-    /// unsaved draft if there is one, otherwise the starter example.
+    /// unsaved draft if there is one, otherwise the starter example. In a
+    /// DEBUG build launched with `-eval64`, that script, in memory only: the
+    /// editor shows what is being run (the screenshots of a run need it), and
+    /// the draft on disk is left alone.
     static func restored() -> ScriptDocument {
+        #if DEBUG
+        if let source = launchSource {
+            var document = ScriptDocument(name: "launch.py", text: source)
+            document.isLaunchScript = true
+            return document
+        }
+        #endif
         if let draft = try? String(contentsOf: draftURL, encoding: .utf8) {
             return ScriptDocument(name: UserDefaults.standard.string(forKey: lastOpenedKey) ?? "untitled.py", text: draft)
         }

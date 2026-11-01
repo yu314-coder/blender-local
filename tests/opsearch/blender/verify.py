@@ -116,14 +116,76 @@ fixtures.undo_stack()
 outcome = run('mesh.subdivide')
 check("with no active object at all it is refused in words",
       outcome[0] == 'refused' and 'could not switch' in outcome[1], outcome)
-for name in ui._UNSAFE_OPERATORS:
+# The table every route reads (`_blenderkit_context.UNSAFE_OPERATORS`; the
+# search kept a list of its own until round 4's fix round): each entry that
+# refuses every call is refused here by name, in its words, and its form says
+# so. tests/unsafe/blender holds the same entries to every other route.
+unsafe = ui._context_module().UNSAFE_OPERATORS
+check("the search has no list of its own", not hasattr(ui, '_UNSAFE_OPERATORS'))
+for name, entry in unsafe.items():
+    if not entry.refuses():
+        continue
     fixtures.build('plain', 'EDIT')
     outcome = run(name)
     check(name + " is refused by name, before Blender sees it",
-          outcome[0] == 'refused' and outcome[1] == ui._UNSAFE_OPERATORS[name], outcome)
+          outcome[0] == 'refused' and outcome[1] == entry.refusal, outcome)
     info = ui.operator_info(name)
     check(name + "'s form says why and cannot run it",
-          info['available'] is False and info['refused'] == ui._UNSAFE_OPERATORS[name], info.get('refused'))
+          info['available'] is False and info['refused'] == entry.refusal, info.get('refused'))
+
+# The operators Blender runs at the mouse pointer (round 4, group 6): their
+# polls want a 3D View, which the search's context — a window and a screen —
+# has not got, so the search says so and names the Mesh menu row that works
+# toward the 3D cursor, rather than "needs a different selection".
+pointer_ops = sorted('mesh.' + n for n in dir(bpy.ops.mesh) if n.startswith(('polybuild', 'rip', 'dupli_extrude')))
+check(f"the search's pointer operators are this Blender's {len(pointer_ops)} Rip, Poly Build and "
+      "Extrude to Cursor operators", sorted(ui._POINTER_OPERATORS) == pointer_ops,
+      sorted(set(pointer_ops) ^ set(ui._POINTER_OPERATORS)))
+polls = {}
+for name in sorted(ui._POINTER_OPERATORS):
+    op = getattr(bpy.ops.mesh, name.split('.', 1)[1])
+    fixtures.build('plain', 'EDIT')
+    w = bpy.context.window_manager.windows[0]
+    with bpy.context.temp_override(window=w, screen=w.screen):
+        alone = op.poll()
+    view = None
+    for screen in bpy.data.screens:
+        area = next((a for a in screen.areas if a.type == 'VIEW_3D'), None)
+        if area is not None:
+            region = next(r for r in area.regions if r.type == 'WINDOW')
+            with bpy.context.temp_override(window=w, screen=screen, area=area, region=region):
+                view = op.poll()
+            break
+    polls[name] = (alone, view)
+    # Afresh: a poll under another workspace's screen left the cube in
+    # Object Mode (measured here), which says nothing about the search.
+    fixtures.build('plain', 'EDIT')
+    start = mode()
+    outcome = run(name)
+    info = ui.operator_info(name)
+    edit_ok = (start == 'EDIT' and outcome == ('refused', ui._POINTER_OPERATORS[name]) and mode() == 'EDIT'
+               and info['available'] is False and info['refused'] == ui._POINTER_OPERATORS[name])
+    fixtures.build('plain', 'OBJECT')
+    object_ok = run(name) == ('refused', ui._POINTER_OPERATORS[name]) and mode() == 'OBJECT'
+    check(name + ": its poll fails in the search's window and screen, passes in a 3D View; refused in "
+          "words from Edit and Object Mode, the mode left alone",
+          edit_ok and object_ok and alone is False and view is True,
+          dict(alone=alone, view=view, start=start, edit=edit_ok, object=object_ok, outcome=outcome))
+for name, row in (('mesh.dupli_extrude_cursor', 'Mesh ▸ Vertex ▸ Extrude to Cursor or Add'),
+                  ('mesh.rip_edge_move', 'Mesh ▸ Vertex ▸ Rip Vertices and Extend'),
+                  ('mesh.rip_move', 'Mesh ▸ Vertex ▸ Rip Vertices and Extend')):
+    check(name + " names the row that works: " + row, row in ui._POINTER_OPERATORS[name], ui._POINTER_OPERATORS[name])
+# The negative control: without the table the same call gets Blender's poll
+# sentence, which points at the selection.
+saved = dict(ui._POINTER_OPERATORS)
+ui._POINTER_OPERATORS.clear()
+try:
+    fixtures.build('plain', 'EDIT')
+    outcome = run('mesh.dupli_extrude_cursor')
+finally:
+    ui._POINTER_OPERATORS.update(saved)
+check("without it, Extrude to Cursor or Add gets the poll's 'needs a different selection' (negative control)",
+      outcome[0] == 'refused' and 'different selection' in outcome[1] and 'Mesh ▸' not in outcome[1], outcome)
 
 print("\n== what the form shows ==")
 fixtures.build('plain', 'EDIT')

@@ -766,6 +766,23 @@ func bk_scene_modifier_set(_ obj: UnsafePointer<CChar>?, _ mod: UnsafePointer<CC
 
         // Mutating the array element re-triggers the didSet, so the mesh rebuilds.
         var stack = target.modifiers
+        // A declared row's number or switch (round 4, group 8): kept as the
+        // text Blender's record would carry, by the setting's own name, so
+        // the simulator's row shows what was set. Its enums, sets and pointer
+        // come as text through `bk_scene_modifier_set_object`.
+        if stack[index].kind.isDeclared {
+            let fields = stack[index].kind.fields
+            guard let field = fields.first(where: { $0.key == k }) else { return -2 }
+            switch field.kind {
+            case .number, .integer: stack[index].values[k] = a.isFinite ? "\(a)" : "0.0"
+            case .toggle:           stack[index].values[k] = a != 0 ? "1" : "0"
+            case .vector3:          stack[index].values[k] = [a, b, c].map { $0.isFinite ? "\($0)" : "0.0" }
+                                        .joined(separator: ",")
+            default:                return -2
+            }
+            target.modifiers = stack
+            return 0
+        }
         switch k {
         case "levels":          stack[index].levels = stack[index].kind == .multires
                                     ? max(0, min(whole(a), stack[index].totalLevels)) : whole(a)
@@ -897,6 +914,34 @@ func bk_scene_modifier_set_object(_ obj: UnsafePointer<CChar>?, _ mod: UnsafePoi
               let index = target.modifiers.firstIndex(where: { $0.name == m })
         else { return -1 }
         let kind = target.modifiers[index].kind
+        if kind.isDeclared {
+            // A declared row's enum, enum set or other object, as text.
+            guard let field = kind.fields.first(where: { $0.key == k }) else { return -2 }
+            let text = other.map { String(cString: $0) } ?? ""
+            var stack = target.modifiers
+            switch field.kind {
+            case .choice(let choices):
+                guard choices.contains(where: { $0.identifier == text }) else { return -2 }
+            case .flags(let choices):
+                guard ModifierField.flagSet(text).allSatisfy({ id in choices.contains { $0.identifier == id } })
+                else { return -2 }
+            case .object(let types):
+                if text == o { return -3 }
+                guard text.isEmpty || PythonSceneBridge.object(text) != nil else { return -4 }
+                // Blender leaves the pointer as it was for an object of
+                // another type (measured: `ModifierField.Kind.object`).
+                if let types, !text.isEmpty,
+                   let other = PythonSceneBridge.object(text), !types.contains(other.blenderType) {
+                    return 0
+                }
+                stack[index].targetName = text
+            default:
+                return -2
+            }
+            stack[index].values[k] = text
+            target.modifiers = stack
+            return 0
+        }
         guard (k == "object" && (kind == .boolean || kind == .lattice))
                 || (k == "target" && kind == .shrinkwrap)
         else { return -2 }
@@ -970,6 +1015,19 @@ extension ModifierKind {
         case "LAPLACIANSMOOTH":   self = .laplacianSmooth
         case "CORRECTIVE_SMOOTH": self = .correctiveSmooth
         case "LATTICE":           self = .lattice
+        // Round 4, group 8's declared rows. Not CURVE: the stand-in keeps a
+        // Curve modifier of its own, baked along the curve in Python
+        // (`_CURVE_MODS` in site/bpy/__init__.py), which scripts already use.
+        case "WIREFRAME":         self = .wireframe
+        case "SKIN":              self = .skin
+        case "HOOK":              self = .hook
+        case "ARMATURE":          self = .armature
+        case "SURFACE_DEFORM":    self = .surfaceDeform
+        case "MESH_DEFORM":       self = .meshDeform
+        case "DATA_TRANSFER":     self = .dataTransfer
+        case "NORMAL_EDIT":       self = .normalEdit
+        case "MASK":              self = .mask
+        case "BUILD":             self = .build
         default: return nil
         }
     }
@@ -994,6 +1052,9 @@ enum SceneSync {
     /// Objects whose geometry came back exactly as it was. Their meshes are
     /// not rebuilt, and so not re-uploaded to the GPU either.
     nonisolated(unsafe) static var unchanged: Set<String> = []
+    /// The scene-wide records the pass carried (`SceneMirror.carryRecord`),
+    /// put on the scene with its objects.
+    nonisolated(unsafe) static var pendingScene: [SceneMirror.SceneRecord] = []
 }
 
 @_cdecl("bk_sync_begin")
@@ -1003,6 +1064,7 @@ func bk_sync_begin() {
         SceneSync.pendingSelection = []
         SceneSync.pendingActive = nil
         SceneSync.unchanged = []
+        SceneSync.pendingScene = []
         SceneSync.previous = Dictionary(
             (PythonSceneBridge.scene?.objects ?? []).map { ($0.name, $0) },
             uniquingKeysWith: { first, _ in first })
@@ -1063,6 +1125,8 @@ func bk_sync_end() {
         // SceneMirror.merge says why, and is where the host suites test it.
         SceneMirror.merge(SceneSync.pending, into: scene, unchanged: SceneSync.unchanged,
                           selection: SceneSync.pendingSelection, active: SceneSync.pendingActive)
+        SceneMirror.applyScene(SceneSync.pendingScene, to: scene)
+        SceneSync.pendingScene = []
     }
 }
 
@@ -1120,6 +1184,31 @@ func bk_sync_uvs(_ name: UnsafePointer<CChar>?, _ mapName: UnsafePointer<CChar>?
     }
 }
 
+/// The normals Blender's Solid view shades the mesh just pushed with, when
+/// they are not its vertex normals (`SceneMirror.installShading`): during a
+/// pass onto the object the pass pushed, outside one — a frame change, a
+/// sculpt stroke's chunk — onto the one on screen (`carryShading`).
+@_cdecl("bk_sync_shading")
+func bk_sync_shading(_ name: UnsafePointer<CChar>?, _ domain: Int32,
+                     _ loops: UnsafePointer<UInt32>?, _ loopCount: Int32,
+                     _ normals: UnsafePointer<Float>?, _ normalCount: Int32) -> Int32 {
+    onMain {
+        guard let name = name.map({ String(cString: $0) }), domain >= 0, loopCount >= 0, normalCount >= 0,
+              loopCount == 0 || loops != nil, normalCount == 0 || normals != nil
+        else { return -1 }
+        var changed = false
+        let carried = SceneMirror.carryShading(
+            domain: UInt32(domain),
+            triangleLoops: UnsafeBufferPointer(start: loops, count: Int(loopCount)),
+            loopNormals: UnsafeBufferPointer(start: normals, count: Int(normalCount)),
+            named: name, pass: SceneSync.active ? SceneSync.pending : nil,
+            screen: PythonSceneBridge.scene?.objects ?? [], index: SceneMirror.frameIndex,
+            changed: &changed)
+        if SceneSync.active, changed { SceneSync.unchanged.remove(name) }
+        return carried < 0 ? -1 : 0
+    }
+}
+
 /// The UV map Blender's UV Editor draws, when the mesh just pushed carries a
 /// different one: the object's own mesh before its modifiers. See
 /// `SceneMirror.uvLayout`.
@@ -1164,7 +1253,8 @@ func bk_sync_edit_selection(_ name: UnsafePointer<CChar>?, _ selectMode: Int32,
                             _ edgeVertices: UnsafePointer<UInt32>?, _ edgeVertexCount: Int32,
                             _ edgeSelected: UnsafePointer<UInt8>?, _ edgeCount: Int32,
                             _ vertexHidden: UnsafePointer<UInt8>?, _ hiddenCount: Int32,
-                            _ vertexCoordinates: UnsafePointer<Float>?, _ coordinateCount: Int32) -> Int32 {
+                            _ vertexCoordinates: UnsafePointer<Float>?, _ coordinateCount: Int32,
+                            _ history: UnsafePointer<Int32>?, _ historyCount: Int32) -> Int32 {
     onMain {
         guard let scene = PythonSceneBridge.scene,
               let n = name.map({ String(cString: $0) }),
@@ -1181,7 +1271,8 @@ func bk_sync_edit_selection(_ name: UnsafePointer<CChar>?, _ selectMode: Int32,
                                        edgeVertices: copy(edgeVertices, edgeVertexCount),
                                        edgeSelected: copy(edgeSelected, edgeCount),
                                        vertexHidden: copy(vertexHidden, hiddenCount),
-                                       vertexCoordinates: copy(vertexCoordinates, coordinateCount))
+                                       vertexCoordinates: copy(vertexCoordinates, coordinateCount),
+                                       history: copy(history, historyCount))
         scene.mirrorEditSelection(report, on: object)
         return 0
     }

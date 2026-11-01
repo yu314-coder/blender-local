@@ -5,13 +5,16 @@ import simd
 /// right edge of the viewport.
 ///
 /// Blender splits it into vertical tabs down the outer edge: **Item** for the
-/// active object, **Tool** for the active tool, **View** for the viewport. It
-/// previously showed Item's contents with the View panels stacked underneath,
-/// which is not where Blender keeps them.
+/// active object, **Tool** for the active tool, **View** for the viewport.
 ///
-/// Nothing instantiates it: `grep -rn "SidebarN" Sources/ tests/` finds only
-/// this declaration. The panels that are on screen are the sheets LayoutWorkspace
-/// opens — Transform Tools holds the 3D cursor and the precision settings.
+/// It is on screen now (View ▸ Sidebar in the More menu, and N), over the 3D
+/// View's right edge in the Layout tab. Until round 4 nothing instantiated it,
+/// so Edit Mode had no way to type a position at all (round 3's review,
+/// toolkit item 3). Its Item tab is Blender's Transform panel: in Object Mode
+/// Location, Rotation, Scale (`ObjectTransformFields`) and Dimensions; in a
+/// mesh's Edit Mode the selection's Median or one Vertex, Global or Local,
+/// and the Vertex Data and Edge Data weights (`_blenderkit_item`, read back
+/// from the edit mesh, each typed number one undo step).
 struct SidebarN: View {
     var scene: BKScene
     var session: BpySession
@@ -21,6 +24,21 @@ struct SidebarN: View {
     @State private var tab: Tab = .item
     /// The 3D cursor's fields while they are dragged; Blender's once written.
     @State private var cursorDraft: SIMD3<Float>?
+    /// Blender's Global / Local pair under the Median. It is the 3D View's
+    /// own flag (V3D_GLOBAL_STATS, not in the Python API), so it is kept here,
+    /// per device. Local to begin with, as Blender's: the flag is off in every
+    /// View3D of the factory startup file (release/datafiles/startup.blend,
+    /// read through its SDNA: `flag` 0x0808, 0x0800, 0x080c — bit 13 clear).
+    @AppStorage("bl_sidebar_item_local") private var itemLocal = true
+    private var itemGlobal: Bool {
+        get { !itemLocal }
+        nonmutating set { itemLocal = !newValue }
+    }
+    /// What Blender's edit mesh holds for the Item tab, read back after every
+    /// change to it or to the selection.
+    @State private var editItem: EditItemState?
+    /// The active object's Dimensions, as Blender reports them.
+    @State private var dimensions: SIMD3<Float>?
 
     enum Tab: String, CaseIterable, Identifiable {
         case item = "Item"
@@ -55,6 +73,53 @@ struct SidebarN: View {
         }
         .frame(width: BTheme.Metric.sidebarWidth)
         .background(BTheme.header.opacity(0.94))
+        .task(id: itemKey) { refreshItem() }
+    }
+
+    /// What the Item tab's numbers may change with: any command or undo (the
+    /// revision), the mode, the active object, Global or Local, the
+    /// viewport's edit selection, which reaches Blender before it is read
+    /// (`captureWithSelection`) — and the frame, whose change is a `capture`
+    /// (TimelineDriver.setFrame) that moves no revision, while an animated
+    /// transform moves the Global Median and the Dimensions.
+    private struct ItemKey: Equatable {
+        var revision: Int
+        var running: Bool
+        var mode: InteractionMode
+        var active: UUID?
+        var global: Bool
+        var edit: [Set<Int>]
+        var history: [EditElement]
+        var tab: Tab
+        var frame: Int
+        var subframe: Float
+    }
+
+    private var itemKey: ItemKey {
+        let edit = scene.editSelection
+        return ItemKey(revision: session.backendRevision, running: session.isRunning, mode: scene.mode,
+                       active: scene.activeID, global: itemGlobal,
+                       edit: [edit.vertices, edit.edges, edit.faces], history: edit.history, tab: tab,
+                       frame: scene.frameCurrent, subframe: scene.animation.subframe)
+    }
+
+    private func refreshItem() {
+        guard tab == .item, let bridge, session.usesRealBlender, !session.isRunning,
+              let obj = scene.active else {
+            editItem = nil; dimensions = nil
+            return
+        }
+        editItem = scene.mode == .edit && obj.hasEditMode ? ItemActions.state(bridge, global: itemGlobal) : nil
+        dimensions = scene.mode == .object ? ItemActions.dimensions(bridge, of: obj.name) : nil
+        #if DEBUG
+        // For `-transform-ops frame:<n>`: when the tab read Blender, and what.
+        if ProcessInfo.processInfo.arguments.contains("-transform-ops") {
+            print("[bk] sidebar Item read at frame \(scene.frameCurrent): dimensions "
+                  + (dimensions.map { String(format: "(%.4f, %.4f, %.4f)", $0.x, $0.y, $0.z) } ?? "none")
+                  + (editItem?.median.map { String(format: ", median (%.4f, %.4f, %.4f)", $0.x, $0.y, $0.z) } ?? ""))
+            fflush(stdout)
+        }
+        #endif
     }
 
     /// Blender draws the tabs as rotated labels on the panel's outer edge.
@@ -85,36 +150,109 @@ struct SidebarN: View {
     @ViewBuilder
     private var itemPanels: some View {
         if let obj = scene.active {
-            // The same fields as Properties ▸ Object (`ObjectTransformFields`):
-            // these showed `matrix_world` and wrote the local channels, one
-            // Python run per drag sample with no undo step.
             BPanel("Transform") {
-                ObjectTransformFields(object: obj, scene: scene, bridge: bridge)
-            }
-
-            // Blender shows the world-space size of the object, which is the
-            // one transform figure you cannot type — it follows from the rest.
-            BPanel("Dimensions") {
-                let d = dimensions(of: obj)
-                ForEach(0..<3, id: \.self) { i in
-                    readout(["X", "Y", "Z"][i], d.map { String(format: "%.3f m", $0[i]) } ?? "hidden",
-                            accent: [BTheme.axisX, BTheme.axisY, BTheme.axisZ][i])
+                if scene.mode == .edit && obj.hasEditMode {
+                    editTransform(obj)
+                } else if scene.mode == .edit {
+                    // Blender's Control Point: / Median: for a curve or a
+                    // lattice — not built here yet.
+                    Text("Typed positions for a curve's or a lattice's points are not offered here: "
+                         + "drag them with the gizmo, or set them from a script.")
+                        .font(BTheme.Font.ui(10)).foregroundStyle(BTheme.textDim)
+                        .fixedSize(horizontal: false, vertical: true)
+                } else {
+                    // The same fields as Properties ▸ Object
+                    // (`ObjectTransformFields`): Blender's own channels.
+                    ObjectTransformFields(object: obj, scene: scene, bridge: bridge)
+                    if scene.mode == .object { dimensionFields(obj) }
                 }
-            }
-
-            BPanel("Relations") {
-                readout("Name", obj.name)
-                readout("Type", obj.kind.rawValue.capitalized)
-                // Blender's statistics leave out what is not drawn, and a
-                // hidden object's mesh is the one it was last drawn with.
-                readout("Vertices", obj.visible ? "\(obj.mesh.vertices.count)" : "hidden")
-                readout("Triangles", obj.visible ? "\(obj.mesh.indices.count / 3)" : "hidden")
             }
         } else {
             Text("No active object")
                 .font(BTheme.Font.ui(11)).foregroundStyle(BTheme.textDim)
                 .padding(10)
         }
+    }
+
+    /// Blender's Dimensions: X, Y and Z, typed or dragged, each written as the
+    /// N panel writes it (`_blenderkit_item.set_dimension`).
+    @ViewBuilder
+    private func dimensionFields(_ obj: BKObject) -> some View {
+        if let bridge, let d = dimensions {
+            heading("Dimensions:")
+            ForEach(0..<3, id: \.self) { i in
+                ItemNumberField(label: ["X:", "Y:", "Z:"][i], value: d[i], unit: .meters,
+                                accent: [BTheme.axisX, BTheme.axisY, BTheme.axisZ][i]) { v in
+                    ItemActions.dimension(bridge, of: obj.name, axis: i, to: max(v, 0))
+                    refreshItem()
+                }
+            }
+        }
+    }
+
+    /// Blender's Transform panel in a mesh's Edit Mode (`v3d_editvertex_buts`).
+    @ViewBuilder
+    private func editTransform(_ obj: BKObject) -> some View {
+        if !session.usesRealBlender {
+            Text("Typed positions in Edit Mode are Blender's: the simulator's stand-in has none.")
+                .font(BTheme.Font.ui(10)).foregroundStyle(BTheme.textDim)
+                .fixedSize(horizontal: false, vertical: true)
+        } else if let item = editItem, item.object == obj.name, let bridge {
+            if item.vertices == 0 {
+                Text("Nothing selected")
+                    .font(BTheme.Font.ui(11)).foregroundStyle(BTheme.textDim)
+                    .frame(height: 20)
+            } else if let median = item.median {
+                heading(item.medianTitle)
+                ForEach(0..<3, id: \.self) { i in
+                    ItemNumberField(label: ["X:", "Y:", "Z:"][i], value: median[i], unit: .meters,
+                                    accent: [BTheme.axisX, BTheme.axisY, BTheme.axisZ][i]) { v in
+                        ItemActions.median(bridge, axis: i, to: v, global: itemGlobal)
+                        refreshItem()
+                    }
+                }
+                globalLocal
+                let rows = item.dataRows
+                ForEach(Array(rows.enumerated()), id: \.offset) { index, entry in
+                    if index == 0, item.vertices > 0 { heading(item.vertexDataTitle) }
+                    if entry.row == .bevelWeightEdge { heading(item.edgeDataTitle) }
+                    ItemNumberField(label: entry.label, value: entry.value, unit: .none, step: 0.01) { v in
+                        ItemActions.data(bridge, entry.row, label: entry.label, to: v)
+                        refreshItem()
+                    }
+                }
+            }
+        } else {
+            Text("Reading the selection from Blender")
+                .font(BTheme.Font.ui(10)).foregroundStyle(BTheme.textDim)
+                .frame(height: 20)
+        }
+    }
+
+    /// Blender's Global and Local toggle pair: which space the Median is in.
+    private var globalLocal: some View {
+        HStack(spacing: 1) {
+            ForEach([true, false], id: \.self) { global in
+                Button { itemGlobal = global } label: {
+                    Text(global ? "Global" : "Local")
+                        .font(BTheme.Font.ui(11))
+                        .foregroundStyle(itemGlobal == global ? Color.white : BTheme.textDim)
+                        .frame(maxWidth: .infinity).frame(height: 22)
+                        .background(itemGlobal == global ? BTheme.select : BTheme.widget)
+                }
+                .buttonStyle(.plain)
+                .accessibilityAddTraits(itemGlobal == global ? .isSelected : [])
+            }
+        }
+        .clipShape(RoundedRectangle(cornerRadius: BTheme.Metric.corner))
+        .padding(.vertical, 3)
+    }
+
+    private func heading(_ title: String) -> some View {
+        Text(title)
+            .font(BTheme.Font.ui(11)).foregroundStyle(BTheme.textDim)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .frame(height: 20)
     }
 
     // MARK: Tool
@@ -149,7 +287,7 @@ struct SidebarN: View {
         } else if scene.mode == .sculpt {
             // The simulator's approximation of Blender's brushes.
             BPanel("Brush") {
-                readout("Type", scene.sculpt.brush.label)
+                readout("Type", scene.sculpt.brush.name)
                 BNumberField("Radius", value: Binding(
                     get: { scene.sculpt.radius },
                     set: { scene.sculpt.radius = max(0.05, min($0, 4)) }), step: 0.01)
@@ -162,7 +300,19 @@ struct SidebarN: View {
 
         // Texture Paint's brush is in its tool row (TexturePaintHeader); these
         // settings are vertex and weight paint's, and do nothing to it.
-        if scene.mode == .vertexPaint || scene.mode == .weightPaint {
+        if (scene.mode == .vertexPaint || scene.mode == .weightPaint), let blender = scene.paintBlender {
+            // Blender's own brush, read back from Blender; edited in the
+            // paint header (PaintModeHeader), which writes through bridge.run.
+            BPanel("Brush") {
+                readout("Brush", blender.brush ?? "none")
+                readout("Size", blender.size.map { "\($0) px" } ?? "-")
+                readout("Strength", blender.strength.map { String(format: "%.3f", $0) } ?? "-")
+                if scene.mode == .weightPaint {
+                    readout("Weight", blender.weight.map { String(format: "%.3f", $0) } ?? "-")
+                }
+            }
+        } else if (scene.mode == .vertexPaint || scene.mode == .weightPaint), !session.usesRealBlender {
+            // The simulator's stand-in's Swift brush.
             BPanel("Brush") {
                 BNumberField("Radius", value: Binding(
                     get: { scene.paint.radius },
@@ -235,9 +385,9 @@ struct SidebarN: View {
         }
 
         BPanel("View Lock") {
-            readout("Pivot", String(format: "%.2f, %.2f, %.2f",
+            readout("View Pivot", String(format: "%.2f, %.2f, %.2f",
                                     camera.target.x, camera.target.y, camera.target.z))
-            BButton("Centre Cursor and Frame All", icon: "dot.viewfinder") {
+            BButton("Center Cursor and Frame All", icon: "dot.viewfinder") {
                 bridge?.run(ToolsBpy.snap(.cursorToCenter),
                             undo: SnapAction.cursorToCenter.undoName)
                 camera.frameAll(scene.objects)
@@ -246,28 +396,6 @@ struct SidebarN: View {
     }
 
     // MARK: pieces
-
-    /// The object's world-space bounding size — Blender's Dimensions row.
-    ///
-    /// Nil for an object that is not drawn and never has been since it
-    /// reached the mirror: the sync sends such an object as its origin alone,
-    /// and measured from that one vertex a hidden cube read 0.000 m on every
-    /// axis while Blender held 2 m. Once drawn, an object keeps its mesh
-    /// through being hidden (`SceneMirror.merge`), so its size stays right.
-    private func dimensions(of obj: BKObject) -> SIMD3<Float>? {
-        if !obj.visible, obj.mesh.vertices.count <= 1, obj.mesh.indices.isEmpty {
-            return nil
-        }
-        guard !obj.mesh.vertices.isEmpty else { return .zero }
-        var lo = SIMD3<Float>(repeating: .greatestFiniteMagnitude)
-        var hi = SIMD3<Float>(repeating: -.greatestFiniteMagnitude)
-        let m = obj.modelMatrix
-        for v in obj.mesh.vertices {
-            let w = (m * SIMD4(v.position, 1)).xyz
-            lo = min(lo, w); hi = max(hi, w)
-        }
-        return hi - lo
-    }
 
     private func readout(_ label: String, _ value: String,
                          accent: Color? = nil) -> some View {
@@ -281,5 +409,63 @@ struct SidebarN: View {
                 .lineLimit(1)
         }
         .frame(height: 20)
+    }
+}
+
+/// A number Blender holds, with a draft while a finger drags it: the drag
+/// moves the draft, and the finger lifting — or Return after typing — sends
+/// the one change. The mirroring pass that follows is what it shows next, so
+/// a value Blender refused goes back to the one it holds.
+struct ItemNumberField: View {
+    let label: String
+    let value: Float
+    var unit: BNumberField.Unit = .meters
+    var accent: Color? = nil
+    var step: Float = 0.01
+    let commit: (Float) -> Void
+    @State private var draft: Float?
+
+    init(label: String, value: Float, unit: BNumberField.Unit = .meters, accent: Color? = nil,
+         step: Float = 0.01, commit: @escaping (Float) -> Void) {
+        self.label = label; self.value = value; self.unit = unit; self.accent = accent
+        self.step = step; self.commit = commit
+    }
+
+    var body: some View {
+        BNumberField(label, value: Binding(get: { draft ?? value }, set: { draft = $0 }),
+                     step: step, accent: accent, unit: unit,
+                     commit: { v in
+                         draft = nil
+                         commit(v)
+                     })
+    }
+}
+
+/// What the Item tab's fields send and read, shared with the DEBUG hook that
+/// drives them (`-transform-ops`), so what is tested is what a field does.
+enum ItemActions {
+    static func state(_ bridge: BpyBridge, global: Bool) -> EditItemState? {
+        bridge.captureWithSelection(ItemBpy.state(global: global)).flatMap(EditItemState.parse)
+    }
+
+    static func dimensions(_ bridge: BpyBridge, of name: String) -> SIMD3<Float>? {
+        bridge.capture(ItemBpy.dimensions(of: name)).flatMap(ItemBpy.parseDimensions)
+    }
+
+    /// One typed Median or Vertex number: one undo step, on the selection the
+    /// viewport shows (the bridge pushes it first, in the same evaluation).
+    @discardableResult
+    static func median(_ bridge: BpyBridge, axis: Int, to value: Float, global: Bool) -> BpyBridge.Outcome {
+        bridge.run(ItemBpy.setMedian(axis: axis, to: value, global: global), undo: ItemBpy.undoName(axis: axis))
+    }
+
+    @discardableResult
+    static func data(_ bridge: BpyBridge, _ row: ItemDataRow, label: String, to value: Float) -> BpyBridge.Outcome {
+        bridge.run(ItemBpy.setData(row, to: value), undo: ItemBpy.undoName(label))
+    }
+
+    @discardableResult
+    static func dimension(_ bridge: BpyBridge, of name: String, axis: Int, to value: Float) -> BpyBridge.Outcome {
+        bridge.run(ItemBpy.setDimension(of: name, axis: axis, to: value), undo: ItemBpy.undoName(axis: axis))
     }
 }

@@ -9,6 +9,9 @@ struct PropertiesView: View {
     var session: BpySession
     var bridge: BpyBridge?
     @State private var tab: PropertiesTab = PropertiesView.initialTab
+    /// The active object's Dimensions as Blender reports them (`obj.dimensions`,
+    /// in Edit Mode the edit mesh's), read back after every change.
+    @State private var blenderDimensions: SIMD3<Float>?
 
     /// Debug builds accept `-properties-tab modifiers` (any tab's raw value),
     /// so a tab behind `-panel "Object Details"` can be photographed without
@@ -31,6 +34,42 @@ struct PropertiesView: View {
             content
         }
         .background(BTheme.properties)
+        .task(id: DimensionsKey(revision: session.backendRevision, running: session.isRunning,
+                                active: scene.activeID, tab: tab, mode: scene.mode,
+                                frame: scene.frameCurrent, subframe: scene.animation.subframe)) {
+            readDimensions()
+        }
+    }
+
+    /// What Blender's Dimensions may change with. The frame too: a frame
+    /// change is a `capture` (TimelineDriver.setFrame), which moves no
+    /// revision, and an animated scale changes the Dimensions.
+    private struct DimensionsKey: Equatable {
+        var revision: Int
+        var running: Bool
+        var active: UUID?
+        var tab: PropertiesTab
+        var mode: InteractionMode
+        var frame: Int
+        var subframe: Float
+    }
+
+    /// Blender's own numbers. The panel used to measure the evaluated mesh's
+    /// world-space box itself, which is not what Blender's Dimensions are —
+    /// they are the object's own bounds times its world scale, so a turned
+    /// cube read 2.828 across where Blender holds 2.
+    private func readDimensions() {
+        guard tab == .data, let bridge, session.usesRealBlender, !session.isRunning,
+              let obj = scene.active else { blenderDimensions = nil; return }
+        blenderDimensions = ItemActions.dimensions(bridge, of: obj.name)
+        #if DEBUG
+        // For `-transform-ops frame:<n>`: when the Data tab read Blender.
+        if ProcessInfo.processInfo.arguments.contains("-transform-ops") {
+            print("[bk] Data tab Dimensions read at frame \(scene.frameCurrent): "
+                  + (blenderDimensions.map { String(format: "(%.4f, %.4f, %.4f)", $0.x, $0.y, $0.z) } ?? "none"))
+            fflush(stdout)
+        }
+        #endif
     }
 
     @ViewBuilder
@@ -47,7 +86,7 @@ struct PropertiesView: View {
             }
 
             switch tab {
-            case .object, .modifiers, .data, .material: objectTabs
+            case .object, .modifiers, .constraints, .data, .material: objectTabs
             case .scene:                                sceneTab
             default:                                    EmptyView()
             }
@@ -98,25 +137,36 @@ struct PropertiesView: View {
                         }
 
                         BPanel("Relations") {
-                            labelled("Collection", "Collection")
+                            // The collections Blender has the object in
+                            // (`users_collection`, from the mirror's tree):
+                            // this read "Collection" whatever the scene held.
+                            labelled("Collection", collectionNames(of: obj))
                             // Blender's `parent`, as the mirror read it after
                             // the last command — the Outliner's tree reads the
                             // same value. It said "None" whatever Object ▸
                             // Parent had done.
                             labelled("Parent", obj.parentName ?? "None")
-                            // Blender's Object ▸ Visibility ▸ Show In
-                            // Viewports: `hide_viewport`, and only that. It
-                            // used to show whether the object was drawn at all,
-                            // so an object hidden with H read as off here and
-                            // turning it on wrote a flag that was already off.
+                        }
+
+                        // Blender's Object ▸ Visibility ▸ Show In ▸ Viewports
+                        // (OBJECT_PT_visibility, 5.2.1): `hide_viewport`, and
+                        // only that. It sat in Relations as "Show in
+                        // Viewports", which no panel of Blender's has (round
+                        // 4's review). It used to show whether the object was
+                        // drawn at all, so an object hidden with H read as off
+                        // here and turning it on wrote a flag that was already
+                        // off. Its step is the field's text, as the app's
+                        // other field edits are named.
+                        BPanel("Visibility") {
+                            Text("Show In").font(BTheme.Font.ui(11)).foregroundStyle(BTheme.textDim)
                             HStack {
-                                Text("Show in Viewports")
+                                Text("Viewports")
                                     .font(BTheme.Font.ui(11)).foregroundStyle(BTheme.textDim)
                                 Spacer()
-                                Toggle("", isOn: Binding(get: { !obj.disabledInViewports },
-                                                         set: { bridge?.run(
-                                                             Bpy.setDisabledInViewports(obj.name, !$0),
-                                                             undo: "Show in Viewports") }))
+                                Toggle("Viewports", isOn: Binding(get: { !obj.disabledInViewports },
+                                                                  set: { bridge?.run(
+                                                                      Bpy.setDisabledInViewports(obj.name, !$0),
+                                                                      undo: "Viewports") }))
                                     .labelsHidden()
                                     .scaleEffect(0.7)
                             }
@@ -131,24 +181,32 @@ struct PropertiesView: View {
                         // Blender's other Object-tab panels are not here.
                         // Delta Transform, Instancing, Motion Paths, Line Art
                         // and Custom Properties each held one line explaining
-                        // what they could not do, and Collections and
-                        // Visibility repeated what Relations already shows —
-                        // the same visibility toggle, bound to the same value.
-                        // Seven panels to scroll past to reach two that work.
+                        // what they could not do. Visibility holds the one
+                        // switch the app writes (Viewports).
+                        }
+
+                        if tab == .constraints {
+                            ConstraintsPanel(scene: scene, session: session, bridge: bridge, object: obj)
                         }
 
                         if tab == .modifiers {
                         BPanel("Modifiers") {
                             Menu {
-                                // Blender refuses six of these on a curve,
-                                // text or surface (`ModifierKind.meshOnly`).
-                                ForEach(ModifierKind.addable(on: obj.blenderType), id: \.self) { kind in
-                                    Button {
-                                        bridge?.run(Bpy.addModifier(kind, on: obj.mesh),
-                                                    undo: "Add Modifier")
-                                    } label: {
-                                        Label(kind.label, systemImage: kind.icon)
+                                // Blender's Add Modifier, by its categories,
+                                // with every row it lists on this type of
+                                // object (`ModifierCatalog`, round 4 group 8).
+                                // Each add is priced by the vertex budget
+                                // first (`Bpy.addModifierRow`).
+                                ForEach(ModifierCatalog.menu(for: obj.blenderType), id: \.name) { category in
+                                    Menu(category.name) {
+                                        ForEach(category.rows, id: \.self) { row in
+                                            addModifierButton(obj, row)
+                                        }
                                     }
+                                }
+                                if let nodes = ModifierCatalog.geometryNodes(on: obj.blenderType) {
+                                    Divider()
+                                    addModifierButton(obj, nodes)
                                 }
                             } label: {
                                 HStack(spacing: 5) {
@@ -269,10 +327,37 @@ struct PropertiesView: View {
                         }
                         if obj.visible {
                         BPanel("Dimensions") {
-                            let d = dimensions(of: obj)
-                            labelled("X", String(format: "%.3f m", d.x))
-                            labelled("Y", String(format: "%.3f m", d.y))
-                            labelled("Z", String(format: "%.3f m", d.z))
+                            if let d = blenderDimensions, scene.mode != .object {
+                                // Blender's own numbers, not typed: Blender's
+                                // Item tab has no Dimensions outside Object
+                                // Mode, and in Edit Mode its undo keeps only
+                                // the mesh, so a scale typed here could not
+                                // be undone (measured by round 4's review:
+                                // X typed 5, Undo, the scale still 2.5).
+                                // While editing, the edit mesh's size.
+                                labelled("X", BNumberField.Unit.meters.format(d.x))
+                                labelled("Y", BNumberField.Unit.meters.format(d.y))
+                                labelled("Z", BNumberField.Unit.meters.format(d.z))
+                                Text("Typed in Object Mode, as Blender's Item tab offers them")
+                                    .font(BTheme.Font.ui(10)).foregroundStyle(BTheme.textDim)
+                                    .fixedSize(horizontal: false, vertical: true)
+                            } else if let bridge, let d = blenderDimensions {
+                                // Typed or dragged, each axis written as
+                                // Blender's N panel writes it
+                                // (`_blenderkit_item.set_dimension`).
+                                ForEach(0..<3, id: \.self) { i in
+                                    ItemNumberField(label: ["X", "Y", "Z"][i], value: d[i], unit: .meters,
+                                                    accent: [BTheme.axisX, BTheme.axisY, BTheme.axisZ][i]) { v in
+                                        ItemActions.dimension(bridge, of: obj.name, axis: i, to: max(v, 0))
+                                        readDimensions()
+                                    }
+                                }
+                            } else if !session.usesRealBlender {
+                                let d = dimensions(of: obj)
+                                labelled("X", String(format: "%.3f m", d.x))
+                                labelled("Y", String(format: "%.3f m", d.y))
+                                labelled("Z", String(format: "%.3f m", d.z))
+                            }
                         }
                         }
                         // Blender's Vertex Groups and Shape Keys panels, read
@@ -355,6 +440,8 @@ struct PropertiesView: View {
                         .fixedSize(horizontal: false, vertical: true)
                 }
             }
+        case .text(let text):
+            TextDataPanels(session: session, bridge: bridge, object: obj, settings: text)
         case .lattice(let lattice):
             BPanel("Lattice") {
                 // Greyed out with shape keys, as Blender's are: a write there
@@ -835,8 +922,9 @@ struct PropertiesView: View {
             case .other:
                 // A kind this panel has no settings rows for. The header's
                 // controls are Blender's own for any modifier and work on it.
-                // Its settings are Blender's RNA, which the Every Property
-                // browser reads and writes through `set_property` — opened
+                // Its settings are Blender's RNA, which the Data API browser
+                // (the Outliner's display mode of that name in Blender)
+                // reads and writes through `set_property` — opened
                 // here on this modifier rather than on the object, so they are
                 // one tap away, not a hunt through `modifiers`.
                 if session.usesRealBlender {
@@ -845,7 +933,7 @@ struct PropertiesView: View {
                                            startPath: Bpy.modifierDataPath(modifier.name),
                                            revision: session.backendRevision)
                     } label: {
-                        fieldLabel("Settings", "Every Property ›", dim: false)
+                        fieldLabel("Settings", "Data API ›", dim: false)
                     }
                     .buttonStyle(.plain)
                 }
@@ -857,6 +945,10 @@ struct PropertiesView: View {
                      : "Blender's settings for this \(modifier.typeLabel) could not be read")
                     .font(BTheme.Font.ui(10)).foregroundStyle(BTheme.textDim)
                     .fixedSize(horizontal: false, vertical: true)
+            case .curve, .wireframe, .skin, .hook, .armature, .surfaceDeform, .meshDeform,
+                 .dataTransfer, .normalEdit, .mask, .build:
+                DeclaredModifierRows(scene: scene, session: session, bridge: bridge,
+                                     object: obj, modifier: modifier)
             case .weld:
                 // Weld has one setting the row offers: its Vertex Group, below.
                 if !session.usesRealBlender {
@@ -872,7 +964,9 @@ struct PropertiesView: View {
             // simulator's stand-in has no vertex groups to pick. Decimate
             // reads it only when collapsing, the one mode the row drives.
             if modifier.kind.takesVertexGroup, session.usesRealBlender,
-               modifier.kind != .decimate || modifier.decimateType == "COLLAPSE" {
+               modifier.kind != .decimate || modifier.decimateType == "COLLAPSE",
+               // Mask draws the field in its Vertex Group mode only.
+               modifier.kind != .mask || modifier.setting("mode") != "ARMATURE" {
                 vertexGroupPicker(obj: obj, modifier: modifier)
             }
         }
@@ -881,6 +975,26 @@ struct PropertiesView: View {
         .clipShape(RoundedRectangle(cornerRadius: BTheme.Metric.corner))
         // A modifier off in the viewport reads as off, as Blender greys it.
         .opacity(modifier.showInViewport ? 1 : 0.7)
+    }
+
+    /// One Add Modifier row. An Essentials node group needs Blender's asset
+    /// library, which the device's Blender does not have: greyed out then,
+    /// as the 3D View's Shade Auto Smooth is. The simulator's stand-in adds
+    /// only the kinds it models.
+    @ViewBuilder
+    private func addModifierButton(_ obj: BKObject, _ row: ModifierCatalog.Row) -> some View {
+        let unavailable = row.asset ? session.essentialsLibrary != true
+            : !session.usesRealBlender && !row.simulatorCanAdd
+        Button {
+            bridge?.run(Bpy.addModifierRow(row, on: obj.mesh), undo: UndoStep.addModifier)
+        } label: {
+            if let kind = row.kind {
+                Label(row.label, systemImage: kind.icon)
+            } else {
+                Text(unavailable && row.asset ? row.label + " (needs the Essentials library)" : row.label)
+            }
+        }
+        .disabled(unavailable)
     }
 
     /// Multiresolution: its three levels, what Subdivide has made, and the
@@ -1138,7 +1252,9 @@ struct PropertiesView: View {
                 .hoverEffect(.highlight)
     }
 
-    /// World-space bounding-box size, as Blender's Dimensions field reports it.
+    /// The simulator's stand-in only: the drawn mesh's world-space box. Not
+    /// Blender's Dimensions (the object's own bounds times its world scale),
+    /// which the real Blender's panel reads back instead.
     private func dimensions(of obj: BKObject) -> SIMD3<Float> {
         guard !obj.mesh.vertices.isEmpty else { return .zero }
         let m = obj.modelMatrix
@@ -1149,6 +1265,14 @@ struct PropertiesView: View {
             lo = min(lo, w); hi = max(hi, w)
         }
         return hi - lo
+    }
+
+    /// Every collection the object is directly in, Blender's order, or what
+    /// is true when Blender sent no tree.
+    private func collectionNames(of obj: BKObject) -> String {
+        guard let tree = scene.collections else { return "—" }
+        let names = tree.collections(holding: obj.name).map(\.name)
+        return names.isEmpty ? "None" : names.joined(separator: ", ")
     }
 
     @ViewBuilder
@@ -1209,16 +1333,22 @@ struct ObjectTransformFields: View {
     var object: BKObject
     var scene: BKScene
     var bridge: BpyBridge?
-    @State private var edit: TransformFieldEdit?
+    /// The edit in progress and Blender's preview of it, in the type the
+    /// `-object-ops field:` DEBUG hook drives too (`TransformFieldDrag`).
+    @State private var drag = TransformFieldDrag()
 
     var body: some View {
-        let shown = edit.flatMap { $0.object === object ? $0.edited : nil } ?? object.shownChannels
-        if let shown {
+        if let shown = drag.shown(for: object) {
             VStack(alignment: .leading, spacing: 6) {
                 ForEach(TransformChannels.Group.allCases, id: \.self) { group in
                     row(group, shown)
                 }
             }
+            // A panel closed mid-edit — the sheet swiped away, the tab
+            // changed — commits what it previewed, as a cancelled scrub does
+            // (BNumberField): an edit left open would hold Blender's preview
+            // and every command behind it (BpySession.constrainedDragOpen).
+            .onDisappear { commitPending() }
         } else {
             Text("Blender's transform channels for \(object.name) did not arrive with the scene, "
                  + "so the fields are left out rather than shown wrong.")
@@ -1263,20 +1393,18 @@ struct ObjectTransformFields: View {
     }
 
     private func change(_ group: TransformChannels.Group, axis: Int, to value: Float) {
-        if edit?.object !== object {
-            edit?.rollBackDrawing()
-            edit = TransformFieldEdit(object: object, scene: scene)
-        }
-        edit?.change(group, axis: axis, to: value)
+        drag.change(group, axis: axis, to: value, of: object, in: scene, bridge: bridge)
     }
 
     private func commit(_ group: TransformChannels.Group) {
-        guard let pending = edit else { return }
-        edit = nil
-        if let bridge {
-            bridge.commitTransformField(pending, group: group)
-        } else {
-            pending.rollBackDrawing()
-        }
+        drag.commit(group, bridge: bridge)
+    }
+
+    /// The group being edited is the one whose value differs from Blender's.
+    private func commitPending() {
+        guard let edit = drag.edit else { return }
+        let group = TransformChannels.Group.allCases.first { edit.edited.values($0) != edit.start.values($0) }
+            ?? .location
+        drag.commit(group, bridge: bridge)
     }
 }

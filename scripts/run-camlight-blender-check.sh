@@ -45,8 +45,13 @@ done
 [ -n "$PYTHON" ] || PYTHON=python3
 
 status=0
+# Blender gets a HOME and BLENDER_USER_RESOURCES of its own: even a bare
+# `-b --factory-startup` run writes ~/.thumbnails into HOME (measured), and an
+# operator can write Blender's settings. Other checks run at the same time.
+home="$BUILD/home"
+mkdir -p "$home"
 echo "== Blender $("$BLENDER" --version | head -1 | cut -d' ' -f2), headless"
-"$BLENDER" -b --factory-startup --python-exit-code 1 \
+HOME="$home" BLENDER_USER_RESOURCES="$home/res" "$BLENDER" -b --factory-startup --python-exit-code 1 \
   --python tests/camlight/blender/verify.py -- "$BUILD/calls.txt" "$BUILD" || status=1
 echo
 echo "== the overlay code against Blender's frames"

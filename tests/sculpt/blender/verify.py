@@ -355,7 +355,7 @@ check("leaving Sculpt Mode part way through a stroke: the next chunk is refused"
       said is not None and "left Sculpt Mode" in said, said)
 ended = answer("END")
 check("and the stroke ends with what it made kept as its steps", ended["pushed"] >= 1, ended)
-push("Sculpt Stroke")
+push("Draw Brush")
 bpy.ops.object.mode_set(mode='SCULPT')
 push("Sculpt Mode")
 
@@ -367,7 +367,7 @@ results = {}
 for per in (24, 8, 4, 1):
     begin, chunks, end = stroke(ball, cam, line, per_chunk=per)
     results[per] = (positions(ball), end)
-    push("Sculpt Stroke")
+    push("Draw Brush")
     undo()
 check("streamed in chunks of 8, 4 and 1 point, the result is the one stroke's to the bit",
       all(moved(results[24][0], results[p][0]) == (0, 0.0) for p in (8, 4, 1)),
@@ -380,9 +380,10 @@ check("each is one of Blender's undo steps (and its zero-strength anchor), count
 check("Undo took each back to the vertex", same(base, snapshot(ball)))
 begin, chunks, end = stroke(ball, cam, line, per_chunk=4)
 after = snapshot(ball)
-state = push("Sculpt Stroke")
-check("the history records it as one step as deep as Blender's", undo_module._steps[-1]["depth"]
-      == end["pushed"] and state["undo_label"] == "Sculpt Stroke", (undo_module._steps[-1], end))
+state = push(end.get("step", "Sculpt"))
+check("the history records it as one step as deep as Blender's, under Blender's own name for it",
+      undo_module._steps[-1]["depth"] == end["pushed"] and end.get("step") == "Draw Brush"
+      and state["undo_label"] == "Draw Brush", (undo_module._steps[-1], end))
 undo()
 check("one Undo: the mesh before the stroke", same(base, snapshot(ball)))
 redo()
@@ -404,11 +405,39 @@ e.to_mesh_clear()
 check("refreshed as the mirroring pass refreshes it, the evaluated mesh is the mesh",
       moved(positions(ball), fresh_read) == (0, 0.0), moved(positions(ball), fresh_read))
 begin, chunks, end = stroke(ball, cam, line, per_chunk=4, mode="INVERT")
-push("Sculpt Stroke")
+push("Draw Brush")
 inverted = positions(ball)
 check("Invert digs where Draw raised (the vertices move back toward the centre)",
       sum(Vector(inverted[i:i + 3]).length for i in range(0, len(inverted), 3))
       < sum(Vector(after[0][i:i + 3]).length for i in range(0, len(after[0]), 3)))
+
+# --------------------------------------------------------------------------
+print("\nA Line stroke is spaced, as Blender's is")
+
+# Blender's line end adds a dab at the start and spaces the rest to the end
+# (paint_stroke_line_end calls paint_space_stroke); the module sent the
+# line's two ends alone (round 4's review).
+before_line = positions(ball)
+method = sculpt._brush().stroke_method
+sculpt._brush().stroke_method = 'LINE'
+try:
+    begin, chunks, end = stroke(ball, cam, line, per_chunk=4)
+    push(end.get("step", "Draw Brush"))
+    line_moved = moved(before_line, positions(ball))[0]
+    undo()
+finally:
+    sculpt._brush().stroke_method = method
+window, area, region = sculpt._knife.view3d()
+with bpy.context.temp_override(window=window, area=area, region=region):
+    mapped = sculpt.aim(area.spaces.active, area.spaces.active.region_3d, region, cam, VIEW)
+    first, last = sculpt.to_region(line[0], mapped), sculpt.to_region(line[-1], mapped)
+step = max(1.0, max(1.0, sculpt._size_owner().size / 2.0) * sculpt._brush().spacing / 50.0)
+expected = 1 + int(math.hypot(last[0] - first[0], last[1] - first[1]) // step)
+check("a Line of %.0f px at a %.1f px spacing sends %d dabs, Blender's spacing from the start (%d), and "
+      "moves %d vertices" % (math.hypot(last[0] - first[0], last[1] - first[1]), step, end["dabs"], expected,
+                             line_moved),
+      end["strategy"] == 'line' and end["dabs"] == expected > 2 and line_moved > 20, end)
+check("Undo takes it back", moved(before_line, positions(ball))[0] == 0)
 
 # --------------------------------------------------------------------------
 print("\nGrab past the silhouette, and a Snake Hook long enough to be cut")
@@ -417,7 +446,7 @@ run("ACTIVATE", brush="Grab")
 side = camera_on(obj(ball), azimuth=0.0, elevation=0.0)
 before = snapshot(ball)
 begin, chunks, end = stroke(ball, side, points(side, (0.95, -0.2, 0.0), (1.7, -0.2, 0.0), 20), per_chunk=3)
-push("Sculpt Stroke")
+push("Draw Brush")
 furthest = max(positions(ball)[i] for i in range(0, len(positions(ball)), 3))
 check("Grab is streamed anchored: [first dab, current dab] each chunk",
       begin["strategy"] == "anchored", begin)
@@ -433,7 +462,7 @@ long = points(cam, (-0.6, -0.7, 0.3), (0.6, -0.7, 0.3), 90)
 sculpt.REPLAY_BUDGET_MS, budget = 0.0, sculpt.REPLAY_BUDGET_MS
 begin, chunks, end = stroke(ball, cam, long, per_chunk=6)
 sculpt.REPLAY_BUDGET_MS = budget
-push("Sculpt Stroke")
+push("Draw Brush")
 check("a replay over budget is cut, and goes on as a new stroke (%d cuts)" % end["cuts"],
       end["cuts"] >= 2 and moved(before[0], positions(ball))[0] > 0, end)
 check("every piece is counted into the one step", undo_module._steps[-1]["depth"] == end["pushed"]
@@ -465,7 +494,7 @@ for name in names:
         continue
     after = snapshot(sweep)
     if end["pushed"]:
-        push("Sculpt Stroke")
+        push("Draw Brush")
         undo()
         if not same(before, snapshot(sweep)):
             lost.append((name, "undo"))
@@ -526,7 +555,7 @@ for name in names:
     if name in core and moved(before, after)[0] > 0 and far == 0:
         one_sided.append(name)
     if end["pushed"]:
-        push("Sculpt Stroke")
+        push("Draw Brush")
         undo()
 check("every brush strokes with X, Y and Z symmetry on, none crashes", not broken, broken)
 check("each core brush that moves the sphere moves its mirror image too", not one_sided, one_sided)
@@ -559,7 +588,7 @@ check("on", obj(sweep).use_dynamic_topology_sculpting)
 run("DETAIL_6")
 check("the Relative detail size reads back", abs(answer("STATE")["detail_size"] - 6) < 1e-4)
 begin, chunks, end = stroke(sweep, sweep_cam, path, per_chunk=4)
-push("Sculpt Stroke")
+push("Draw Brush")
 check("a stroke under it changes the topology (%d -> %d vertices)" % (count, len(positions(sweep))),
       len(positions(sweep)) != count)
 check("the viewport's mesh follows (the evaluated mesh, flushed)",
@@ -578,42 +607,101 @@ check("Redo, Redo: on, and the stroke back",
 # Dynamic Topology turned off at the stroke's second chunk: its rewind landed
 # on the memfile step, which comes back without the dynamic topology mesh, and
 # the rest of the stroke replayed without it. The stroke's anchor dab (zero
-# strength, detail at Manual) now puts a Sculpt step under it to rewind onto.
-push("Labelled change")
-check("precondition: the step under the next stroke is a Global Undo step",
-      sculpt._below_is_sculpt_step() is False, sculpt._undo.blender_steps())
+# strength, detail at Manual) now puts a Sculpt step under it to rewind onto,
+# and that step joins the labelled change's history step
+# (`_blenderkit_undo.join_current`), so the stroke's Undo stops on it too.
+def over_labelled(label):
+    """A Draw stroke over a labelled change, then Undo and Redo of it, and of
+    the labelled change under it: what each left."""
+    push(label)
+    below = sculpt._below_is_sculpt_step()
+    state = answer("STATE")
+    labelled = len(positions(sweep))
+    under = undo_module._index
+    answer("BEGIN", object=sweep, camera=camera_literal(sweep_cam))
+    on_each_chunk = []
+    for i in range(0, len(path), 4):
+        answer("CHUNK", points=literal(path[i:i + 4]))
+        on_each_chunk.append(obj(sweep).use_dynamic_topology_sculpting)
+    end = answer("END")
+    push("Draw Brush")
+    made = len(positions(sweep))
+    seen = dict(below=below, labelled=labelled, made=made, chunks=on_each_chunk, end=end,
+                detail=bpy.context.scene.tool_settings.sculpt.detail_type_method,
+                index=(under, undo_module._index))
+    undo()
+    seen["undo"] = (len(positions(sweep)), obj(sweep).use_dynamic_topology_sculpting, undo_module._index)
+    redo()
+    seen["redo"] = (len(positions(sweep)), obj(sweep).use_dynamic_topology_sculpting, undo_module._index)
+    undo()
+    undo()
+    seen["undo_both"] = (len(positions(sweep)), obj(sweep).mode, undo_module._index)
+    redo()
+    redo()
+    seen["redo_both"] = (len(positions(sweep)), obj(sweep).mode, obj(sweep).use_dynamic_topology_sculpting,
+                         undo_module._index)
+    return seen
+
+
+def round3_anchor(stroke):
+    """Round 3's anchor under dynamic topology, for the negative control: a
+    zero-strength dab with the detail method at Manual, counted into the
+    stroke."""
+    brush, owner = sculpt._brush(), sculpt._strength_owner()
+    settings = bpy.context.scene.tool_settings.sculpt
+    saved, smooth, detail = owner.strength, brush.auto_smooth_factor, settings.detail_type_method
+    owner.strength, brush.auto_smooth_factor, settings.detail_type_method = 0.0, 0.0, 'MANUAL'
+    try:
+        pushed = sculpt._run(stroke, sculpt._stroke_elements([stroke['open'][-1]], stroke['location']),
+                             stroke['location'] is None)
+    finally:
+        owner.strength, brush.auto_smooth_factor, settings.detail_type_method = saved, smooth, detail
+    if not pushed:
+        return None
+    stroke['pushed'] += 1
+    return True
+
+
+# The negative control first: the module as round 3 left it, the anchor a
+# zero-strength dab counted into the stroke, gives back what the review
+# measured.
 detail_before = bpy.context.scene.tool_settings.sculpt.detail_type_method
-labelled = len(positions(sweep))
-answer("BEGIN", object=sweep, camera=camera_literal(sweep_cam))
-on_each_chunk = []
-for i in range(0, len(path), 4):
-    answer("CHUNK", points=literal(path[i:i + 4]))
-    on_each_chunk.append(obj(sweep).use_dynamic_topology_sculpting)
-answer("END")
-push("Sculpt Stroke")
-check("over it, Dynamic Topology stays on through every chunk (%d chunks)" % len(on_each_chunk),
-      len(on_each_chunk) >= 3 and all(on_each_chunk), on_each_chunk)
-check("and the stroke changed the topology (%d -> %d vertices)" % (labelled, len(positions(sweep))),
-      len(positions(sweep)) != labelled)
-check("the detail method is put back after the anchor's dab",
-      bpy.context.scene.tool_settings.sculpt.detail_type_method == detail_before,
-      bpy.context.scene.tool_settings.sculpt.detail_type_method)
-undo()
-after_undo = (len(positions(sweep)), obj(sweep).use_dynamic_topology_sculpting)
-print("  NOTE  Undo of that stroke: %d vertices (labelled change had %d), Dynamic Topology %s"
-      % (after_undo[0], labelled, "on" if after_undo[1] else "off"))
-check("Undo: the topology from before the stroke", after_undo[0] == labelled, after_undo)
-redo()
-after_redo = (len(positions(sweep)), obj(sweep).use_dynamic_topology_sculpting)
-# Not fixed, and no worse than before the anchor (measured with the module
-# from before it: the same off and the same 5,340 vertices after Redo): the
-# Undo goes down onto the labelled change's memfile step, which comes back
-# without the dynamic topology mesh, and the Redo has none to replay the
-# stroke onto. The anchor cannot be left out of the stroke here as it is
-# after a relaunch: the labelled change's own Undo would then stop a step
-# short. docs/blender-local.md lists it as open.
-print("  NOTE  open: Redo over a labelled change gives %d vertices, Dynamic Topology %s"
-      % (after_redo[0], "on" if after_redo[1] else "off"))
+anchored = sculpt._anchor_dyntopo
+sculpt._anchor_dyntopo = round3_anchor
+try:
+    old = over_labelled("Labelled change")
+finally:
+    sculpt._anchor_dyntopo = anchored
+check("negative control: with round 3's anchor, the stroke's Undo turns Dynamic Topology off "
+      "(%d vertices, %s) and the Redo has no stroke to give back (%d, the stroke made %d)"
+      % (old["undo"][0], old["undo"][1], old["redo"][0], old["made"]),
+      old["undo"][1] is False and old["redo"][0] != old["made"], old)
+if not obj(sweep).use_dynamic_topology_sculpting:
+    run("DYNTOPO_ON")
+    push("Dynamic Topology Toggle")
+seen = over_labelled("Labelled change")
+check("precondition: the step under the next stroke is a Global Undo step", seen["below"] is False, seen)
+check("over it, Dynamic Topology stays on through every chunk (%d chunks)" % len(seen["chunks"]),
+      len(seen["chunks"]) >= 3 and all(seen["chunks"]), seen["chunks"])
+check("and the stroke changed the topology (%d -> %d vertices)" % (seen["labelled"], seen["made"]),
+      seen["made"] != seen["labelled"])
+check("the detail method is put back after the anchor's dab", seen["detail"] == detail_before, seen["detail"])
+check("the stroke is one history step above the labelled change (%d -> %d)" % seen["index"],
+      seen["index"][1] == seen["index"][0] + 1, seen["index"])
+check("Undo of the stroke: the topology from before it (%d vertices), Dynamic Topology still on"
+      % seen["undo"][0], seen["undo"][0] == seen["labelled"] and seen["undo"][1] is True
+      and seen["undo"][2] == seen["index"][0], seen["undo"])
+check("Redo: the stroke back (%d vertices), Dynamic Topology still on" % seen["redo"][0],
+      seen["redo"][0] == seen["made"] and seen["redo"][1] is True and seen["redo"][2] == seen["index"][1],
+      seen["redo"])
+check("Undo, Undo: one step each, past the labelled change, still in Sculpt Mode (index %d)"
+      % seen["undo_both"][2], seen["undo_both"][2] == seen["index"][0] - 1
+      and seen["undo_both"][1] == 'SCULPT', seen["undo_both"])
+check("Redo, Redo: the stroke back again (%d vertices, index %d)" % (seen["redo_both"][0], seen["redo_both"][3]),
+      seen["redo_both"][0] == seen["made"] and seen["redo_both"][3] == seen["index"][1], seen["redo_both"])
+check("and Dynamic Topology on again after it: the Redo crossed the labelled change's memfile step, "
+      "and the anchor's Dynamic Topology Toggle rebuilt the mesh the stroke replays onto",
+      seen["redo_both"][2] is True, seen["redo_both"])
 if not obj(sweep).use_dynamic_topology_sculpting:
     run("DYNTOPO_ON")
     push("Dynamic Topology Toggle")
@@ -676,7 +764,7 @@ check("in Sculpt Mode the evaluated mesh is Multires's base (%d vertices), the l
       "draws is read from a temporary object (%d)" % (len(base) // 3, len(levels[0]) // 3),
       len(levels[0]) > len(base), (len(base), len(levels[0])))
 begin, chunks, end = stroke(cube, cube_cam, points(cube_cam, (-4.5, -0.9, 0.2), (-3.5, -0.9, 0.2), 16))
-push("Sculpt Stroke")
+push("Draw Brush")
 drawn = sculpt.multires_display(obj(cube))
 check("a stroke on the Multires level shows in the level the viewport draws",
       moved(levels[0], drawn[0])[0] > 0 and moved(base, evaluated(cube))[0] == 0,
@@ -686,7 +774,7 @@ for name in ("Erase Multires Displacement", "Smear Multires Displacement", "Mask
     said = None
     try:
         stroke(cube, cube_cam, points(cube_cam, (-4.5, -0.9, -0.2), (-3.5, -0.9, -0.2), 12))
-        push("Sculpt Stroke")
+        push("Draw Brush")
     except RuntimeError as error:
         said = str(error)
     check("%s strokes on the Multires level%s" % (name, " (its grid mask made first: desktop 5.2.1 "
@@ -721,7 +809,7 @@ check("Fill masks every vertex", answer("STATE")["masked"] == len(positions(swee
 run("ACTIVATE", brush="Draw")
 held = positions(sweep)
 begin, chunks, end = stroke(sweep, sweep_cam, path, per_chunk=4)
-push("Sculpt Stroke")
+push("Draw Brush")
 check("a Draw stroke moves nothing that is masked", moved(held, positions(sweep))[0] == 0,
       moved(held, positions(sweep)))
 run("MASK_INVERT")
@@ -729,7 +817,7 @@ push("Mask Flood Fill")
 check("Invert: nothing masked", answer("STATE")["masked"] == 0)
 run("ACTIVATE", brush="Mask")
 begin, chunks, end = stroke(sweep, sweep_cam, path, per_chunk=4)
-push("Sculpt Stroke")
+push("Draw Brush")
 masked = answer("STATE")["masked"]
 check("the Mask brush masks what it strokes (%d vertices)" % masked, 0 < masked < len(held) // 3)
 run("FACE_SET_FROM_MASK")
@@ -796,7 +884,7 @@ for kind in ("dyntopo", "multires"):
         run("ACTIVATE", brush=brush)
         try:
             stroke(name, kind_cam, kind_path, per_chunk=4)
-            push("Sculpt Stroke")
+            push("Draw Brush")
             ran.append(brush)
             # Back to the fixture as it was: under dynamic topology every
             # stroke adds detail, and 64 of them in a row made the cloth
@@ -866,7 +954,7 @@ box_cam = camera_on(obj("Box"), azimuth=0.0, elevation=0.0)
 before = level("Box")
 begin, chunks, end = stroke("Box", box_cam, points(box_cam, (0.3, 19.0, 0.3), (0.3, 19.0, 0.9), 12),
                             per_chunk=3)
-push("Sculpt Stroke")
+push("Draw Brush")
 after = level("Box")
 check("on Multires a stroke is gathered and made when it ends: no chunk runs Blender",
       begin["strategy"] == "deferred" and not any(c["applied"] for c in chunks), (begin, chunks))
@@ -894,7 +982,23 @@ push("Multires by script")
 said = refused("ENTER")
 check("Sculpt Mode's way in is refused for a Multires that heavy, before Blender enters",
       said is not None and "Sculpt level to 0" in said and obj(heavy).mode == 'OBJECT', said)
-bpy.ops.object.mode_set(mode='SCULPT')
+# A script line's mode_set is asked the same now (`_blenderkit_context.
+# refuse_sculpt_entry`, round 4's review); a file saved in Sculpt Mode on the
+# level still opens in it, which is entered here past that guard.
+try:
+    bpy.ops.object.mode_set(mode='SCULPT')
+    said = None
+except RuntimeError as error:
+    said = str(error)
+check("and so is a script line's mode_set", said is not None and "Sculpt level to 0" in said
+      and obj(heavy).mode == 'OBJECT', said)
+context_module = sys.modules["_blenderkit_context"]
+real_entry = context_module.refuse_sculpt_entry
+context_module.refuse_sculpt_entry = lambda *arguments: None
+try:
+    bpy.ops.object.mode_set(mode='SCULPT')
+finally:
+    context_module.refuse_sculpt_entry = real_entry
 push("Sculpt Mode by script")
 check("opened in Sculpt Mode anyway (as a file can be), its level is not read back",
       sculpt.multires_display(obj(heavy)) is None)
@@ -935,9 +1039,10 @@ for block, fill in (("MASK_FILL", {}), ("ACTIVATE", {"brush": "Clay Strips"}), (
 for i in range(4, 24, 4):
     answer("CHUNK", points=literal(held_line[i:i + 4]))
 end = answer("END")
-state = push("Sculpt Stroke")
+state = push(end.get("step", "Sculpt"))
 stroked = snapshot(held)
-check("the stroke is one history step", state["undo_label"] == "Sculpt Stroke"
+check("the stroke is one history step, named as Blender's history names it",
+      state["undo_label"] == end.get("step") and end.get("step", "").endswith(" Brush")
       and undo_module._steps[-1]["depth"] == end["pushed"], (state, end))
 undo()
 check("one Undo: the mesh and the mask from before it", same(start, snapshot(held)))
@@ -958,7 +1063,7 @@ answer("CHUNK", points=literal(held_line[:8]))
 answer("BEGIN", object=held, camera=camera_literal(held_cam))        # its END never came
 answer("CHUNK", points=literal(held_line[8:16]))
 end = answer("END")
-push("Sculpt Stroke")
+push("Draw Brush")
 check("a stroke whose end never came is counted into the next stroke's step (%d steps)" % end["pushed"],
       end["pushed"] >= 2 and end["counted"], end)
 undo()
@@ -988,7 +1093,7 @@ check("the anchor dab moves nothing, Auto-Smooth and all (%d moved), and the bru
       anchored is True and moved(pre, positions(held))[0] == 0 and density.auto_smooth_factor > 0,
       anchored)
 answer("END")
-push("Sculpt Stroke")
+push("Draw Brush")
 undo()
 run("ACTIVATE", brush="Draw")
 
@@ -1000,9 +1105,11 @@ bpy.context.object.name = "Imported"
 push("Add Imported")
 enter("Imported")
 said = refused("VOXEL_REMESH")
+estimate = int(sculpt.remesh_estimate(obj("Imported").data, 0.1, 2_500_000)[0])
 check("Voxel Remesh at Blender's default 0.1 on a 2 m model imported at scale 0.01 (200 of its own "
-      "units across) is refused, in its own units", said is not None and "own units" in said
-      and "31," in said, said)
+      "units across) is refused, in its own units (about %s vertices)" % format(estimate, ','),
+      said is not None and "own units" in said and format(estimate, ',')[:6] in said
+      and estimate > 2_500_000, said)
 bpy.ops.object.mode_set(mode='OBJECT')
 push("Object Mode")
 bpy.ops.mesh.primitive_plane_add(size=2, location=(4, 26, 0))
@@ -1011,8 +1118,11 @@ push("Add Sheet")
 enter("Sheet")
 sculpt.set_voxel_size(0.0001)
 said = refused("VOXEL_REMESH")
-check("a 2 m plane at the field's 0.0001 minimum (about 800 million vertices) is refused",
-      said is not None and "Use 0.002 or larger" in said, said)
+smallest = sculpt.remesh_smallest(obj("Sheet").data, 2_500_000)
+check("a 2 m plane at the field's 0.0001 minimum (about 800 million vertices) is refused, "
+      "naming the smallest size the budget allows (%.4g)" % smallest,
+      said is not None and ("Use %.4g or larger" % smallest) in said
+      and abs(sculpt.remesh_estimate(obj("Sheet").data, smallest)[0] / 2_500_000 - 1) < 1e-6, said)
 for size in (0.02, 0.01):
     sculpt.set_voxel_size(size)
     estimate, _ = sculpt.remesh_estimate(obj("Sheet").data, size)
@@ -1022,6 +1132,119 @@ for size in (0.02, 0.01):
     check("at %g it remeshes, into %d vertices, under the guard's estimate of %d" % (size, made, estimate),
           0 < made <= estimate)
     undo()
+
+# Thin and open shapes. OpenVDB rebuilds a feature thinner than a voxel as a
+# tube or a blob about a voxel across, so area alone undercounted them: up to
+# 53 times (round 4's measurements, REMESH_OFFSET). Each is remeshed by
+# Blender here and held to the estimate; the old 2.5 x area / voxel squared
+# is the negative control, under the count on every thin one.
+import random, bmesh
+bpy.ops.object.mode_set(mode='OBJECT')
+push("Object Mode")
+
+
+def joined(name, add, count, seed):
+    random.seed(seed)
+    for _ in range(count):
+        add(random)
+    bpy.ops.object.select_all(action='DESELECT')
+    made = [o for o in bpy.context.view_layer.objects if o.name.startswith("_bk_part")]
+    for o in made:
+        o.select_set(True)
+    bpy.context.view_layer.objects.active = made[0]
+    bpy.ops.object.join()
+    bpy.context.object.name = name
+    return bpy.context.object
+
+
+def part(kind, **arguments):
+    getattr(bpy.ops.mesh, "primitive_" + kind + "_add")(**arguments)
+    bpy.context.object.name = "_bk_part"
+
+
+shapes = {
+    "rod": lambda: part("cylinder", radius=0.01, depth=2, location=(10, 0, 0)),
+    "thin torus": lambda: part("torus", major_radius=1, minor_radius=0.01, location=(10, 4, 0)),
+    "hair": lambda: joined("Hair", lambda r: part("cylinder", radius=0.004, depth=1.5, vertices=6,
+                                                   location=(10 + r.uniform(-1, 1), 8 + r.uniform(-1, 1), 0),
+                                                   rotation=(r.uniform(0, 3), r.uniform(0, 3), 0)), 30, 3),
+    "dust": lambda: joined("Dust", lambda r: part("cube", size=0.004,
+                                                   location=(10 + r.uniform(-1, 1), 12 + r.uniform(-1, 1),
+                                                             r.uniform(-1, 1))), 200, 4),
+    "leaves": lambda: joined("Leaves", lambda r: part("plane", size=0.2,
+                                                       location=(10 + r.uniform(-1, 1), 16 + r.uniform(-1, 1),
+                                                                 r.uniform(-1, 1)),
+                                                       rotation=(r.uniform(0, 3), r.uniform(0, 3), 0)), 40, 5),
+    "cube": lambda: part("cube", size=2, location=(14, 0, 0)),
+    "sphere": lambda: part("uv_sphere", radius=1, location=(14, 4, 0)),
+    "open tube": lambda: part("cylinder", radius=1, depth=2, end_fill_type='NOTHING', location=(14, 8, 0)),
+}
+under, over, old_under = [], [], []
+for label, make in shapes.items():
+    make()
+    target = bpy.context.object
+    for size in (0.1, 0.05):
+        target.data.remesh_voxel_size = size
+        estimate = sculpt.remesh_estimate(target.data, size)[0]
+        area = sum(p.area for p in target.data.polygons)
+        old = 2.5 * area / (size * size)
+        copy = target.copy()
+        copy.data = target.data.copy()
+        bpy.context.scene.collection.objects.link(copy)
+        bpy.ops.object.select_all(action='DESELECT')
+        copy.select_set(True)
+        bpy.context.view_layer.objects.active = copy
+        bpy.ops.object.voxel_remesh()
+        made = len(copy.data.vertices)
+        bpy.data.objects.remove(copy)
+        if made > estimate:
+            under.append((label, size, made, int(estimate)))
+        if label in ("cube", "sphere", "open tube") and estimate > 3.5 * made:
+            over.append((label, size, made, int(estimate)))
+        if label not in ("cube", "sphere", "open tube") and made > old:
+            old_under.append((label, size, made, int(old)))
+    # Out of the scene, so the next shape's parts are joined without it.
+    mesh = target.data
+    bpy.data.objects.remove(target)
+    bpy.data.meshes.remove(mesh)
+check("every thin, open and ordinary shape remeshes within its estimate (8 shapes, 2 sizes)", not under, under)
+check("ordinary shapes are not overestimated past 3.5 times", not over, over)
+check("negative control: the old 2.5 x area / voxel squared undercounts every thin shape "
+      "(%d of 10 remeshes)" % len(old_under), len(old_under) == 10, old_under)
+# Where it matters: a refusal near the budget. 30 rods 0.1 mm thick, 2 m
+# long, at a 1 mm voxel, remeshed for real; then the same rods eleven times
+# over, which area alone put under the budget and this does not.
+rods = joined("Rods", lambda r: part("cylinder", radius=0.0001, depth=2, vertices=6,
+                                     location=(18 + r.uniform(-1, 1), r.uniform(-1, 1), 0)), 30, 6)
+rods.data.remesh_voxel_size = 0.001
+estimate = sculpt.remesh_estimate(rods.data, 0.001)[0]
+area_alone = 2.5 * sum(p.area for p in rods.data.polygons) / 0.001 ** 2
+select("Rods")
+bpy.ops.object.voxel_remesh()
+made = len(rods.data.vertices)
+check("30 rods of 0.1 mm at a 1 mm voxel: %d vertices, within the estimate of %d (area alone said %d)"
+      % (made, estimate, area_alone), area_alone < made <= estimate, (made, estimate, area_alone))
+# The refusal, at a budget the 30 rods pass: area alone would have let them
+# through (the negative control), the estimate stops them.
+import _blenderkit_multires
+undo_module_budget = _blenderkit_multires.BUDGET
+_blenderkit_multires.BUDGET = 100_000
+try:
+    # The same 30 rods again, not yet remeshed.
+    again = joined("Rods Again", lambda r: part("cylinder", radius=0.0001, depth=2, vertices=6,
+                                                location=(18 + r.uniform(-1, 1), r.uniform(-1, 1), 0)), 30, 6)
+    again.data.remesh_voxel_size = 0.001
+    before = len(again.data.vertices)
+    said = None
+    try:
+        sculpt.refuse_voxel_remesh(again)
+    except RuntimeError as error:
+        said = str(error)
+finally:
+    _blenderkit_multires.BUDGET = undo_module_budget
+check("at a budget of 100,000, those rods (%d vertices remeshed) are refused, where area alone (%d) "
+      "would have let them through" % (made, area_alone),
+      said is not None and "100,000" in said and area_alone < 100_000 < made and before < made, said)
 
 bpy.ops.object.mode_set(mode='OBJECT')
 push("Object Mode")
@@ -1073,7 +1296,7 @@ for i in range(0, 60, 2):
         mismatched += 1
     kept += 1 if result.get("kept") else 0
 end = answer("END")
-push("Sculpt Stroke")
+push("Draw Brush")
 check("a chunk whose replay makes nothing puts the rewound step back (%d such chunks): Blender "
       "holds what the viewport shows after every chunk, and at the end" % kept,
       kept > 0 and mismatched == 0 and moved(shown, positions(smooth))[1] < 1e-6, (kept, mismatched, end))
@@ -1095,7 +1318,7 @@ before = positions(held)
 begin, chunks, end = stroke(held, held_cam, held_line)
 check("and a stroke on it starts the brush tool, sculpts (%d moved) and is a step"
       % moved(before, positions(held))[0], moved(before, positions(held))[0] > 0 and end["pushed"] >= 1, end)
-push("Sculpt Stroke")
+push("Draw Brush")
 
 # --------------------------------------------------------------------------
 print("\nWhat a chunk costs (desktop Blender, not the device)")
@@ -1109,7 +1332,7 @@ run("ACTIVATE", brush="Draw")
 big_cam = camera_on(obj(big))
 path = points(big_cam, (-0.6, -12.8, 0.4), (0.6, -12.8, 0.4), 120)
 begin, chunks, end = stroke(big, big_cam, path, per_chunk=3)
-push("Sculpt Stroke")
+push("Draw Brush")
 costs = sorted(c["stroke_ms"] for c in chunks)
 print("        Draw on %d triangles: %d chunks, %d dabs, %d cut(s); chunk %.1f ms median, %.1f max"
       % (len(obj(big).data.polygons) * 2, len(chunks), end["dabs"], end["cuts"],
@@ -1122,19 +1345,25 @@ check("a chunk on a 100k-triangle mesh stays under the budget's reach (%.1f ms)"
 run("DYNTOPO_ON")
 push("Dynamic Topology Toggle")
 begin, chunks, end = stroke(big, big_cam, path, per_chunk=3)
-push("Sculpt Stroke")
+push("Draw Brush")
 costs = sorted(c["stroke_ms"] for c in chunks)
 rewinds = [c["undo_ms"] for c in chunks if c.get("undo_ms") is not None]
 print("        Dynamic Topology on %d triangles: %d chunks, %d cut(s), %d rewind(s) of up to %.1f ms; "
       "chunk %.1f ms median, %.1f max" % (len(obj(big).data.polygons) * 2, len(chunks), end["cuts"],
                                           len(rewinds), max(rewinds or [0]), costs[len(costs) // 2],
                                           costs[-1]), flush=True)
-rewound = next((i for i, c in enumerate(chunks) if c.get("undo_ms") is not None), len(chunks))
+# With no rewind at all (the first chunk already dear, so cut), every chunk
+# that strokes is cut from the first; this used to count from the end of the
+# list then, and passed on none at all ("0 of 0 cut", round 4's review).
+stroked = [i for i, c in enumerate(chunks) if c["dabs"]]
+rewound = next((i for i, c in enumerate(chunks) if c.get("undo_ms") is not None),
+               stroked[0] if stroked else len(chunks))
 after_rewind = [c for c in chunks[rewound:] if c["dabs"]]
 check("under Dynamic Topology a dear rewind is paid once, and every chunk that strokes after it "
       "is cut rather than rewound (%d rewind, %d of %d cut)"
       % (len(rewinds), sum(1 for c in after_rewind if c.get("cut")), len(after_rewind)),
-      len(rewinds) <= 1 and all(c.get("cut") for c in after_rewind), (rewinds, after_rewind[:3]))
+      len(rewinds) <= 1 and len(after_rewind) >= 2 and all(c.get("cut") for c in after_rewind),
+      (rewinds, after_rewind[:3]))
 check("and no chunk passes 80 ms (%.1f)" % costs[-1], costs[-1] < 80, costs[-5:])
 run("DYNTOPO_OFF")
 push("Dynamic Topology Toggle")
@@ -1142,8 +1371,20 @@ push("Dynamic Topology Toggle")
 # --------------------------------------------------------------------------
 print("\nAfter a file load has freed Blender's undo stack")
 
+# A load frees Blender's undo stack, and the app's file-read guard makes it
+# again at once (`_blenderkit_undo.ensure_stack`, round 4's review: a mask
+# fill or Face Sets ▸ Initialize after a load segfaulted Blender,
+# run-undostack-blender-check.sh). The stroke's own `_require_undo_stack` is
+# what remains if that ever fails: the guard is switched off for this load so
+# the stroke still meets no stack.
 bpy.ops.wm.read_homefile(use_empty=True)
-check("a load leaves Blender with no undo stack here", undo_module.blender_steps() == [],
+check("a load through the app's file-read guard leaves Blender with an undo stack",
+      bool(undo_module.blender_steps()), undo_module.blender_steps())
+_ensure_stack = undo_module.ensure_stack
+undo_module.ensure_stack = lambda label: False
+bpy.ops.wm.read_homefile(use_empty=True)
+undo_module.ensure_stack = _ensure_stack
+check("with the guard off, a load leaves Blender with no undo stack here", undo_module.blender_steps() == [],
       undo_module.blender_steps())
 fresh("Again")
 bpy.ops.object.mode_set(mode='SCULPT')
@@ -1164,18 +1405,26 @@ print("\nA relaunch under Dynamic Topology")
 run("DYNTOPO_ON")
 saved = os.path.join(WORK, "dyntopo.blend")
 undo_module.autosave(saved)
+# A relaunch is a new process: Blender has no undo stack, and its history has
+# not probed Blender's undo yet; the probe waits while an object is in Sculpt
+# Mode (`probe`). The load is made with the file-read guard off, so Blender
+# comes back with no stack, as a new process does.
+_ensure_stack = undo_module.ensure_stack
+undo_module.ensure_stack = lambda label: False
 bpy.ops.wm.open_mainfile(filepath=saved, load_ui=False)
+undo_module.ensure_stack = _ensure_stack
 check("precondition: reopened under Dynamic Topology with no undo stack",
       obj("Again").use_dynamic_topology_sculpting and undo_module.blender_steps() == [],
       undo_module.blender_steps())
-# A relaunch is a new process, whose history has not probed Blender's undo
-# yet, and the probe waits while an object is in Sculpt Mode (`probe`): the
-# history's first push leaves Blender's stack empty, and the first stroke
-# starts it. This Blender's history probed long ago; it is set back.
+# This Blender's history probed long ago; it is set back. The first push,
+# its probe deferred, makes Blender's stack (`ensure_stack`, round 4's
+# review): before it the first stroke did, and until then entering Sculpt
+# Mode with its undo on, or a mask fill, segfaulted Blender. The stroke that
+# follows has to keep Dynamic Topology on as it did when it made the stack.
 undo_module._mode = None
 push("Original")
-check("precondition: the history's first push leaves Blender's stack empty, as after a relaunch",
-      undo_module.blender_steps() == [], undo_module.blender_steps())
+check("precondition: the history's first push, its probe deferred, makes Blender's undo stack",
+      undo_module._mode is None and bool(undo_module.blender_steps()), undo_module.blender_steps())
 again_cam = camera_on(obj("Again"))
 reopened = len(positions("Again"))
 answer("BEGIN", object="Again", camera=camera_literal(again_cam))
@@ -1185,7 +1434,7 @@ for i in range(0, len(line), 4):
     answer("CHUNK", points=literal(line[i:i + 4]))
     on_each_chunk.append(obj("Again").use_dynamic_topology_sculpting)
 end = answer("END")
-push("Sculpt Stroke")
+push("Draw Brush")
 stroked = len(positions("Again"))
 check("the first stroke keeps Dynamic Topology on through every chunk (%d) and remeshes "
       "(%d -> %d vertices)" % (len(on_each_chunk), reopened, stroked),
@@ -1198,6 +1447,101 @@ redo()
 check("Redo: the stroke back, Dynamic Topology on",
       len(positions("Again")) == stroked and obj("Again").use_dynamic_topology_sculpting,
       (len(positions("Again")), obj("Again").use_dynamic_topology_sculpting))
+
+# --------------------------------------------------------------------------
+print("\nA stroke under an Array fitted to a length is priced (round 4's fix round 2)")
+
+# Round 4's fix round 2 review: Sculpt Mode held a mesh apart from its data for
+# the vertex budget's gate, and a stroke without Dynamic Topology was priced
+# for nothing, so a stroke that narrows a mesh under an Array fitted to a
+# length could multiply it unpriced. A ball of 1,986 vertices under an Array
+# fitted to 2,513.9 m (1,258 copies, 2,498,388 vertices), dug at its +X side
+# by an inverted Draw stroke: narrower, more copies, past the budget.
+gate = sys.modules.get("_blenderkit_gate")
+
+
+def narrow_fixture(name):
+    fresh(name, location=(0, 40 if name == "Narrow" else 50, 0))
+    # Aimed at the ball before the Array is added: framed after, the camera
+    # takes in the Array's 2,500 m and the ball is a pixel.
+    narrow_cam = camera_on(obj(name), azimuth=math.pi / 2, elevation=0.0)
+    array = obj(name).modifiers.new("Array", 'ARRAY')
+    array.fit_type, array.fit_length = 'FIT_LENGTH', 2513.9
+    bpy.context.view_layer.update()
+    enter(name)
+    centre = obj(name).matrix_world.translation
+    path = points(narrow_cam, (1.0, centre.y - 0.3, 0.0), (1.0, centre.y + 0.3, 0.0), 24)
+    return narrow_cam, path
+
+
+def width(name):
+    xs = positions(name)[0::3]
+    return max(xs) - min(xs)
+
+
+def strong():
+    brush = sculpt._brush()
+    keep = (brush.strength, sculpt._size_owner().size)
+    brush.strength = 1.0
+    sculpt._size_owner().size = 80
+    return keep
+
+
+def held_count(name):
+    o = obj(name)
+    e = o.evaluated_get(bpy.context.evaluated_depsgraph_get())
+    m = e.to_mesh()
+    try:
+        return len(m.vertices)
+    finally:
+        e.to_mesh_clear()
+
+
+narrow_cam, path = narrow_fixture("Narrow")
+before_width, before_count = width("Narrow"), held_count("Narrow")
+run("ACTIVATE", brush="Draw")
+keep = strong()
+said = None
+try:
+    stroke("Narrow", narrow_cam, path, per_chunk=4, mode="INVERT")
+except RuntimeError as error:
+    said = str(error)
+    # The interface ends a stroke whose chunk was refused (SculptStrokeInput).
+    try:
+        answer("END")
+    except RuntimeError:
+        pass
+# What the mirror's pass would say: the gate's refusals kept during the
+# stroke's own updates, then the gate itself.
+kept = gate.take_refusals()
+try:
+    gate.gate('mirror')
+except RuntimeError as error:
+    kept.append(str(error))
+said = said or (kept[-1] if kept else None)
+check("an inverted Draw stroke narrowing a ball under an Array fitted to 2,513.9 m (%s vertices) is refused, "
+      "the ball as wide as before (%.4f) and Blender at %s" % (format(before_count, ','), width("Narrow"),
+                                                                  format(held_count("Narrow"), ',')),
+      said is not None and "2,500,000" in said and abs(width("Narrow") - before_width) < 1e-6
+      and held_count("Narrow") == before_count, said)
+undo()
+redo()
+check("an Undo and a Redo after it leave Blender at %s, inside the budget" % format(held_count("Narrow"), ','),
+      held_count("Narrow") <= 2_500_000, held_count("Narrow"))
+narrow_cam, path = narrow_fixture("Narrowed")
+run("ACTIVATE", brush="Draw")
+strong()
+gate._busy += 1
+try:
+    stroke("Narrowed", narrow_cam, path, per_chunk=4, mode="INVERT")
+    bpy.context.view_layer.update()
+finally:
+    gate._busy -= 1
+check("control: with the gate off, the same stroke narrows it to %.4f and Blender makes %s"
+      % (width("Narrowed"), format(held_count("Narrowed"), ',')),
+      width("Narrowed") < before_width and held_count("Narrowed") > 2_500_000,
+      (width("Narrowed"), held_count("Narrowed")))
+sculpt._brush().strength, sculpt._size_owner().size = keep
 
 print()
 print("ALL PASS" if fail == 0 else "%d FAILED" % fail)

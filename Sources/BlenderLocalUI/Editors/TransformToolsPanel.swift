@@ -2,7 +2,8 @@ import SwiftUI
 import simd
 
 /// Snapping, the pivot point, proportional editing and the 3D cursor, with room
-/// for the numbers.
+/// for the numbers: the More menu's Tool Settings, named after Blender's Tool
+/// Settings bar (View ▸ Tool Settings), whose popovers these panels are.
 ///
 /// The header's menus carry the same settings, but a menu on iOS holds controls
 /// rather than fields, and two of these — the proportional size and the cursor's
@@ -44,8 +45,9 @@ struct TransformToolsPanel: View {
 
     // MARK: the pivot point
 
+    /// Blender's Pivot Point popover (`transform_pivot_point`).
     private var transformPanel: some View {
-        BPanel("Transform") {
+        BPanel("Pivot Point") {
             row("Pivot Point") {
                 Menu {
                     ForEach(TransformPivot.allCases) { value in
@@ -186,7 +188,9 @@ struct TransformToolsPanel: View {
                                                      set: { increment = min(max($0, 0.001), 1000) }),
                          step: 0.05, unit: .meters)
 
-            Text("Snap To").font(BTheme.Font.ui(11)).foregroundStyle(BTheme.textDim)
+            // VIEW3D_PT_snapping's headings in 5.2.1: Snap Base, Snap
+            // Target, Snap Target for Individual Elements, Target Selection.
+            Text("Snap Target").font(BTheme.Font.ui(11)).foregroundStyle(BTheme.textDim)
             ForEach(SnapElement.allCases) { element in
                 let on = scene.tools.elements.contains(element)
                 checkRow(element.label, on: on, note: element.dragNote) {
@@ -199,6 +203,7 @@ struct TransformToolsPanel: View {
                 // the last one left could not untick.
                 .disabled(on && scene.tools.holdsLastSnapElement)
             }
+            Text("Snap Target for Individual Elements").font(BTheme.Font.ui(11)).foregroundStyle(BTheme.textDim)
             ForEach(SnapElementIndividual.allCases) { element in
                 let on = scene.tools.individual.contains(element)
                 checkRow(element.label, on: on, note: "scene setting") {
@@ -209,7 +214,7 @@ struct TransformToolsPanel: View {
                 .disabled(on && scene.tools.holdsLastSnapElement)
             }
 
-            row("Snap With") {
+            row("Snap Base") {
                 Menu {
                     ForEach(SnapTarget.allCases) { value in
                         Button {
@@ -224,11 +229,12 @@ struct TransformToolsPanel: View {
 
             // Blender's Target Selection. Both are edit mode's alone, as
             // Blender's own descriptions say.
+            Text("Target Selection").font(BTheme.Font.ui(11)).foregroundStyle(BTheme.textDim)
             Toggle("Include Active",
                    isOn: Binding(get: { scene.tools.snapSelf },
                                  set: { bridge?.run(ToolsBpy.snapSelf($0)) }))
                 .font(BTheme.Font.ui(11))
-            Toggle("Include Non-edited",
+            Toggle("Include Non-Edited",
                    isOn: Binding(get: { scene.tools.snapNonEdited },
                                  set: { bridge?.run(ToolsBpy.snapNonEdited($0)) }))
                 .font(BTheme.Font.ui(11))
@@ -242,7 +248,7 @@ struct TransformToolsPanel: View {
             // not reproduced, and stay scene settings.
             Text("Increment moves in steps of the size above from where a drag "
                  + "starts, turns in 5° steps and scales in steps of 0.1. Grid "
-                 + "puts the Snap With point on the grid, for moves only; it "
+                 + "puts the Snap Base point on the grid, for moves only; it "
                  + "wins when both are ticked. Vertex, Edge, Edge Center, Face "
                  + "and Face Center snap a move to what is within 30 points of "
                  + "the finger, and win over both. Volume and Edge Perpendicular "
@@ -259,11 +265,13 @@ struct TransformToolsPanel: View {
         BPanel("Proportional Editing") {
             // Blender keeps edit mode's switch apart from object mode's, and
             // the header toggle writes whichever the current mode uses.
-            Toggle(editing ? "Proportional Editing" : "Proportional Editing (Objects)",
+            // By their names: `use_proportional_edit` and
+            // `use_proportional_edit_objects`.
+            Toggle(editing ? "Proportional Editing" : "Proportional Editing Objects",
                    isOn: Binding(get: { scene.tools.isProportional(editing: editing) },
                                  set: { bridge?.run(ToolsBpy.proportional($0, editing: editing)) }))
                 .font(BTheme.Font.ui(11))
-            row("Falloff") {
+            row("Proportional Editing Falloff") {
                 Menu {
                     ForEach(MeshEditor.ProportionalFalloff.allCases) { value in
                         Button {
@@ -278,7 +286,7 @@ struct TransformToolsPanel: View {
             // Clamped to Blender's own range, the draft too. Measured in
             // 5.2.1: bpy clamps rather than raising, so an unclamped field
             // would show a number Blender never held.
-            BNumberField("Size", value: Binding(
+            BNumberField("Proportional Size", value: Binding(
                 get: { sizeDraft ?? scene.tools.size },
                 set: { sizeDraft = Self.clampedSize($0) }),
                 step: 0.05, unit: .meters,
@@ -331,7 +339,7 @@ struct TransformToolsPanel: View {
                     // Blender's menu has a separator here.
                     Divider().padding(.vertical, 2)
                 }
-                BButton(action.title, icon: action.movesCursor ? "scope" : "magnet") {
+                BButton(action.title, icon: action.movesCursor ? "scope" : "dot.squareshape.split.2x2") {
                     bridge?.run(ToolsBpy.snap(action, increment: increment), undo: action.undoName)
                 }
                 .disabled(!action.isOffered(in: scene))

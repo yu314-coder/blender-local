@@ -185,6 +185,11 @@ def set_tools(**changes):
         ts.use_transform_skip_children = bool(changes.pop('skip_children'))
     if 'data_origin' in changes:
         ts.use_transform_data_origin = bool(changes.pop('data_origin'))
+    if 'orientation' in changes:
+        # The header's Orientation: the scene's first slot, which every
+        # other slot follows while its own "use" is off, as in a new file.
+        # Not tool_settings: Blender keeps it on the scene.
+        bpy.context.scene.transform_orientation_slots[0].type = changes.pop('orientation')
     if changes:
         raise TypeError("set_tools() got unexpected keyword arguments: %s"
                         % ', '.join(sorted(changes)))
@@ -328,6 +333,18 @@ def _edit_vertices(objects):
     return out
 
 
+def _editing_gate(name):
+    import contextlib
+    import sys
+    gate = sys.modules.get('_blenderkit_gate')
+    if gate is None:
+        try:
+            import _blenderkit_gate as gate
+        except ImportError:
+            return contextlib.nullcontext()
+    return gate.editing(name, moving=True)
+
+
 def snap(action, use_offset=False, step=1.0):
     """Blender's Shift+S menu: VIEW3D_MT_snap.
 
@@ -404,19 +421,22 @@ def snap(action, use_offset=False, step=1.0):
     if _editing_mesh():
         import bmesh
         offset = target - _selection_point() if use_offset else None
-        for obj, bm, verts in _edit_vertices(objects):
-            matrix = obj.matrix_world
-            inverse = matrix.inverted()
-            for v in verts:
-                world = matrix @ v.co
-                if action == 'SELECTED_TO_GRID':
-                    world = Vector([_grid(world[i], step) for i in range(3)])
-                elif offset is not None:
-                    world = world + offset
-                else:
-                    world = Vector(target)
-                v.co = inverse @ world
-            bmesh.update_edit_mesh(obj.data)
+        # A move of vertices, priced exactly on the modifiers that read where
+        # they are before Blender evaluates it (_blenderkit_gate.editing).
+        with _editing_gate("Snap"):
+            for obj, bm, verts in _edit_vertices(objects):
+                matrix = obj.matrix_world
+                inverse = matrix.inverted()
+                for v in verts:
+                    world = matrix @ v.co
+                    if action == 'SELECTED_TO_GRID':
+                        world = Vector([_grid(world[i], step) for i in range(3)])
+                    elif offset is not None:
+                        world = world + offset
+                    else:
+                        world = Vector(target)
+                    v.co = inverse @ world
+                bmesh.update_edit_mesh(obj.data)
         report()
         return
 

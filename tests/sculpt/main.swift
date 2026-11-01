@@ -159,6 +159,8 @@ func onDevice() -> BKObject {
     o.setEvaluatedMesh(ModifierStack.apply(subdivided, to: MeshBuilder.make(.cube)))
     return o
 }
+let viewportSource = (try? String(contentsOfFile: "Sources/BlenderLocalUI/Viewport/MetalViewportView.swift",
+                                   encoding: .utf8)) ?? ""
 let old = onDevice()
 var grown: [Int] = [old.mesh.vertices.count]
 for _ in 0..<4 {
@@ -175,10 +177,37 @@ let version = device.meshVersion
 var refusals: [String?] = []
 for _ in 0..<8 { refusals.append(device.sculptStandIn(dab)) }
 check("on Blender's evaluated mesh every dab is refused, with a sentence",
-      refusals.allSatisfy { $0?.contains("Sculpting tab") == true }, "\(refusals.first.map { "\($0 ?? "nil")" } ?? "")")
+      refusals.allSatisfy { $0?.contains("Layout tab") == true }, "\(refusals.first.map { "\($0 ?? "nil")" } ?? "")")
 check("and the mesh is Blender's, untouched: same vertices, same version, still evaluated",
       device.mesh.vertices.map(\.position) == before && device.meshVersion == version && device.meshIsEvaluated,
       "\(device.mesh.vertices.count) vertices, version \(device.meshVersion)")
+
+// Weight Paint and Vertex Paint's stand-in brush, the same rule: a drag in a
+// 3D View without the bridge (the Scripting tab's Showcase keeps the mode)
+// painted Blender's mesh's weights and colours in the display cache, which
+// Blender never held (round 4's review).
+for mode in [InteractionMode.weightPaint, .vertexPaint] {
+    let painted = onDevice()
+    let colours = painted.vertexColours, weights = painted.vertexWeights, version = painted.textureVersion
+    let touched = painted.paintVertices(at: SIMD3(1, 1, 1), radius: 0.6, strength: 1,
+                                        colour: mode == .vertexPaint ? SIMD4(1, 0, 0, 1) : nil,
+                                        weight: mode == .weightPaint ? 1 : nil)
+    check("\(mode.label) on Blender's evaluated mesh: refused in words, nothing painted",
+          painted.standInPaintRefusal(mode) == "This 3D View cannot reach Blender's \(mode.label) brushes. "
+            + "Paint in the Layout tab." && touched == 0 && painted.vertexColours == colours
+            && painted.vertexWeights == weights && painted.textureVersion == version,
+          "\(touched) touched, \(painted.standInPaintRefusal(mode) ?? "nil")")
+    let standIn = BKObject(name: "Cube", kind: .cube)
+    let reached = standIn.paintVertices(at: SIMD3(1, 1, 1), radius: 0.6, strength: 1,
+                                        colour: mode == .vertexPaint ? SIMD4(1, 0, 0, 1) : nil,
+                                        weight: mode == .weightPaint ? 1 : nil)
+    check("  negative control: on the simulator's mesh the same dab paints (\(reached) vertices)",
+          standIn.standInPaintRefusal(mode) == nil && reached > 0)
+}
+check("MetalViewportView sends a paint drag through standInPaintDrag, which asks standInPaintRefusal",
+      viewportSource.contains("standInPaintDrag(g.state")
+        && viewportSource.contains("standInPaintRefusal(mode)")
+        && viewportSource.contains("obj.standInPaintRefusal(parent.scene.mode) == nil"))
 
 // The simulator: the mesh is the Swift stack's output over a base.
 let sim = BKObject(name: "Cube", kind: .cube)

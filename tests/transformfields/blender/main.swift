@@ -194,7 +194,9 @@ func replay(_ path: String) -> Int32 {
         e.change(.location, axis: 2, to: c0.location.z + 0.01)
         let moved = simd_distance(child.modelMatrix.columns.3, matrix(before.matrix).columns.3)
         check("Child: a nudge of 0.01 in Z moves it 0.01 m (was 3.16 m)", abs(moved - 0.01) < 1e-5, "\(moved)")
-        check("Child: and writes Z alone", e.python == "bpy.data.objects[\(Bpy.quote("Child"))].location[2] = \(c0.location.z + 0.01)",
+        // (Its commit prices the field first, the budget's line: round 4's fix round.)
+        check("Child: and writes Z alone", e.previewPython == "bpy.data.objects[\(Bpy.quote("Child"))].location[2] = \(c0.location.z + 0.01)"
+              && e.python?.hasSuffix("\n" + (e.previewPython ?? "")) == true,
               e.python ?? "nil")
     }
 

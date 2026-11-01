@@ -308,6 +308,101 @@ private extension SIMD3 where Scalar == Float {
     var isFinite: Bool { x.isFinite && y.isFinite && z.isFinite }
 }
 
+// MARK: - Blender's 3×3 inverse
+
+/// Blender's own 3×3 inverse, as a transform takes `spacemtx_inv`
+/// (`invert_m3_m3_safe_ortho`, math_matrix_c.cc, read in the 5.3 source the
+/// app is built from). simd's indexing is Blender's: `m[i]` is axis i, a
+/// column.
+///
+/// Not simd's `.inverse`, nor a threshold on the determinant: Blender
+/// inverts whenever the determinant is not exactly zero, and otherwise falls
+/// back — to a matrix with its zero axes rebuilt (`orthogonalize_m3_zero_axes`),
+/// and failing that to the identity. A gimbal-locked Gimbal matrix (two axes
+/// antiparallel, none zero) gets the identity, so a Scale in it is
+/// A · diag · I (measured, round 4's review). Near the lock, where the
+/// determinant is tiny but not zero, the C compiler's fused multiply-adds
+/// round the determinant differently from Swift's, so a preview within a
+/// hair of 90° may differ in its last digits; exactly at it, the two agree.
+public enum BlenderMatrix {
+
+    /// `invert_m3_m3`: the adjoint over the determinant, or nil where the
+    /// determinant is exactly zero.
+    public static func inverse(_ m: simd_float3x3) -> simd_float3x3? {
+        let det = m[0][0] * (m[1][1] * m[2][2] - m[1][2] * m[2][1])
+            - m[1][0] * (m[0][1] * m[2][2] - m[0][2] * m[2][1])
+            + m[2][0] * (m[0][1] * m[1][2] - m[0][2] * m[1][1])
+        guard det != 0 else { return nil }
+        // adjoint_m3_m3, element by element.
+        var r = simd_float3x3()
+        r[0][0] = m[1][1] * m[2][2] - m[1][2] * m[2][1]
+        r[0][1] = -m[0][1] * m[2][2] + m[0][2] * m[2][1]
+        r[0][2] = m[0][1] * m[1][2] - m[0][2] * m[1][1]
+        r[1][0] = -m[1][0] * m[2][2] + m[1][2] * m[2][0]
+        r[1][1] = m[0][0] * m[2][2] - m[0][2] * m[2][0]
+        r[1][2] = -m[0][0] * m[1][2] + m[0][2] * m[1][0]
+        r[2][0] = m[1][0] * m[2][1] - m[1][1] * m[2][0]
+        r[2][1] = -m[0][0] * m[2][1] + m[0][1] * m[2][0]
+        r[2][2] = m[0][0] * m[1][1] - m[0][1] * m[1][0]
+        let scale = 1 / det
+        for a in 0..<3 { for b in 0..<3 { r[a][b] *= scale } }
+        return r
+    }
+
+    /// `invert_m3_m3_safe_ortho`.
+    public static func safeInverse(_ m: simd_float3x3) -> simd_float3x3 {
+        if let inverse = inverse(m) { return inverse }
+        var rebuilt = m
+        if orthogonalizeZeroAxes(&rebuilt, unitLength: 1), let inverse = inverse(rebuilt) { return inverse }
+        return matrix_identity_float3x3
+    }
+
+    /// `orthogonalize_m3_zero_axes`: each zero axis rebuilt from the others
+    /// at `unitLength`; false, changing nothing, when none or all are zero.
+    static func orthogonalizeZeroAxes(_ m: inout simd_float3x3, unitLength: Float) -> Bool {
+        var flag = 0
+        for i in 0..<3 where simd_length_squared(m[i]) == 0 { flag |= 1 << i }
+        let x = 1, y = 2, z = 4
+        guard flag != 0, flag != x | y | z else { return false }
+        switch flag {
+        case x | y:
+            m[1] = ortho(m[2]); m[0] = simd_cross(m[1], m[2])
+        case x:
+            m[0] = simd_cross(m[1], m[2])
+        case y | z:
+            m[2] = ortho(m[0]); m[1] = simd_cross(m[0], m[2])
+        case y:
+            m[1] = simd_cross(m[0], m[2])
+        case z | x:
+            m[0] = ortho(m[1]); m[2] = simd_cross(m[0], m[1])
+        default: // z
+            m[2] = simd_cross(m[0], m[1])
+        }
+        for i in 0..<3 where flag & (1 << i) != 0 {
+            // normalize_v3_length, then a unit axis where that was zero.
+            let d = simd_length_squared(m[i])
+            if d > 1e-35 {
+                m[i] *= unitLength / d.squareRoot()
+            } else {
+                m[i] = .zero
+                m[i][i] = unitLength
+            }
+        }
+        return true
+    }
+
+    /// `ortho_v3_v3`: a vector at right angles to `v`, from its dominant axis.
+    static func ortho(_ v: SIMD3<Float>) -> SIMD3<Float> {
+        let ax = abs(v.x), ay = abs(v.y), az = abs(v.z)
+        let axis = ax > ay ? (ax > az ? 0 : 2) : (ay > az ? 1 : 2)
+        switch axis {
+        case 0:  return SIMD3(-v.y - v.z, v.x, v.x)
+        case 1:  return SIMD3(v.y, -v.x - v.z, v.y)
+        default: return SIMD3(v.z, v.z, -v.x - v.y)
+        }
+    }
+}
+
 // MARK: - The operation
 
 /// One `bpy.ops.transform` call, as the values it acts on.
@@ -340,6 +435,11 @@ public struct TransformOperation: Equatable, Sendable {
         /// measured behaviour for a selection of rotated objects — and the
         /// edited object's axes in edit mode.
         case local
+        /// One matrix for everything, its columns the axes: what Blender does
+        /// with `orient_matrix` and an equal `orient_matrix_type` (CUSTOM_MATRIX,
+        /// transform_generics.cc) — Normal, Gimbal, View, Cursor, Parent and a
+        /// Move or Rotate in Local (TransformOrientation.commitsBare).
+        case axes(simd_float3x3)
     }
 
     public var kind: Kind
@@ -414,7 +514,7 @@ public extension TransformOperation {
                 next.location = c + r * (pose.location - c)
                 next.rotation = (r * pose.axes).eulerXYZ
             case .resize(let v):
-                let t = resizeMatrix(v, axes: orientation == .local ? pose.axes : matrix_identity_float3x3)
+                let t = resizeMatrix(v, axes: axes(local: pose.axes))
                 // TransMat3ToSize(tmat · axismtx, axismtx): the length each of
                 // the object's own axes comes out at, signed by whether it
                 // flipped.
@@ -525,10 +625,15 @@ public extension TransformOperation {
         case .boundsCentre:
             centre = Self.boundsCentre(selected.filter { $0 < positions.count }.map { world(positions[$0]) })
         }
-        // The edited object's own axes, normalised, for a LOCAL resize.
+        // The edited object's own axes, normalised, for a LOCAL resize: the
+        // active object's, as Blender's Edit Mode Local is
+        // (`setLocalConstraint` → `setConstraint` under T_EDIT). Not at right
+        // angles for a child of a turned, non-uniformly scaled parent.
         let local = simd_float3x3(normalize(model.columns.0.xyz),
                                   normalize(model.columns.1.xyz),
                                   normalize(model.columns.2.xyz))
+        var scaling: simd_float3x3?
+        if case .resize(let v) = kind { scaling = resizeMatrix(v, axes: axes(local: local)) }
         var out = positions
         for i in positions.indices {
             let f = i < factors.count ? factors[i] : 0
@@ -540,8 +645,8 @@ public extension TransformOperation {
                 moved = w + d * f
             case .rotate(let axis, let angle):
                 moved = centre + simd_float3x3(rotationAbout: axis, angle: angle * f) * (w - centre)
-            case .resize(let v):
-                let t = resizeMatrix(v, axes: orientation == .local ? local : matrix_identity_float3x3)
+            case .resize:
+                let t = scaling ?? matrix_identity_float3x3
                 moved = w + (t * (w - centre) - (w - centre)) * f
             }
             out[i] = (inverse * SIMD4(moved, 1)).xyz
@@ -551,9 +656,35 @@ public extension TransformOperation {
 
     // MARK: pieces
 
-    /// A scale along three axes, in world space: A · diag(v) · Aᵀ.
+    /// A scale along three axes, in world space: A · diag(v) · A⁻¹, Blender's
+    /// `spacemtx · smat · spacemtx_inv` (applyAxisConstraintSize), with
+    /// `spacemtx_inv` as Blender works it out (`BlenderMatrix.safeInverse`)
+    /// for every orientation. Two cases are not the transpose the preview
+    /// used to take, both measured against 5.2.1 by round 4's review and now
+    /// held by scripts/run-transformops-blender-check.sh:
+    ///
+    ///   * Local in Edit Mode on a child of a turned parent scaled (2, 1, 1):
+    ///     its normalised axes are not at right angles, and Blender inverts
+    ///     them. With the transpose, Scale X was 1.46 off Blender's result.
+    ///   * Gimbal at gimbal lock (Euler XYZ, Y = 90°): X and Z antiparallel,
+    ///     no inverse, and Blender scales by A · diag(v) · I. With A⁻ᵀ
+    ///     standing in, Scale X was 1.50 off, a uniform Scale 0.59.
+    ///
+    /// Object Mode's Local scales each object along its own axes
+    /// (`applyObjectConstraintSize`, `invert_m3_m3(td->axismtx)`), which are
+    /// a rotation here (`ObjectPose.axes`): the same inverse.
     private func resizeMatrix(_ v: SIMD3<Float>, axes a: simd_float3x3) -> simd_float3x3 {
-        a * simd_float3x3(diagonal: v) * a.transpose
+        a * simd_float3x3(diagonal: v) * BlenderMatrix.safeInverse(a)
+    }
+
+    /// The axes a scale is measured along, given the object's (or the edited
+    /// object's) own.
+    private func axes(local: simd_float3x3) -> simd_float3x3 {
+        switch orientation {
+        case .global:        return matrix_identity_float3x3
+        case .local:         return local
+        case .axes(let m):   return m
+        }
     }
 
     static func boundsCentre(_ points: [SIMD3<Float>]) -> SIMD3<Float> {
@@ -970,6 +1101,7 @@ public extension BKScene {
             var mesh = cage
             for i in mesh.vertices.indices { mesh.vertices[i].position = moved[i] }
             ModifierStack.recomputeNormals(&mesh, welded: true)
+            mesh.carryShading(from: cage)
             // Blender reads Auto Merge from the scene, as it reads Clipping
             // from the object; the preview welds by the same call.
             if tools.autoMerge {
