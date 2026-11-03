@@ -29,9 +29,14 @@ opens only when its button is tapped and no key can tap one.
   the app's pointer settings — a tap recogniser's `.secondary` mask saw
   nothing on this Mac, as the app does not opt in to
   `UIApplicationSupportsIndirectInputEvents` — so the interaction takes it
-  and opens Blender's menu in place of the system's. A finger's or a
-  Pencil's long-press opens nothing (`TouchKindWatcher`): a Pencil resting
-  before a stroke is not asking for a menu.
+  and opens Blender's menu in place of the system's. Only the right button
+  opens it, as in Blender: the interaction also fires on a long press, so
+  `TouchKindWatcher` counts every touch that is not a right-button click —
+  a finger, a Pencil, a mouse's or trackpad's left button (a pointer touch
+  without `.secondary` in its event's button mask) — and the menu stays
+  shut under any of them. Checked on this Mac with real input: the left
+  button held 1.5 s over the view opened nothing; a right-click opened the
+  Object menu.
 - **Blender's keys** (`ViewportKeymap.swift`, one table; blender_default.py's
   3D View, Object Mode and Mesh keymaps): Shift+A Add, Ctrl+A Apply, X
   (asks first) and Delete, Ctrl+P / Alt+P Parent, Ctrl+L Link/Transfer Data,

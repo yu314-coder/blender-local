@@ -1580,11 +1580,17 @@ final class ViewportMTKView: MTKView {
     }
 }
 
-/// Watches the touches on the 3D View without ever recognising: whether a
-/// finger or a Pencil is down, which the context-menu interaction's
-/// long-press is then not a right-click.
+/// Watches the touches on the 3D View without ever recognising, so that only
+/// the pointer's right button opens Blender's context menu, as in Blender.
+/// The context-menu interaction also fires on a long press — a finger's, a
+/// Pencil's, and a mouse's or trackpad's left button held still — so every
+/// touch that is not a right-button click is counted while it is down, and
+/// the menu stays shut under any of them. A right-click arrives either with
+/// no touch at all (as on a Mac) or as a pointer touch whose event's button
+/// mask is the secondary one; neither is counted.
 final class TouchKindWatcher: UIGestureRecognizer {
     private var down: Set<ObjectIdentifier> = []
+    /// A finger, a Pencil or a left button is down: not a right-click.
     var fingerOrPencilDown: Bool { !down.isEmpty }
 
     override init(target: Any? = nil, action: Selector? = nil) {
@@ -1595,8 +1601,18 @@ final class TouchKindWatcher: UIGestureRecognizer {
     }
 
     override func touchesBegan(_ touches: Set<UITouch>, with event: UIEvent) {
-        for touch in touches where touch.type == .direct || touch.type == .pencil {
-            down.insert(ObjectIdentifier(touch))
+        for touch in touches {
+            switch touch.type {
+            case .direct, .pencil:
+                down.insert(ObjectIdentifier(touch))
+            case .indirectPointer:
+                // A mouse's or a trackpad's click: only the right button
+                // (or a two-finger click, which the system makes one) is
+                // Blender's right-click.
+                if !event.buttonMask.contains(.secondary) { down.insert(ObjectIdentifier(touch)) }
+            default:
+                break
+            }
         }
     }
 
