@@ -82,5 +82,38 @@ bpy.context.view_layer.objects.active = cube
 ui.set_property('bpy.context.object', 'location', [1, 2, 3])
 check("set_property still writes a vector", tuple(cube.location) == (1, 2, 3))
 
+print("\nan object's Data: Blender's own kind only (the user, November 4)")
+# Object.data is typed ID, which bpy.data.all_ids matches: the menu offered
+# every datablock in the file, and an Image picked as a sphere's Data crashed
+# the vertex budget ('Image' object has no attribute 'loops').
+bpy.data.images.new("Tex", 8, 8)
+def data_menu(obj):
+    return [o['id'] for o in ui.property_info(obj.bl_rna.properties['data'], obj)['options']]
+check("a mesh object's Data offers meshes and nothing else",
+      data_menu(cube) and all(i.startswith("bpy.data.meshes[") for i in data_menu(cube)), data_menu(cube))
+bpy.ops.object.light_add(type='SPOT')
+check("a light's offers lights", data_menu(bpy.context.object)
+      and all(i.startswith("bpy.data.lights[") for i in data_menu(bpy.context.object)), data_menu(bpy.context.object))
+bpy.ops.object.text_add()
+check("a text's offers curves", data_menu(bpy.context.object)
+      and all(i.startswith("bpy.data.curves[") for i in data_menu(bpy.context.object)), data_menu(bpy.context.object))
+bpy.ops.object.empty_add(type='IMAGE')
+check("an empty's offers images", data_menu(bpy.context.object) == ["bpy.data.images['Tex']"],
+      data_menu(bpy.context.object))
+check("no menu reaches bpy.data.all_ids",
+      not any('all_ids' in i for o in bpy.data.objects for i in data_menu(o)))
+mesh_before = cube.data
+try:
+    ui.set_property("bpy.data.objects['%s']" % cube.name, 'data', "bpy.data.images['Tex']")
+    said = None
+except Exception as e:
+    said = e
+check("an Image set as a mesh's Data gets Blender's refusal, not the budget's crash",
+      isinstance(said, TypeError) and 'expected a Mesh type' in str(said), repr(said))
+check("and the object keeps its mesh", cube.data == mesh_before, cube.data)
+other = bpy.data.meshes.new("Other")
+ui.set_property("bpy.data.objects['%s']" % cube.name, 'data', "bpy.data.meshes['Other']")
+check("another mesh is still taken", cube.data == other, cube.data)
+
 print("\n" + ("ALL PASS" if fail == 0 else f"{fail} FAILED"))
 sys.exit(1 if fail else 0)

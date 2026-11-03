@@ -1,5 +1,30 @@
 # Blender Local — the app
 
+## November 4: an object's Data menu offers its own kind only
+
+The user, on build 48: picking a datablock in the Data API's Data menu of a
+sphere ended in a traceback from the vertex budget, `'Image' object has no
+attribute 'loops'`.
+
+`Object.data` is typed `ID`, and in Blender 5 so is `bpy.data.all_ids`, the one
+collection whose type matched: the menu listed every datablock in the file —
+27 rows in a scene with one sphere: images, materials, the scene, workspaces,
+screens, and "Sphere" twice (the object and its mesh). Blender takes none of
+them but the object's own kind (measured in 5.2.1: a mesh object any Mesh; a
+curve, a surface or a text any Curve; a light any Light; an empty an Image;
+anything else refused with "Object.data expected a Mesh type, not Image"). The
+budget prices a change before it is made, and counted the Image as a mesh.
+
+- The menu offers what Blender takes (`_blenderkit_budget.OBJECT_DATA`, read by
+  `_blenderkit_sync._pointer_collection`): for the sphere, its meshes. Another
+  pointer typed only `ID` offers the kind it holds now, or no menu.
+- The budget does not stage a Data that Blender would refuse or ignore
+  (`data_fits`): the object keeps its data and that is what is counted, so a
+  script that assigns an Image gets Blender's own refusal.
+- `tests/dataapi/blender/verify.py` checks the menus of a mesh, a light, a text
+  and an empty, the refusal, and that another mesh is still taken. Against
+  build 48's files the same steps give the user's traceback.
+
 ## November 3, evening: two modes, side panels a finger can use
 
 The user, testing build 47 on an iPad: keep two modes only, Object Mode and

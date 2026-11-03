@@ -79,6 +79,31 @@ import sys
 import bpy
 
 
+# What Blender takes as an object's data, by the object's type: its own kind
+# of datablock and no other (measured in 5.2.1: a mesh object any Mesh; a curve,
+# a surface or a text any Curve, its subtypes included; a light any Light; an
+# empty an Image or None; anything else refused with "Object.data expected a
+# Mesh type, not Image", and None on any but an empty ignored). The Data API's
+# menu for Data offers these too (`_blenderkit_sync.property_info`).
+OBJECT_DATA = {
+    'MESH': 'Mesh', 'CURVE': 'Curve', 'SURFACE': 'Curve', 'FONT': 'Curve',
+    'META': 'MetaBall', 'LATTICE': 'Lattice', 'ARMATURE': 'Armature',
+    'CAMERA': 'Camera', 'LIGHT': 'Light', 'LIGHT_PROBE': 'LightProbe',
+    'SPEAKER': 'Speaker', 'CURVES': 'Curves', 'POINTCLOUD': 'PointCloud',
+    'VOLUME': 'Volume', 'GREASEPENCIL': 'GreasePencil', 'EMPTY': 'Image',
+}
+
+
+def data_fits(obj, value):
+    """Whether Blender makes `value` `obj`'s data when it is assigned."""
+    if not isinstance(obj, bpy.types.Object) or isinstance(value, Virtual):
+        return True
+    if value is None:
+        return obj.type == 'EMPTY'
+    kind = getattr(bpy.types, OBJECT_DATA.get(obj.type, ''), None)
+    return kind is None or isinstance(value, kind)
+
+
 def _sibling(name):
     """Another of the app's modules: imported, or — where the site folder is
     not on the path, as in the desktop checks, which load each module from
@@ -483,6 +508,14 @@ class Prices:
             # Set as the channels Blender would set (BKE_object_apply_mat4).
             for channel, number in _channels_of(owner, key, value, self).items():
                 self.change(owner, channel, number)
+            return
+        elif key == 'data' and not data_fits(owner, value):
+            # Blender refuses it at the assignment ("Object.data expected a
+            # Mesh type, not Image"), or ignores it (None on a mesh object):
+            # the object keeps its data, and that is what is counted. Staged,
+            # the Image reached the mesh counts as one (`_counts_of`:
+            # 'Image' object has no attribute 'loops' — the user, November 4,
+            # picking an Image as a sphere's Data in the Data API).
             return
         if not self.exact:
             value = _clamped(owner, key, value)

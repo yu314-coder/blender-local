@@ -2054,18 +2054,14 @@ def property_info(prop, owner=None):
             pass
     if kind == 'POINTER' and not prop.is_readonly:
         # Choices are actual datablocks; labels remain human-readable.
-        for collection_prop in bpy.data.bl_rna.properties:
-            if collection_prop.type != 'COLLECTION':
-                continue
-            if collection_prop.fixed_type.identifier != prop.fixed_type.identifier:
-                continue
-            collection_path = 'bpy.data.' + collection_prop.identifier
-            for item in getattr(bpy.data, collection_prop.identifier):
+        collection = _pointer_collection(prop, owner, pointer_value)
+        if collection is not None:
+            collection_path = 'bpy.data.' + collection
+            for item in getattr(bpy.data, collection):
                 item_path = collection_path + '[' + repr(item.name) + ']'
                 options.append(dict(id=item_path, name=item.name))
                 if item == pointer_value:
                     value = item_path
-            break
     info = dict(id=prop.identifier, name=prop.name, description=prop.description,
                 kind=kind, value=json.dumps(value), options=options,
                 editable=not prop.is_readonly and kind in {'BOOLEAN', 'INT', 'FLOAT', 'STRING', 'ENUM', 'POINTER'},
@@ -2094,6 +2090,31 @@ def property_info(prop, owner=None):
         info['typeName'] = getattr(target, 'name', '') if target is not None else ''
         info['valueName'] = getattr(pointer_value, 'name', None) if pointer_value is not None else None
     return info
+
+
+def _pointer_collection(prop, owner, value):
+    """The `bpy.data` collection a pointer's menu offers: the one holding its
+    type. An object's Data is typed only ID, which `bpy.data.all_ids` matches,
+    and the menu offered every datablock in the file — images, materials, the
+    scene, workspaces, two "Sphere"s — of which Blender takes the object's own
+    kind only (the user, November 4: an Image picked as a sphere's Data). So
+    for Data the kind comes from the object's type (`_blenderkit_budget.
+    OBJECT_DATA`), for another ID-typed pointer from what it holds now, and
+    with nothing to go by there is no menu rather than a wrong one."""
+    wanted = [prop.fixed_type.identifier]
+    if wanted[0] == 'ID':
+        if prop.identifier == 'data' and isinstance(owner, bpy.types.Object):
+            wanted = [_budget_module().OBJECT_DATA.get(owner.type)]
+        elif value is not None:
+            wanted = [c.__name__ for c in type(value).__mro__]
+        else:
+            return None
+    by_type = {c.fixed_type.identifier: c.identifier for c in bpy.data.bl_rna.properties
+               if c.type == 'COLLECTION' and c.identifier != 'all_ids'}
+    for name in wanted:
+        if name in by_type:
+            return by_type[name]
+    return None
 
 
 def _display_name(value, fallback):
