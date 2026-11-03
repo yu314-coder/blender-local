@@ -132,12 +132,14 @@ struct SidebarN: View {
             ForEach(Tab.allCases) { t in
                 Button { tab = t } label: {
                     Text(t.rawValue)
-                        .font(BTheme.Font.ui(10, weight: tab == t ? .medium : .regular))
+                        .font(BTheme.Font.ui(12, weight: tab == t ? .medium : .regular))
                         .foregroundStyle(tab == t ? BTheme.title : BTheme.textDim)
                         .fixedSize()
                         .rotationEffect(.degrees(90))
-                        .frame(width: 22, height: 48)
+                        // A finger's tab: 36 points across, 64 down.
+                        .frame(width: 36, height: 64)
                         .background(tab == t ? BTheme.widget : Color.clear)
+                        .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
                 .hoverEffect(.highlight)
@@ -145,7 +147,7 @@ struct SidebarN: View {
             Spacer()
         }
         .padding(.top, 6)
-        .frame(width: 22)
+        .frame(width: 36)
         .background(BTheme.header)
     }
 
@@ -162,7 +164,7 @@ struct SidebarN: View {
                     // lattice — not built here yet.
                     Text("Typed positions for a curve's or a lattice's points are not offered here: "
                          + "drag them with the gizmo, or set them from a script.")
-                        .font(BTheme.Font.ui(10)).foregroundStyle(BTheme.textDim)
+                        .font(BTheme.Font.ui(12)).foregroundStyle(BTheme.textDim)
                         .fixedSize(horizontal: false, vertical: true)
                 } else {
                     // The same fields as Properties ▸ Object
@@ -173,7 +175,7 @@ struct SidebarN: View {
             }
         } else {
             Text("No active object")
-                .font(BTheme.Font.ui(11)).foregroundStyle(BTheme.textDim)
+                .font(BTheme.Font.ui(13)).foregroundStyle(BTheme.textDim)
                 .padding(10)
         }
     }
@@ -199,13 +201,13 @@ struct SidebarN: View {
     private func editTransform(_ obj: BKObject) -> some View {
         if !session.usesRealBlender {
             Text("Typed positions in Edit Mode are Blender's: the simulator's stand-in has none.")
-                .font(BTheme.Font.ui(10)).foregroundStyle(BTheme.textDim)
+                .font(BTheme.Font.ui(12)).foregroundStyle(BTheme.textDim)
                 .fixedSize(horizontal: false, vertical: true)
         } else if let item = editItem, item.object == obj.name, let bridge {
             if item.vertices == 0 {
                 Text("Nothing selected")
-                    .font(BTheme.Font.ui(11)).foregroundStyle(BTheme.textDim)
-                    .frame(height: 20)
+                    .font(BTheme.Font.ui(13)).foregroundStyle(BTheme.textDim)
+                    .frame(height: BTheme.Metric.touchField)
             } else if let median = item.median {
                 heading(item.medianTitle)
                 ForEach(0..<3, id: \.self) { i in
@@ -228,8 +230,8 @@ struct SidebarN: View {
             }
         } else {
             Text("Reading the selection from Blender")
-                .font(BTheme.Font.ui(10)).foregroundStyle(BTheme.textDim)
-                .frame(height: 20)
+                .font(BTheme.Font.ui(12)).foregroundStyle(BTheme.textDim)
+                .frame(height: BTheme.Metric.touchField)
         }
     }
 
@@ -239,9 +241,9 @@ struct SidebarN: View {
             ForEach([true, false], id: \.self) { global in
                 Button { itemGlobal = global } label: {
                     Text(global ? "Global" : "Local")
-                        .font(BTheme.Font.ui(11))
+                        .font(BTheme.Font.ui(13))
                         .foregroundStyle(itemGlobal == global ? Color.white : BTheme.textDim)
-                        .frame(maxWidth: .infinity).frame(height: 22)
+                        .frame(maxWidth: .infinity).frame(height: BTheme.Metric.touchField)
                         .background(itemGlobal == global ? BTheme.select : BTheme.widget)
                 }
                 .buttonStyle(.plain)
@@ -254,9 +256,9 @@ struct SidebarN: View {
 
     private func heading(_ title: String) -> some View {
         Text(title)
-            .font(BTheme.Font.ui(11)).foregroundStyle(BTheme.textDim)
+            .font(BTheme.Font.ui(13)).foregroundStyle(BTheme.textDim)
             .frame(maxWidth: .infinity, alignment: .leading)
-            .frame(height: 20)
+            .frame(height: BTheme.Metric.touchField)
     }
 
     // MARK: Tool
@@ -270,10 +272,10 @@ struct SidebarN: View {
                 Text(tool.label).font(BTheme.Font.ui(12)).foregroundStyle(BTheme.text)
                 Spacer()
             }
-            .frame(height: 22)
+            .frame(height: BTheme.Metric.touchField)
             if !tool.isImplemented {
                 Text(tool.requirement)
-                    .font(BTheme.Font.ui(10)).foregroundStyle(BTheme.textDim)
+                    .font(BTheme.Font.ui(12)).foregroundStyle(BTheme.textDim)
                     .fixedSize(horizontal: false, vertical: true)
             }
             readout("Mode", scene.mode.label)
@@ -407,12 +409,12 @@ struct SidebarN: View {
             if let accent {
                 Rectangle().fill(accent).frame(width: 2, height: 13)
             }
-            Text(label).font(BTheme.Font.ui(11)).foregroundStyle(BTheme.textDim)
+            Text(label).font(BTheme.Font.ui(13)).foregroundStyle(BTheme.textDim)
             Spacer()
-            Text(value).font(BTheme.Font.mono(11)).foregroundStyle(BTheme.text)
+            Text(value).font(BTheme.Font.mono(13)).foregroundStyle(BTheme.text)
                 .lineLimit(1)
         }
-        .frame(height: 20)
+        .frame(height: BTheme.Metric.touchField)
     }
 }
 

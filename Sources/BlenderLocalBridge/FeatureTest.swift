@@ -229,9 +229,25 @@ public enum FeatureTest {
         return all
     }()
 
+    /// The mode an entry needs when that mode is not offered
+    /// (`InteractionMode.isOffered`): its feature is not in the app, so it is
+    /// not run, and the report says why.
+    static func hiddenMode(_ entry: Entry) -> InteractionMode? {
+        let mode: InteractionMode?
+        switch entry.key {
+        case "mode.vertex_paint", "paint.vertex": mode = .vertexPaint
+        case "mode.weight_paint", "paint.weight": mode = .weightPaint
+        case "mode.texture_paint", "paint.texture": mode = .texturePaint
+        default: mode = entry.area == "Sculpt" ? .sculpt : nil
+        }
+        guard let mode, !mode.isOffered else { return nil }
+        return mode
+    }
+
     /// The inventory's entries that run, given whether Cycles is switched on.
     public static func planned(cycles: Bool) -> [Entry] {
         inventory.filter {
+            if hiddenMode($0) != nil { return false }
             switch $0.coverage {
             case .run: return true
             case .optIn: return cycles
@@ -243,6 +259,9 @@ public enum FeatureTest {
     /// And those that do not, with why.
     public static func notPlanned(cycles: Bool) -> [(name: String, reason: String)] {
         inventory.compactMap {
+            if let mode = hiddenMode($0) {
+                return ($0.name, mode.label + " is hidden: the app offers Object Mode and Edit Mode")
+            }
             switch $0.coverage {
             case .run: return nil
             case .optIn(_, let reason): return cycles ? nil : ($0.name, reason)

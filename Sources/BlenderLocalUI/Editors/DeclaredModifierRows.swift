@@ -236,8 +236,8 @@ struct DeclaredModifierRows: View {
             else { return }
             bridge?.run(command.lines, undo: command.undo)
         } label: {
-            Text(op.label(bound: bound)).font(BTheme.Font.ui(11)).foregroundStyle(BTheme.text)
-                .frame(maxWidth: .infinity).frame(height: 22)
+            Text(op.label(bound: bound)).font(BTheme.Font.ui(13)).foregroundStyle(BTheme.text)
+                .frame(maxWidth: .infinity).frame(height: BTheme.Metric.touchField)
                 .background(BTheme.widget)
                 .clipShape(RoundedRectangle(cornerRadius: BTheme.Metric.corner))
         }
@@ -292,13 +292,13 @@ struct DeclaredModifierRows: View {
 
     private func symmetryRow(_ fields: [ModifierField]) -> some View {
         HStack(spacing: 3) {
-            Text("Symmetry").font(BTheme.Font.ui(11)).foregroundStyle(BTheme.textDim)
+            Text("Symmetry").font(BTheme.Font.ui(13)).foregroundStyle(BTheme.textDim)
             Spacer()
             ForEach(fields, id: \.key) { field in
                 if let text = modifier.values[field.key] {
                     let on = text == "1"
                     Button { send(field.key, on ? "0" : "1") } label: {
-                        Text(field.label).font(BTheme.Font.ui(11))
+                        Text(field.label).font(BTheme.Font.ui(13))
                             .foregroundStyle(on ? Color.white : BTheme.textDim)
                             .frame(width: 24, height: 20)
                             .background(on ? BTheme.select : BTheme.widget)
@@ -308,23 +308,23 @@ struct DeclaredModifierRows: View {
                 }
             }
         }
-        .frame(height: 22)
+        .frame(height: BTheme.Metric.touchField)
     }
 
     private func note(_ text: String) -> some View {
-        Text(text).font(BTheme.Font.ui(10)).foregroundStyle(BTheme.textDim)
+        Text(text).font(BTheme.Font.ui(12)).foregroundStyle(BTheme.textDim)
             .fixedSize(horizontal: false, vertical: true)
     }
 
     private func fieldLabel(_ label: String, _ value: String, dim: Bool) -> some View {
         HStack(spacing: 4) {
-            Text(label).font(BTheme.Font.ui(11)).foregroundStyle(BTheme.textDim)
+            Text(label).font(BTheme.Font.ui(13)).foregroundStyle(BTheme.textDim)
             Spacer()
-            Text(value).font(BTheme.Font.mono(11)).lineLimit(1)
+            Text(value).font(BTheme.Font.mono(13)).lineLimit(1)
                 .foregroundStyle(dim ? BTheme.textDim : BTheme.text)
         }
         .padding(.horizontal, 6)
-        .frame(height: 22)
+        .frame(height: BTheme.Metric.touchField)
         .frame(maxWidth: .infinity)
         .background(BTheme.field)
         .clipShape(RoundedRectangle(cornerRadius: BTheme.Metric.corner))
@@ -332,35 +332,35 @@ struct DeclaredModifierRows: View {
 
     private func flag(_ label: String, on: Bool, set: @escaping (Bool) -> Void) -> some View {
         HStack {
-            Text(label).font(BTheme.Font.ui(11)).foregroundStyle(BTheme.textDim)
+            Text(label).font(BTheme.Font.ui(13)).foregroundStyle(BTheme.textDim)
             Spacer()
             Toggle("", isOn: Binding(get: { on }, set: set))
                 .labelsHidden()
                 .scaleEffect(0.7)
         }
-        .frame(height: 22)
+        .frame(height: BTheme.Metric.touchField)
     }
 
     private func stepper(_ label: String, value: Int, range: ClosedRange<Int>,
                          set: @escaping (Int) -> Void) -> some View {
         HStack(spacing: 4) {
-            Text(label).font(BTheme.Font.ui(11)).foregroundStyle(BTheme.textDim)
+            Text(label).font(BTheme.Font.ui(13)).foregroundStyle(BTheme.textDim)
             Spacer()
             Button { if value > range.lowerBound { set(value - 1) } } label: {
-                Image(systemName: "minus").font(.system(size: 9))
-                    .frame(width: 22, height: 20).background(BTheme.widget)
+                Image(systemName: "minus").font(.system(size: 12))
+                    .frame(width: BTheme.Metric.touchButton, height: BTheme.Metric.touchField).background(BTheme.widget)
                     .clipShape(RoundedRectangle(cornerRadius: 3))
             }
             .buttonStyle(.plain).foregroundStyle(BTheme.text)
-            Text("\(value)").font(BTheme.Font.mono(11)).foregroundStyle(BTheme.text).frame(minWidth: 26)
+            Text("\(value)").font(BTheme.Font.mono(13)).foregroundStyle(BTheme.text).frame(minWidth: 26)
             Button { if value < range.upperBound { set(value + 1) } } label: {
-                Image(systemName: "plus").font(.system(size: 9))
-                    .frame(width: 22, height: 20).background(BTheme.widget)
+                Image(systemName: "plus").font(.system(size: 12))
+                    .frame(width: BTheme.Metric.touchButton, height: BTheme.Metric.touchField).background(BTheme.widget)
                     .clipShape(RoundedRectangle(cornerRadius: 3))
             }
             .buttonStyle(.plain).foregroundStyle(BTheme.text)
         }
-        .frame(height: 22)
+        .frame(height: BTheme.Metric.touchField)
     }
 }
 

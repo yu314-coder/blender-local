@@ -32,6 +32,20 @@ public enum InteractionMode: String, CaseIterable, Identifiable, Sendable {
 
     public var isImplemented: Bool { true }
 
+    /// Whether the app offers the mode: Object Mode and Edit Mode. The user
+    /// asked for those two only, done well (2026-11-03: "maintain two modes
+    /// only … edit and object mode to do better"). Sculpt Mode, Vertex Paint,
+    /// Weight Paint and Texture Paint keep their code and come back in a build
+    /// with BLENDER_LOCAL_ALL_MODES; without it no menu, key or tool enters
+    /// them, and a scene saved in one opens in Object Mode.
+    public var isOffered: Bool {
+        #if BLENDER_LOCAL_ALL_MODES
+        return true
+        #else
+        return self == .object || self == .edit
+        #endif
+    }
+
     /// The string `bpy.ops.object.mode_set(mode=…)` expects.
     public var bpyMode: String {
         switch self {

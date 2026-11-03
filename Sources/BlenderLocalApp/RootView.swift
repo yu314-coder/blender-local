@@ -17,6 +17,12 @@ struct RootView: View {
     @State private var catalogue = OperatorCatalogue()
     @State private var showSearch = false
     @State private var showStatusBar = false
+    #if DEBUG
+    /// `-data-api-browse <path>`: the Data API browser opened on a bpy path,
+    /// 4 s in, in a sheet as wide as the editors' dock — for a look at it
+    /// without a tap.
+    @State private var debugBrowsePath: String?
+    #endif
     @State private var workspace: Workspace = RootView.initialWorkspace
     @Environment(\.scenePhase) private var scenePhase
 
@@ -599,6 +605,40 @@ struct RootView: View {
                 }
             }
         }
+        #if DEBUG
+        .sheet(isPresented: Binding(get: { debugBrowsePath != nil }, set: { if !$0 { debugBrowsePath = nil } })) {
+            NavigationStack {
+                BlenderDataBrowser(bridge: bridge, startPath: debugBrowsePath ?? "bpy.context.object",
+                                   revision: session.backendRevision)
+            }
+            .frame(width: 340)
+        }
+        .onAppear {
+            let args = ProcessInfo.processInfo.arguments
+            if let i = args.firstIndex(of: "-data-api-browse"), i + 1 < args.count {
+                let path = args[i + 1]
+                DispatchQueue.main.asyncAfter(deadline: .now() + 4) { debugBrowsePath = path }
+            }
+            // `-data-api-shot <name>`: the window as the app draws it, sheet
+            // included, 9 s in, to <tmp>/<name>.png — a picture of the
+            // browser that needs no screen recording.
+            if let i = args.firstIndex(of: "-data-api-shot"), i + 1 < args.count {
+                let name = args[i + 1]
+                DispatchQueue.main.asyncAfter(deadline: .now() + 9) {
+                    let windows = UIApplication.shared.connectedScenes
+                        .compactMap { $0 as? UIWindowScene }.flatMap(\.windows)
+                    guard let window = windows.first(where: \.isKeyWindow) ?? windows.first else { return }
+                    let image = UIGraphicsImageRenderer(bounds: window.bounds).image { _ in
+                        _ = window.drawHierarchy(in: window.bounds, afterScreenUpdates: true)
+                    }
+                    let url = FileManager.default.temporaryDirectory.appendingPathComponent(name + ".png")
+                    try? image.pngData()?.write(to: url)
+                    print("[bk] data-api-shot " + url.path)
+                    fflush(stdout)
+                }
+            }
+        }
+        #endif
         .onAppear {
             // Restore whatever was on screen when the app was last closed,
             // then bind undo so the first operator is undoable.

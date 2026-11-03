@@ -95,17 +95,17 @@ struct PropertiesTabColumn: View {
                     } label: {
                         VStack(spacing: 1) {
                             Image(systemName: tab.icon)
-                                .font(.system(size: 13))
+                                .font(.system(size: 17))
                             // Blender's tab names (`SpaceProperties.context`,
                             // 5.2.1), whole: "Mods" and "Mat" were the app's.
                             Text(tab.label)
-                                .font(BTheme.Font.ui(8))
+                                .font(BTheme.Font.ui(10))
                                 .lineLimit(1)
                                 .minimumScaleFactor(0.8)
                         }
                         .foregroundStyle(selection == tab ? tab.accent
                                          : tab.accent.opacity(enabled ? 0.6 : 0.25))
-                        .frame(width: 50, height: 36)
+                        .frame(width: 62, height: 48)
                         .background(selection == tab ? BTheme.properties : Color.clear)
                         .clipShape(RoundedRectangle(cornerRadius: 4))
                         .contentShape(Rectangle())
@@ -120,7 +120,7 @@ struct PropertiesTabColumn: View {
             .padding(.vertical, 6)
             .padding(.horizontal, 3)
         }
-        .frame(width: 56)
+        .frame(width: 68)
         .background(BTheme.outliner)
     }
 }

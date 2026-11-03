@@ -61,7 +61,7 @@ struct TransformToolsPanel: View {
                 } label: { chip(scene.tools.pivot.label) }
             }
             Text(pivotNote)
-                .font(BTheme.Font.ui(10)).foregroundStyle(BTheme.textDim)
+                .font(BTheme.Font.ui(12)).foregroundStyle(BTheme.textDim)
                 .fixedSize(horizontal: false, vertical: true)
         }
     }
@@ -102,7 +102,7 @@ struct TransformToolsPanel: View {
             Toggle("Auto Merge Vertices",
                    isOn: Binding(get: { scene.tools.autoMerge },
                                  set: { bridge?.run(ToolsBpy.autoMerge($0)) }))
-                .font(BTheme.Font.ui(11))
+                .font(BTheme.Font.ui(13))
             BNumberField("Threshold", value: Binding(
                 get: { thresholdDraft ?? scene.tools.mergeThreshold },
                 set: { thresholdDraft = Self.clampedThreshold($0) }),
@@ -113,7 +113,7 @@ struct TransformToolsPanel: View {
                 })
             Text("After a move, turn or scale, a moved vertex within the "
                  + "threshold of one that stayed is welded into it.")
-                .font(BTheme.Font.ui(10)).foregroundStyle(BTheme.textDim)
+                .font(BTheme.Font.ui(12)).foregroundStyle(BTheme.textDim)
                 .fixedSize(horizontal: false, vertical: true)
             // `use_mesh_automerge_and_split`: the commit reads it from the
             // scene, and nothing showed it before. The drag shows where every
@@ -124,12 +124,12 @@ struct TransformToolsPanel: View {
             Toggle("Split Edges & Faces",
                    isOn: Binding(get: { scene.tools.autoMergeSplit },
                                  set: { bridge?.run(ToolsBpy.autoMergeSplit($0)) }))
-                .font(BTheme.Font.ui(11))
+                .font(BTheme.Font.ui(13))
                 .disabled(!scene.tools.autoMerge)
             if scene.tools.autoMerge && scene.tools.autoMergeSplit {
                 Text("Edges a move lands on or crosses are split on release: the new "
                      + "edges, and a vertex where two edges cross, appear then.")
-                    .font(BTheme.Font.ui(10)).foregroundStyle(BTheme.textDim)
+                    .font(BTheme.Font.ui(12)).foregroundStyle(BTheme.textDim)
                     .fixedSize(horizontal: false, vertical: true)
             }
         }
@@ -145,14 +145,14 @@ struct TransformToolsPanel: View {
             Toggle("Origins",
                    isOn: Binding(get: { scene.tools.affectOnlyOrigins },
                                  set: { bridge?.run(ToolsBpy.affectOnlyOrigins($0)) }))
-                .font(BTheme.Font.ui(11))
+                .font(BTheme.Font.ui(13))
             Toggle("Parents",
                    isOn: Binding(get: { scene.tools.affectOnlyParents },
                                  set: { bridge?.run(ToolsBpy.affectOnlyParents($0)) }))
-                .font(BTheme.Font.ui(11))
+                .font(BTheme.Font.ui(13))
             if scene.tools.affectOnlyOrigins || scene.tools.affectOnlyParents {
                 Text(affectOnlyNote)
-                    .font(BTheme.Font.ui(10)).foregroundStyle(BTheme.textDim)
+                    .font(BTheme.Font.ui(12)).foregroundStyle(BTheme.textDim)
                     .fixedSize(horizontal: false, vertical: true)
             }
         }
@@ -180,7 +180,7 @@ struct TransformToolsPanel: View {
         BPanel("Snapping") {
             Toggle("Snap", isOn: Binding(get: { scene.tools.useSnap },
                                          set: { bridge?.run(ToolsBpy.useSnap($0)) }))
-                .font(BTheme.Font.ui(11))
+                .font(BTheme.Font.ui(13))
             // Kept above zero: at 0 or below `TransformSnap` has no step and
             // a drag stops snapping with the magnet still lit (round 2's
             // review), and the Snap menu's grid actions quietly used 1.
@@ -190,7 +190,7 @@ struct TransformToolsPanel: View {
 
             // VIEW3D_PT_snapping's headings in 5.2.1: Snap Base, Snap
             // Target, Snap Target for Individual Elements, Target Selection.
-            Text("Snap Target").font(BTheme.Font.ui(11)).foregroundStyle(BTheme.textDim)
+            Text("Snap Target").font(BTheme.Font.ui(13)).foregroundStyle(BTheme.textDim)
             ForEach(SnapElement.allCases) { element in
                 let on = scene.tools.elements.contains(element)
                 checkRow(element.label, on: on, note: element.dragNote) {
@@ -203,7 +203,7 @@ struct TransformToolsPanel: View {
                 // the last one left could not untick.
                 .disabled(on && scene.tools.holdsLastSnapElement)
             }
-            Text("Snap Target for Individual Elements").font(BTheme.Font.ui(11)).foregroundStyle(BTheme.textDim)
+            Text("Snap Target for Individual Elements").font(BTheme.Font.ui(13)).foregroundStyle(BTheme.textDim)
             ForEach(SnapElementIndividual.allCases) { element in
                 let on = scene.tools.individual.contains(element)
                 checkRow(element.label, on: on, note: "scene setting") {
@@ -229,15 +229,15 @@ struct TransformToolsPanel: View {
 
             // Blender's Target Selection. Both are edit mode's alone, as
             // Blender's own descriptions say.
-            Text("Target Selection").font(BTheme.Font.ui(11)).foregroundStyle(BTheme.textDim)
+            Text("Target Selection").font(BTheme.Font.ui(13)).foregroundStyle(BTheme.textDim)
             Toggle("Include Active",
                    isOn: Binding(get: { scene.tools.snapSelf },
                                  set: { bridge?.run(ToolsBpy.snapSelf($0)) }))
-                .font(BTheme.Font.ui(11))
+                .font(BTheme.Font.ui(13))
             Toggle("Include Non-Edited",
                    isOn: Binding(get: { scene.tools.snapNonEdited },
                                  set: { bridge?.run(ToolsBpy.snapNonEdited($0)) }))
-                .font(BTheme.Font.ui(11))
+                .font(BTheme.Font.ui(13))
 
             // Said once, here, rather than left to be discovered by a drag.
             // A headless Blender does not snap a transform at all — measured
@@ -254,7 +254,7 @@ struct TransformToolsPanel: View {
                  + "the finger, and win over both. Volume and Edge Perpendicular "
                  + "are real scene settings, saved in the .blend and meaningful "
                  + "on a desktop, but no drag here uses them.")
-                .font(BTheme.Font.ui(10)).foregroundStyle(BTheme.textDim)
+                .font(BTheme.Font.ui(12)).foregroundStyle(BTheme.textDim)
                 .fixedSize(horizontal: false, vertical: true)
         }
     }
@@ -270,7 +270,7 @@ struct TransformToolsPanel: View {
             Toggle(editing ? "Proportional Editing" : "Proportional Editing Objects",
                    isOn: Binding(get: { scene.tools.isProportional(editing: editing) },
                                  set: { bridge?.run(ToolsBpy.proportional($0, editing: editing)) }))
-                .font(BTheme.Font.ui(11))
+                .font(BTheme.Font.ui(13))
             row("Proportional Editing Falloff") {
                 Menu {
                     ForEach(MeshEditor.ProportionalFalloff.allCases) { value in
@@ -297,13 +297,13 @@ struct TransformToolsPanel: View {
             Toggle("Connected Only",
                    isOn: Binding(get: { scene.tools.connected },
                                  set: { bridge?.run(ToolsBpy.connected($0)) }))
-                .font(BTheme.Font.ui(11))
+                .font(BTheme.Font.ui(13))
             if scene.tools.falloff == .random {
                 // The one curve no preview can match: Blender seeds its
                 // generator from the clock for every transform.
                 Text("Random: Blender draws its own weights when the drag is "
                      + "committed, so the drag shows the reach, not the result.")
-                    .font(BTheme.Font.ui(10)).foregroundStyle(BTheme.textDim)
+                    .font(BTheme.Font.ui(12)).foregroundStyle(BTheme.textDim)
                     .fixedSize(horizontal: false, vertical: true)
             }
         }
@@ -352,7 +352,7 @@ struct TransformToolsPanel: View {
     private func row<Content: View>(_ label: String,
                                     @ViewBuilder content: () -> Content) -> some View {
         HStack(spacing: 6) {
-            Text(label).font(BTheme.Font.ui(11)).foregroundStyle(BTheme.textDim)
+            Text(label).font(BTheme.Font.ui(13)).foregroundStyle(BTheme.textDim)
             Spacer(minLength: 4)
             content()
         }
@@ -361,11 +361,11 @@ struct TransformToolsPanel: View {
 
     private func chip(_ value: String) -> some View {
         HStack(spacing: 4) {
-            Text(value).font(BTheme.Font.ui(11)).foregroundStyle(BTheme.text)
+            Text(value).font(BTheme.Font.ui(13)).foregroundStyle(BTheme.text)
             Image(systemName: "chevron.down").font(.system(size: 7)).foregroundStyle(BTheme.textDim)
         }
         .padding(.horizontal, 7)
-        .frame(height: 22)
+        .frame(height: BTheme.Metric.touchField)
         .background(BTheme.widget)
         .clipShape(RoundedRectangle(cornerRadius: BTheme.Metric.corner))
     }
@@ -377,13 +377,13 @@ struct TransformToolsPanel: View {
                 Image(systemName: on ? "checkmark.square.fill" : "square")
                     .font(.system(size: 11))
                     .foregroundStyle(on ? BTheme.select : BTheme.textDim)
-                Text(label).font(BTheme.Font.ui(11)).foregroundStyle(BTheme.text)
+                Text(label).font(BTheme.Font.ui(13)).foregroundStyle(BTheme.text)
                 Spacer(minLength: 4)
                 if let note {
                     Text(note).font(BTheme.Font.ui(9)).foregroundStyle(BTheme.textDim)
                 }
             }
-            .frame(height: 20)
+            .frame(height: BTheme.Metric.touchField)
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)

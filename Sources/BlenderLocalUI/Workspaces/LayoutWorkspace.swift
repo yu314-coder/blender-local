@@ -66,6 +66,11 @@ struct LayoutWorkspace: View {
     @State private var maximizedFrom: (editors: Bool, sidebar: Bool, toolbar: Bool)?
     /// The redo panel's own setting, which F9 opens.
     @AppStorage("bl_redo_expanded") private var redoExpanded = false
+    /// How much of the editors' dock the Outliner takes, set by dragging the
+    /// line between it and the Properties editor, as Blender resizes areas.
+    @AppStorage("bl_outliner_share") private var outlinerShare = 0.4
+    /// The share as the drag started.
+    @State private var outlinerShareAtDrag: Double?
     @State private var catalogue = OperatorCatalogue()
     /// The failure on screen, until it times out or is tapped away.
     @State private var shownReport: BpyBridge.Report?
@@ -125,6 +130,9 @@ struct LayoutWorkspace: View {
             bridge?.showReport(t.label, held)
             return
         }
+        // Object Mode and Edit Mode only (`InteractionMode.isOffered`): a
+        // brush needs a mode the app does not offer.
+        if let needed = t.requiredMode, !needed.isOffered { return }
         if let next = t.mode(whenChosenFrom: scene.mode) {
             if next == .sculpt, session.usesRealBlender {
                 bridge?.run(SculptBpy.enter, undo: SculptBpy.modeUndo)
@@ -176,6 +184,7 @@ struct LayoutWorkspace: View {
     /// own paint modes used to paint its display cache and nothing reached
     /// Blender (round 3's review).
     private func enterPaintMode(_ mode: InteractionMode) {
+        guard mode.isOffered else { return }
         if let held = session.gestureHold {
             bridge?.showReport(mode.label, held)
             return
@@ -1431,7 +1440,11 @@ struct LayoutWorkspace: View {
         // script — and a brush in hand would now mean nothing.
         .onChange(of: scene.mode) { _, mode in
             if !mode.isBrushMode, tool.isBrush { tool = .select }
+            leaveHiddenMode()
         }
+        // A script that left Blender in a mode the app does not offer, once
+        // it has finished.
+        .onChange(of: session.isRunning) { _, running in if !running { leaveHiddenMode() } }
         // Loop Cut's ring and the Knife's path belong to the tool, the mode
         // and the object they were made with.
         .onChange(of: tool) { _, next in CutToolActions.keep(for: next, scene: scene) }
@@ -2122,6 +2135,7 @@ struct LayoutWorkspace: View {
             case "vertex": setSelectMode(.vertex)
             case "edge": setSelectMode(.edge)
             case "face": setSelectMode(.face)
+            case "sidebar": showsSidebar.toggle()
             default: said = "no such action"
             }
         case "wait":
@@ -2185,7 +2199,7 @@ struct LayoutWorkspace: View {
             if session.usesRealBlender { modes += PaintModeBpy.modes }
             modes.append(.texturePaint)
         }
-        return modes
+        return modes.filter(\.isOffered)
     }
 
     /// Ctrl+Tab's Mode menu: each mode entered as the mode menu enters it.
@@ -2438,42 +2452,46 @@ struct LayoutWorkspace: View {
                                      object: object, camera: $camera,
                                      lookThrough: { lookThroughCamera(object) })
                     if session.usesRealBlender {
-                        // Blender's Outliner shows the RNA tree as its Data
-                        // API display mode.
-                        NavigationLink("Data API") {
-                            BlenderDataBrowser(bridge: bridge, startPath: "bpy.context.object",
-                                               revision: session.backendRevision)
-                                .toolbar(.visible, for: .navigationBar)
-                        }
-                        .font(BTheme.Font.ui(12))
-                        .padding(.horizontal, 12).padding(.vertical, 10)
+                        BEditorDivider(.horizontal)
+                        dataAPILink
                     }
                 }
             }
-        } else if scene.active != nil {
+        } else {
             // A mesh got the RNA browser and nothing else, on exactly the
             // backend where it matters: no Transform fields, no modifier
             // stack, no material — so a part could not be placed at a number,
             // only dragged. The Properties editor is what Blender shows here,
             // and the browser stays one tap away, the way the camera and light
-            // panel already does.
+            // panel already does. With nothing selected Blender still shows
+            // the Properties editor (its Scene tab), not the raw RNA tree.
             VStack(spacing: 0) {
                 PropertiesView(scene: scene, session: session, bridge: bridge)
                 if session.usesRealBlender {
                     BEditorDivider(.horizontal)
-                    NavigationLink("Data API") {
-                        BlenderDataBrowser(bridge: bridge, startPath: "bpy.context.object",
-                                           revision: session.backendRevision)
-                            .toolbar(.visible, for: .navigationBar)
-                    }
-                    .font(BTheme.Font.ui(12))
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .padding(.horizontal, 12).padding(.vertical, 10)
+                    dataAPILink
                 }
             }
-        } else if session.usesRealBlender {
-            BlenderDataBrowser(bridge: bridge, startPath: "bpy.context.object", revision: session.backendRevision)
-        } else { PropertiesView(scene: scene, session: session, bridge: bridge) }
+        }
+    }
+
+    /// The way into the Data API browser (Blender's Outliner shows the RNA
+    /// tree as its Data API display mode): on the active object, or on the
+    /// scene when nothing is active.
+    private var dataAPILink: some View {
+        let onObject = scene.active != nil
+        return NavigationLink {
+            BlenderDataBrowser(bridge: bridge,
+                               startPath: onObject ? "bpy.context.object" : "bpy.context.scene",
+                               revision: session.backendRevision)
+                .toolbar(.visible, for: .navigationBar)
+        } label: {
+            BLinkRow(icon: "list.bullet.indent", title: "Data API",
+                     caption: onObject ? "Every setting of this object, under Blender's names"
+                                       : "Every setting of the scene, under Blender's names")
+        }
+        .buttonStyle(.plain)
+        .accessibilityIdentifier("properties.dataAPI")
     }
 
     // MARK: the header, the toolbar and the editors' dock
@@ -2599,14 +2617,17 @@ struct LayoutWorkspace: View {
                           systemImage: current == .edit ? "checkmark" : InteractionMode.edit.icon)
                 }
             }
-            if canEdit {
+            // Object Mode and Edit Mode only (`InteractionMode.isOffered`).
+            if canEdit, InteractionMode.sculpt.isOffered {
                 Button { if current != .sculpt { choose(.sculptDraw) } } label: {
                     Label(InteractionMode.sculpt.label,
                           systemImage: current == .sculpt ? "checkmark" : InteractionMode.sculpt.icon)
                 }
+            }
+            if canEdit {
                 // Blender's own Vertex Paint and Weight Paint, with its module.
                 if session.usesRealBlender {
-                    ForEach(PaintModeBpy.modes, id: \.self) { mode in
+                    ForEach(PaintModeBpy.modes.filter(\.isOffered), id: \.self) { mode in
                         Button { if current != mode { enterPaintMode(mode) } } label: {
                             Label(mode.label, systemImage: current == mode ? "checkmark" : mode.icon)
                         }
@@ -2614,9 +2635,11 @@ struct LayoutWorkspace: View {
                 }
                 // Texture Paint is the app's own: its brushes paint the image
                 // in Swift and keep the stroke in Blender.
-                Button { if current != .texturePaint { choose(.paintDraw) } } label: {
-                    Label(InteractionMode.texturePaint.label,
-                          systemImage: current == .texturePaint ? "checkmark" : InteractionMode.texturePaint.icon)
+                if InteractionMode.texturePaint.isOffered {
+                    Button { if current != .texturePaint { choose(.paintDraw) } } label: {
+                        Label(InteractionMode.texturePaint.label,
+                              systemImage: current == .texturePaint ? "checkmark" : InteractionMode.texturePaint.icon)
+                    }
                 }
             }
         } label: { menuLabel(current.label, icon: current.icon, active: current != .object) }
@@ -2628,6 +2651,16 @@ struct LayoutWorkspace: View {
     /// (`ActiveTool.mode(whenChosenFrom:)`).
     private func toObjectMode() {
         if editing { setEditing(false) } else if scene.mode != .object { choose(.select) }
+    }
+
+    /// A scene saved in a mode the app does not offer (`InteractionMode.isOffered`)
+    /// — a file left in Sculpt Mode — or a script that went into one: back
+    /// to Object Mode, as the mode menu's Object Mode does, once nothing is
+    /// running and no stroke is down.
+    private func leaveHiddenMode() {
+        guard !scene.mode.isOffered, !session.isRunning, session.gestureHold == nil,
+              scene.active != nil else { return }
+        toObjectMode()
     }
 
     /// Blender's toolbar, down the 3D View's left edge: the select tools,
@@ -2721,10 +2754,29 @@ struct LayoutWorkspace: View {
                 OutlinerView(scene: scene, session: session, bridge: bridge)
                     .toolbar(.hidden, for: .navigationBar)
             }
-            // A third of a column, at most 260 points: the Properties
-            // editor is where most of the reading is.
-            .frame(width: wide ? nil : 300, height: wide ? min(260, height * 0.34) : nil)
+            // The Outliner's share of the column, which the line under it
+            // drags (`outlinerShare`); beside the Properties editor when the
+            // dock is under the view, 320 points wide.
+            .frame(width: wide ? nil : 320,
+                   height: wide ? min(max(height * outlinerShare, 120), max(height - 220, 120)) : nil)
             BEditorDivider(wide ? .horizontal : .vertical)
+                .overlay {
+                    // A finger's strip on the hairline, wider than it looks.
+                    if wide {
+                        Color.clear
+                            .frame(height: 24)
+                            .contentShape(Rectangle())
+                            .gesture(DragGesture(minimumDistance: 2)
+                                .onChanged { drag in
+                                    let start = outlinerShareAtDrag ?? outlinerShare
+                                    if outlinerShareAtDrag == nil { outlinerShareAtDrag = outlinerShare }
+                                    outlinerShare = min(max(start + drag.translation.height / max(height, 1), 0.15), 0.8)
+                                }
+                                .onEnded { _ in outlinerShareAtDrag = nil })
+                            .hoverEffect(.highlight)
+                            .accessibilityLabel("Resize the Outliner")
+                    }
+                }
             NavigationStack {
                 propertiesEditor
                     .toolbar(.hidden, for: .navigationBar)

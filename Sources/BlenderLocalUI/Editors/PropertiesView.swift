@@ -88,7 +88,7 @@ struct PropertiesView: View {
                 Text(scene.active?.name ?? "Properties")
                     .font(BTheme.Font.ui(12)).foregroundStyle(BTheme.text)
                 Text(tab.label)
-                    .font(BTheme.Font.ui(11)).foregroundStyle(BTheme.textDim)
+                    .font(BTheme.Font.ui(13)).foregroundStyle(BTheme.textDim)
                 Spacer()
             }
 
@@ -165,10 +165,10 @@ struct PropertiesView: View {
                         // off. Its step is the field's text, as the app's
                         // other field edits are named.
                         BPanel("Visibility") {
-                            Text("Show In").font(BTheme.Font.ui(11)).foregroundStyle(BTheme.textDim)
+                            Text("Show In").font(BTheme.Font.ui(13)).foregroundStyle(BTheme.textDim)
                             HStack {
                                 Text("Viewports")
-                                    .font(BTheme.Font.ui(11)).foregroundStyle(BTheme.textDim)
+                                    .font(BTheme.Font.ui(13)).foregroundStyle(BTheme.textDim)
                                 Spacer()
                                 Toggle("Viewports", isOn: Binding(get: { !obj.disabledInViewports },
                                                                   set: { bridge?.run(
@@ -177,10 +177,10 @@ struct PropertiesView: View {
                                     .labelsHidden()
                                     .scaleEffect(0.7)
                             }
-                            .frame(height: 22)
+                            .frame(height: BTheme.Metric.touchField)
                             if obj.hiddenInViewLayer {
                                 Text("Hidden in the view layer — Show Hidden Objects (Alt+H) or the Outliner's eye brings it back")
-                                    .font(BTheme.Font.ui(10)).foregroundStyle(BTheme.textDim)
+                                    .font(BTheme.Font.ui(12)).foregroundStyle(BTheme.textDim)
                                     .fixedSize(horizontal: false, vertical: true)
                             }
                         }
@@ -238,7 +238,7 @@ struct PropertiesView: View {
                             }
                             if obj.modifiers.isEmpty {
                                 Text("No modifiers")
-                                    .font(BTheme.Font.ui(11)).foregroundStyle(BTheme.textDim)
+                                    .font(BTheme.Font.ui(13)).foregroundStyle(BTheme.textDim)
                                     .frame(maxWidth: .infinity, alignment: .leading)
                             }
                         }
@@ -256,7 +256,7 @@ struct PropertiesView: View {
                         BPanel("Surface") {
                             HStack {
                                 Text("Base Color")
-                                    .font(BTheme.Font.ui(11)).foregroundStyle(BTheme.textDim)
+                                    .font(BTheme.Font.ui(13)).foregroundStyle(BTheme.textDim)
                                 Spacer()
                                 ColorPicker("", selection: Binding(
                                     get: {
@@ -293,7 +293,7 @@ struct PropertiesView: View {
                                          step: 0.01,
                                          commit: { _ in writeMaterial(obj) })
                             Text("Principled BSDF — what Solid, Material Preview and a render all read")
-                                .font(BTheme.Font.ui(10)).foregroundStyle(BTheme.textDim)
+                                .font(BTheme.Font.ui(12)).foregroundStyle(BTheme.textDim)
                                 .fixedSize(horizontal: false, vertical: true)
                         }
                         }
@@ -320,7 +320,7 @@ struct PropertiesView: View {
                                 // it: a count here could be one Blender no
                                 // longer holds.
                                 Text("Hidden: its mesh reaches the app when it is shown")
-                                    .font(BTheme.Font.ui(10)).foregroundStyle(BTheme.textDim)
+                                    .font(BTheme.Font.ui(12)).foregroundStyle(BTheme.textDim)
                                     .fixedSize(horizontal: false, vertical: true)
                             } else if let undrawn = obj.undrawnVertexCount {
                                 // Past the mirror's limit, the viewport shows
@@ -346,7 +346,7 @@ struct PropertiesView: View {
                                 labelled("Y", BNumberField.Unit.meters.format(d.y))
                                 labelled("Z", BNumberField.Unit.meters.format(d.z))
                                 Text("Typed in Object Mode, as Blender's Item tab offers them")
-                                    .font(BTheme.Font.ui(10)).foregroundStyle(BTheme.textDim)
+                                    .font(BTheme.Font.ui(12)).foregroundStyle(BTheme.textDim)
                                     .fixedSize(horizontal: false, vertical: true)
                             } else if let bridge, let d = blenderDimensions {
                                 // Typed or dragged, each axis written as
@@ -380,7 +380,10 @@ struct PropertiesView: View {
                 VStack {
                     Spacer()
                     Text("No active object")
+                        .font(BTheme.Font.ui(13)).foregroundStyle(BTheme.textDim)
+                    Text("Tap an object, or its row in the Outliner, to see its settings")
                         .font(BTheme.Font.ui(12)).foregroundStyle(BTheme.textDim)
+                        .multilineTextAlignment(.center).padding(.horizontal, 16)
                     Spacer()
                 }
                 .frame(maxWidth: .infinity)
@@ -399,7 +402,7 @@ struct PropertiesView: View {
         case .curve(let curve):
             BPanel("Shape") {
                 HStack(spacing: 3) {
-                    Text("Dimensions").font(BTheme.Font.ui(11)).foregroundStyle(BTheme.textDim)
+                    Text("Dimensions").font(BTheme.Font.ui(13)).foregroundStyle(BTheme.textDim)
                     Spacer()
                     ForEach(["2D", "3D"], id: \.self) { d in
                         axisToggle(d, on: curve.dimensions == d) {
@@ -407,7 +410,7 @@ struct PropertiesView: View {
                         }
                     }
                 }
-                .frame(height: 22)
+                .frame(height: BTheme.Metric.touchField)
                 stepper("Resolution Preview U", value: curve.resolutionU, range: 1...64) { v in
                     setData(obj, "resolution_u", "\(v)", undo: "Resolution Preview U")
                 }
@@ -443,7 +446,7 @@ struct PropertiesView: View {
                     // curve fills with no depth (48 vertices, 46 faces for a
                     // circle with Both), so the note is for 3D alone.
                     Text("A depth or an extrusion gives the curve a surface")
-                        .font(BTheme.Font.ui(10)).foregroundStyle(BTheme.textDim)
+                        .font(BTheme.Font.ui(12)).foregroundStyle(BTheme.textDim)
                         .fixedSize(horizontal: false, vertical: true)
                 }
             }
@@ -469,7 +472,7 @@ struct PropertiesView: View {
                 .opacity(lattice.resolutionEditable ? 1 : 0.5)
                 if !lattice.resolutionEditable {
                     Text("A lattice with shape keys keeps its resolution")
-                        .font(BTheme.Font.ui(10)).foregroundStyle(BTheme.textDim)
+                        .font(BTheme.Font.ui(12)).foregroundStyle(BTheme.textDim)
                         .fixedSize(horizontal: false, vertical: true)
                 }
                 ForEach(0..<3, id: \.self) { axis in
@@ -550,7 +553,7 @@ struct PropertiesView: View {
                     // kind this panel has no settings for, which is what the
                     // row is named by then.
                     Text(modifier.typeLabel)
-                        .font(BTheme.Font.ui(10)).foregroundStyle(BTheme.textDim)
+                        .font(BTheme.Font.ui(12)).foregroundStyle(BTheme.textDim)
                         .lineLimit(1)
                 }
                 Spacer()
@@ -572,13 +575,15 @@ struct PropertiesView: View {
                     .disabled(obj.modifiers.last?.name == modifier.name)
                 } label: {
                     Image(systemName: "chevron.down")
-                        .font(.system(size: 9)).foregroundStyle(BTheme.textDim)
-                        .frame(width: 18, height: 18)
+                        .font(.system(size: 12)).foregroundStyle(BTheme.textDim)
+                        .frame(width: BTheme.Metric.touchButton, height: BTheme.Metric.touchButton)
                 }
                 .accessibilityLabel("Modifier actions")
                 Button { perform(.remove, obj: obj, modifier: modifier) } label: {
                     Image(systemName: "xmark")
-                        .font(.system(size: 9)).foregroundStyle(BTheme.textDim)
+                        .font(.system(size: 13, weight: .semibold)).foregroundStyle(BTheme.textDim)
+                        .frame(width: BTheme.Metric.touchButton, height: BTheme.Metric.touchButton)
+                        .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
                 .hoverEffect(.highlight)
@@ -599,26 +604,26 @@ struct PropertiesView: View {
                 // Clipping and Merge. Each writes through `update` and shows
                 // what the mirror brings back.
                 HStack(spacing: 3) {
-                    Text("Axis").font(BTheme.Font.ui(11)).foregroundStyle(BTheme.textDim)
+                    Text("Axis").font(BTheme.Font.ui(13)).foregroundStyle(BTheme.textDim)
                     Spacer()
                     axisToggle("X", on: modifier.mirrorX) { update(obj, modifier) { $0.mirrorX = !$0.mirrorX } }
                     axisToggle("Y", on: modifier.mirrorY) { update(obj, modifier) { $0.mirrorY = !$0.mirrorY } }
                     axisToggle("Z", on: modifier.mirrorZ) { update(obj, modifier) { $0.mirrorZ = !$0.mirrorZ } }
                 }
-                .frame(height: 22)
+                .frame(height: BTheme.Metric.touchField)
                 HStack(spacing: 3) {
-                    Text("Bisect").font(BTheme.Font.ui(11)).foregroundStyle(BTheme.textDim)
+                    Text("Bisect").font(BTheme.Font.ui(13)).foregroundStyle(BTheme.textDim)
                     Spacer()
                     axisToggle("X", on: modifier.bisectX) { update(obj, modifier) { $0.bisectX.toggle() } }
                     axisToggle("Y", on: modifier.bisectY) { update(obj, modifier) { $0.bisectY.toggle() } }
                     axisToggle("Z", on: modifier.bisectZ) { update(obj, modifier) { $0.bisectZ.toggle() } }
                 }
-                .frame(height: 22)
+                .frame(height: BTheme.Metric.touchField)
                 // Which side of the cut is kept. Blender dims an axis's Flip
                 // while that axis does not bisect, since it then changes
                 // nothing; so does this.
                 HStack(spacing: 3) {
-                    Text("Flip").font(BTheme.Font.ui(11)).foregroundStyle(BTheme.textDim)
+                    Text("Flip").font(BTheme.Font.ui(13)).foregroundStyle(BTheme.textDim)
                     Spacer()
                     axisToggle("X", on: modifier.bisectFlipX) { update(obj, modifier) { $0.bisectFlipX.toggle() } }
                         .opacity(modifier.bisectX ? 1 : 0.4)
@@ -627,7 +632,7 @@ struct PropertiesView: View {
                     axisToggle("Z", on: modifier.bisectFlipZ) { update(obj, modifier) { $0.bisectFlipZ.toggle() } }
                         .opacity(modifier.bisectZ ? 1 : 0.4)
                 }
-                .frame(height: 22)
+                .frame(height: BTheme.Metric.touchField)
                 flag("Clipping", on: modifier.mirrorClip) { on in
                     update(obj, modifier) { $0.mirrorClip = on }
                 }
@@ -674,7 +679,7 @@ struct PropertiesView: View {
                     // back untouched and Blender raises nothing at all. The
                     // row says so rather than looking finished.
                     Text("No target — this modifier does nothing")
-                        .font(BTheme.Font.ui(10)).foregroundStyle(BTheme.textDim)
+                        .font(BTheme.Font.ui(12)).foregroundStyle(BTheme.textDim)
                 }
                 // A Menu rather than a segmented Picker: "Nearest Surface" and
                 // "Target Project" truncate to nonsense at four segments in
@@ -707,7 +712,7 @@ struct PropertiesView: View {
                     // Ratio is inert in UNSUBDIV and DISSOLVE. Editing it sends
                     // COLLAPSE with it, so say that before it happens.
                     Text("Set to \(modifier.decimateType.capitalized) by a script — editing switches it to Collapse")
-                        .font(BTheme.Font.ui(10)).foregroundStyle(BTheme.textDim)
+                        .font(BTheme.Font.ui(12)).foregroundStyle(BTheme.textDim)
                 }
                 number("Ratio", modifier.ratio, step: 0.01, clamp: { max(0, min($0, 1)) }) { v in
                     update(obj, modifier) {
@@ -777,12 +782,12 @@ struct PropertiesView: View {
                 // Blender's Motion X / Y, not an axis: Wave always rises along
                 // Z, and these say which way the ripple travels.
                 HStack(spacing: 3) {
-                    Text("Motion").font(BTheme.Font.ui(11)).foregroundStyle(BTheme.textDim)
+                    Text("Motion").font(BTheme.Font.ui(13)).foregroundStyle(BTheme.textDim)
                     Spacer()
                     axisToggle("X", on: modifier.waveX) { update(obj, modifier) { $0.waveX.toggle() } }
                     axisToggle("Y", on: modifier.waveY) { update(obj, modifier) { $0.waveY.toggle() } }
                 }
-                .frame(height: 22)
+                .frame(height: BTheme.Metric.touchField)
             case .simpleDeform:
                 Picker("", selection: Binding(
                     get: { modifier.deformMode },
@@ -811,12 +816,12 @@ struct PropertiesView: View {
                 } else if modifier.nodeGroup.isEmpty {
                     // An empty Geometry Nodes modifier passes the mesh through.
                     Text("Geometry Nodes with no node group — this modifier does nothing")
-                        .font(BTheme.Font.ui(10)).foregroundStyle(BTheme.textDim)
+                        .font(BTheme.Font.ui(12)).foregroundStyle(BTheme.textDim)
                         .fixedSize(horizontal: false, vertical: true)
                 } else {
                     labelled("Node Group", modifier.nodeGroup)
                     Text("Geometry Nodes: its inputs are edited in Blender's node editor, which this app does not have")
-                        .font(BTheme.Font.ui(10)).foregroundStyle(BTheme.textDim)
+                        .font(BTheme.Font.ui(12)).foregroundStyle(BTheme.textDim)
                         .fixedSize(horizontal: false, vertical: true)
                 }
             case .weightedNormal:
@@ -871,13 +876,13 @@ struct PropertiesView: View {
                     update(obj, modifier) { $0.lambdaBorder = v }
                 }
                 HStack(spacing: 3) {
-                    Text("Axis").font(BTheme.Font.ui(11)).foregroundStyle(BTheme.textDim)
+                    Text("Axis").font(BTheme.Font.ui(13)).foregroundStyle(BTheme.textDim)
                     Spacer()
                     axisToggle("X", on: modifier.smoothX) { update(obj, modifier) { $0.smoothX.toggle() } }
                     axisToggle("Y", on: modifier.smoothY) { update(obj, modifier) { $0.smoothY.toggle() } }
                     axisToggle("Z", on: modifier.smoothZ) { update(obj, modifier) { $0.smoothZ.toggle() } }
                 }
-                .frame(height: 22)
+                .frame(height: BTheme.Metric.touchField)
                 flag("Preserve Volume", on: modifier.preserveVolume) { on in
                     update(obj, modifier) { $0.preserveVolume = on }
                 }
@@ -921,7 +926,7 @@ struct PropertiesView: View {
                     // raises nothing, and refuses Apply with "Modifier is
                     // disabled, skipping apply".
                     Text("No lattice — this modifier does nothing")
-                        .font(BTheme.Font.ui(10)).foregroundStyle(BTheme.textDim)
+                        .font(BTheme.Font.ui(12)).foregroundStyle(BTheme.textDim)
                 }
                 number("Strength", modifier.thickness, step: 0.01) { v in
                     update(obj, modifier) { $0.thickness = v }
@@ -940,7 +945,10 @@ struct PropertiesView: View {
                                            startPath: Bpy.modifierDataPath(modifier.name),
                                            revision: session.backendRevision)
                     } label: {
-                        fieldLabel("Settings", "Data API ›", dim: false)
+                        BLinkRow(icon: "list.bullet.indent", title: "Data API",
+                                 caption: "This modifier's settings, under Blender's names")
+                            .background(BTheme.field)
+                            .clipShape(RoundedRectangle(cornerRadius: BTheme.Metric.corner))
                     }
                     .buttonStyle(.plain)
                 }
@@ -950,7 +958,7 @@ struct PropertiesView: View {
                 Text(ModifierKind.modelled(modifier.blenderType) == nil
                      ? "\(modifier.typeLabel) has no rows of its own in this panel"
                      : "Blender's settings for this \(modifier.typeLabel) could not be read")
-                    .font(BTheme.Font.ui(10)).foregroundStyle(BTheme.textDim)
+                    .font(BTheme.Font.ui(12)).foregroundStyle(BTheme.textDim)
                     .fixedSize(horizontal: false, vertical: true)
             case .curve, .wireframe, .skin, .hook, .armature, .surfaceDeform, .meshDeform,
                  .dataTransfer, .normalEdit, .mask, .build:
@@ -960,11 +968,11 @@ struct PropertiesView: View {
                 // Weld has one setting the row offers: its Vertex Group, below.
                 if !session.usesRealBlender {
                     Text("No settings")
-                        .font(BTheme.Font.ui(10)).foregroundStyle(BTheme.textDim)
+                        .font(BTheme.Font.ui(12)).foregroundStyle(BTheme.textDim)
                 }
             case .triangulate:
                 Text("No settings")
-                    .font(BTheme.Font.ui(10)).foregroundStyle(BTheme.textDim)
+                    .font(BTheme.Font.ui(12)).foregroundStyle(BTheme.textDim)
             }
             // The Vertex Group field, for the kinds whose result it changes
             // (`ModifierKind.takesVertexGroup`). Only on the real backend: the
@@ -1043,8 +1051,8 @@ struct PropertiesView: View {
     private func multiresButton(_ op: Bpy.MultiresOperation, obj: BKObject,
                                 modifier: Modifier) -> some View {
         Button { perform(.multires(op), obj: obj, modifier: modifier) } label: {
-            Text(op.label).font(BTheme.Font.ui(11)).foregroundStyle(BTheme.text)
-                .frame(maxWidth: .infinity).frame(height: 22)
+            Text(op.label).font(BTheme.Font.ui(13)).foregroundStyle(BTheme.text)
+                .frame(maxWidth: .infinity).frame(height: BTheme.Metric.touchField)
                 .background(BTheme.widget)
                 .clipShape(RoundedRectangle(cornerRadius: BTheme.Metric.corner))
         }
@@ -1132,7 +1140,7 @@ struct PropertiesView: View {
     @ViewBuilder
     private func axisRow(obj: BKObject, modifier: Modifier) -> some View {
         HStack(spacing: 3) {
-            Text("Axis").font(BTheme.Font.ui(11)).foregroundStyle(BTheme.textDim)
+            Text("Axis").font(BTheme.Font.ui(13)).foregroundStyle(BTheme.textDim)
             Spacer()
             ForEach(0..<3, id: \.self) { i in
                 axisToggle(["X", "Y", "Z"][i], on: modifier.axis == i) {
@@ -1140,7 +1148,7 @@ struct PropertiesView: View {
                 }
             }
         }
-        .frame(height: 22)
+        .frame(height: BTheme.Metric.touchField)
     }
 
     /// A modifier's Vertex Group, with Blender's Invert beside it: the
@@ -1192,13 +1200,13 @@ struct PropertiesView: View {
     @ViewBuilder
     private func fieldLabel(_ label: String, _ value: String, dim: Bool) -> some View {
         HStack(spacing: 4) {
-            Text(label).font(BTheme.Font.ui(11)).foregroundStyle(BTheme.textDim)
+            Text(label).font(BTheme.Font.ui(13)).foregroundStyle(BTheme.textDim)
             Spacer()
-            Text(value).font(BTheme.Font.mono(11))
+            Text(value).font(BTheme.Font.mono(13))
                 .foregroundStyle(dim ? BTheme.textDim : BTheme.text)
         }
         .padding(.horizontal, 6)
-        .frame(height: 22)
+        .frame(height: BTheme.Metric.touchField)
         .frame(maxWidth: .infinity)
         .background(BTheme.field)
         .clipShape(RoundedRectangle(cornerRadius: BTheme.Metric.corner))
@@ -1208,26 +1216,26 @@ struct PropertiesView: View {
     private func stepper(_ label: String, value: Int, range: ClosedRange<Int>,
                          set: @escaping (Int) -> Void) -> some View {
         HStack(spacing: 4) {
-            Text(label).font(BTheme.Font.ui(11)).foregroundStyle(BTheme.textDim)
+            Text(label).font(BTheme.Font.ui(13)).foregroundStyle(BTheme.textDim)
             Spacer()
             Button { if value > range.lowerBound { set(value - 1) } } label: {
-                Image(systemName: "minus").font(.system(size: 9))
-                    .frame(width: 22, height: 20).background(BTheme.widget)
+                Image(systemName: "minus").font(.system(size: 12))
+                    .frame(width: BTheme.Metric.touchButton, height: BTheme.Metric.touchField).background(BTheme.widget)
                     .clipShape(RoundedRectangle(cornerRadius: 3))
             }
             .buttonStyle(.plain)
                 .hoverEffect(.highlight).foregroundStyle(BTheme.text)
-            Text("\(value)").font(BTheme.Font.mono(11))
+            Text("\(value)").font(BTheme.Font.mono(13))
                 .foregroundStyle(BTheme.text).frame(width: 26)
             Button { if value < range.upperBound { set(value + 1) } } label: {
-                Image(systemName: "plus").font(.system(size: 9))
-                    .frame(width: 22, height: 20).background(BTheme.widget)
+                Image(systemName: "plus").font(.system(size: 12))
+                    .frame(width: BTheme.Metric.touchButton, height: BTheme.Metric.touchField).background(BTheme.widget)
                     .clipShape(RoundedRectangle(cornerRadius: 3))
             }
             .buttonStyle(.plain)
                 .hoverEffect(.highlight).foregroundStyle(BTheme.text)
         }
-        .frame(height: 22)
+        .frame(height: BTheme.Metric.touchField)
     }
 
     /// One of Blender's checkboxes, as Mirror's Clipping and Merge. It shows
@@ -1236,20 +1244,20 @@ struct PropertiesView: View {
     @ViewBuilder
     private func flag(_ label: String, on: Bool, set: @escaping (Bool) -> Void) -> some View {
         HStack {
-            Text(label).font(BTheme.Font.ui(11)).foregroundStyle(BTheme.textDim)
+            Text(label).font(BTheme.Font.ui(13)).foregroundStyle(BTheme.textDim)
             Spacer()
             Toggle("", isOn: Binding(get: { on }, set: set))
                 .labelsHidden()
                 .scaleEffect(0.7)
         }
-        .frame(height: 22)
+        .frame(height: BTheme.Metric.touchField)
     }
 
     @ViewBuilder
     private func axisToggle(_ label: String, on: Bool, toggle: @escaping () -> Void) -> some View {
         Button(action: toggle) {
             Text(label)
-                .font(BTheme.Font.ui(11))
+                .font(BTheme.Font.ui(13))
                 .foregroundStyle(on ? Color.white : BTheme.textDim)
                 .frame(width: 24, height: 20)
                 .background(on ? BTheme.select : BTheme.widget)
@@ -1285,11 +1293,11 @@ struct PropertiesView: View {
     @ViewBuilder
     private func labelled(_ label: String, _ value: String) -> some View {
         HStack {
-            Text(label).font(BTheme.Font.ui(11)).foregroundStyle(BTheme.textDim)
+            Text(label).font(BTheme.Font.ui(13)).foregroundStyle(BTheme.textDim)
             Spacer()
-            Text(value).font(BTheme.Font.mono(11)).foregroundStyle(BTheme.text)
+            Text(value).font(BTheme.Font.mono(13)).foregroundStyle(BTheme.text)
         }
-        .frame(height: 20)
+        .frame(height: BTheme.Metric.touchField)
     }
 }
 
@@ -1359,7 +1367,7 @@ struct ObjectTransformFields: View {
         } else {
             Text("Blender's transform channels for \(object.name) did not arrive with the scene, "
                  + "so the fields are left out rather than shown wrong.")
-                .font(BTheme.Font.ui(10)).foregroundStyle(BTheme.textDim)
+                .font(BTheme.Font.ui(12)).foregroundStyle(BTheme.textDim)
                 .fixedSize(horizontal: false, vertical: true)
         }
     }
@@ -1369,12 +1377,12 @@ struct ObjectTransformFields: View {
         let values = shown.values(group)
         return VStack(alignment: .leading, spacing: 2) {
             HStack {
-                Text(group.title).font(BTheme.Font.ui(11)).foregroundStyle(BTheme.textDim)
+                Text(group.title).font(BTheme.Font.ui(13)).foregroundStyle(BTheme.textDim)
                 Spacer()
                 if group == .rotation {
                     // Which property the fields are: Blender's Mode menu.
                     Text(shown.rotationMode.label)
-                        .font(BTheme.Font.ui(10)).foregroundStyle(BTheme.textDim)
+                        .font(BTheme.Font.ui(12)).foregroundStyle(BTheme.textDim)
                 }
             }
             ForEach(axes.indices, id: \.self) { i in

@@ -97,8 +97,15 @@ public enum BTheme {
         public static let statusHeight: CGFloat   = 24
         public static let rowHeight: CGFloat      = 26
         public static let corner: CGFloat         = 4      // Blender widget radius
-        public static let sidebarWidth: CGFloat   = 240
+        public static let sidebarWidth: CGFloat   = 290
         public static let hairline: CGFloat       = 1
+        /// The side panels' sizes for a finger (2026-11-03, the user on an
+        /// iPad: "all of it hard to use"): fields and rows 32 points tall, a
+        /// panel's header 36, a small button's target 36 square. Blender's own
+        /// 20-pixel rows are a mouse's.
+        public static let touchField: CGFloat     = 32
+        public static let touchRow: CGFloat       = 36
+        public static let touchButton: CGFloat    = 36
     }
 
     public enum Font {

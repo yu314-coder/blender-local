@@ -2066,11 +2066,80 @@ def property_info(prop, owner=None):
                 if item == pointer_value:
                     value = item_path
             break
-    return dict(id=prop.identifier, name=prop.name, description=prop.description,
+    info = dict(id=prop.identifier, name=prop.name, description=prop.description,
                 kind=kind, value=json.dumps(value), options=options,
                 editable=not prop.is_readonly and kind in {'BOOLEAN', 'INT', 'FLOAT', 'STRING', 'ENUM', 'POINTER'},
                 array=bool(getattr(prop, 'is_array', False)),
-                enumFlag=bool(getattr(prop, 'is_enum_flag', False)))
+                enumFlag=bool(getattr(prop, 'is_enum_flag', False)),
+                # How Blender draws it: its subtype (Translation, Euler, Color,
+                # Percentage, Factor, File Path…), its unit, and for a number its
+                # soft range, step and precision — what the Data API browser
+                # draws each value with (`_widget` in Swift).
+                subtype=getattr(prop, 'subtype', 'NONE') or 'NONE',
+                unit=getattr(prop, 'unit', 'NONE') or 'NONE',
+                arrayLength=int(getattr(prop, 'array_length', 0) or 0))
+    if kind in {'INT', 'FLOAT'}:
+        def finite(x):
+            try:
+                x = float(x)
+            except (TypeError, ValueError):
+                return None
+            # FLT_MAX and INT_MAX stand for "no limit" in RNA.
+            return x if math.isfinite(x) and abs(x) < 1e30 else None
+        info.update(softMin=finite(prop.soft_min), softMax=finite(prop.soft_max),
+                    hardMin=finite(prop.hard_min), hardMax=finite(prop.hard_max),
+                    precision=int(getattr(prop, 'precision', 0) or 0))
+    if kind == 'POINTER':
+        target = getattr(prop, 'fixed_type', None)
+        info['typeName'] = getattr(target, 'name', '') if target is not None else ''
+        info['valueName'] = getattr(pointer_value, 'name', None) if pointer_value is not None else None
+    return info
+
+
+def _display_name(value, fallback):
+    """What a breadcrumb or a link calls a struct: its own name when it has
+    one (an object, a modifier, a material), else `fallback`."""
+    name = getattr(value, 'name', None)
+    return name if isinstance(name, str) and name else fallback
+
+
+def _crumbs(path):
+    """The path's steps, each with the name the browser shows for it: the
+    struct's own name, or the property's UI name (Modifiers, Render Data),
+    from the root the browser was opened at down. `bpy.context.X` and
+    `bpy.data` are where a path starts; `bpy` and `bpy.context` are not steps."""
+    out = []
+    node = ast.parse(path, mode='eval').body
+    chain = []
+    while isinstance(node, (ast.Attribute, ast.Subscript)):
+        chain.append(node)
+        node = node.value
+    chain.reverse()
+    prefix = 'bpy'
+    parent = bpy
+    for step in chain:
+        if isinstance(step, ast.Attribute):
+            prefix = prefix + '.' + step.attr
+            label = step.attr
+            rna = getattr(parent, 'bl_rna', None)
+            if rna is not None and step.attr in rna.properties:
+                label = rna.properties[step.attr].name
+        else:
+            key = ast.literal_eval(step.slice)
+            prefix = prefix + '[' + repr(key) + ']'
+            label = str(key)
+        try:
+            value = resolve(prefix)
+        except Exception:
+            value = None
+        parent = value
+        if prefix in ('bpy.context',):
+            continue
+        if prefix == 'bpy.data':
+            label = bpy.data.bl_rna.name
+        out.append(dict(name=_display_name(value, label) if isinstance(step, ast.Subscript)
+                        or not hasattr(value, '__iter__') else label, path=prefix))
+    return out
 
 
 def operator_info(path):
@@ -2485,32 +2554,73 @@ def _heavy_sculpt_level(previous, what, level):
 
 
 def inspect_data(path):
-    obj = resolve(path)
+    """One page of the Data API browser: a struct's properties (each with
+    `property_info`'s description of how to draw it) and its links — every
+    pointer and collection, saying what it leads to — or a collection's items.
+    `title`, `description`, `available`, `properties` and `children` are what
+    the browser always read; the rest says what the page is (`typeName`), how
+    it was reached (`crumbs`) and, for an empty one, why (`missing`)."""
+    try:
+        obj = resolve(path)
+    except Exception as error:
+        obj, missing = None, str(error)
+    else:
+        missing = None
     props, children = [], []
-    if hasattr(obj, 'bl_rna') and not type(obj).__name__.startswith('bpy_prop_collection'):
+    type_name, type_description = '', ''
+    if obj is None:
+        missing = missing or ('There is no active object. Select one in the 3D Viewport or the Outliner.'
+                              if path.endswith('context.object') else 'Nothing is there.')
+    elif hasattr(obj, 'bl_rna') and not type(obj).__name__.startswith('bpy_prop_collection'):
+        type_name, type_description = obj.bl_rna.name, obj.bl_rna.description
+        # What every datablock has (Name, Fake User, Library, Original ID…),
+        # as against the object's or the material's own: `group` ID, which the
+        # browser draws after them.
+        shared = set(bpy.types.ID.bl_rna.properties.keys()) if isinstance(obj, bpy.types.ID) else set()
         for p in obj.bl_rna.properties:
             if p.identifier == 'rna_type' or p.is_hidden:
                 continue
+            group = 'ID' if p.identifier in shared and p.identifier != 'name' else None
             try:
                 if p.type in {'POINTER', 'COLLECTION'}:
                     value = getattr(obj, p.identifier)
                     if p.type == 'POINTER' and not p.is_readonly:
-                        props.append(property_info(p, obj))
+                        props.append(dict(property_info(p, obj), group=group))
                     if value is not None:
-                        children.append(dict(name=p.name, path=path + '.' + p.identifier))
+                        target = getattr(p, 'fixed_type', None)
+                        link = dict(name=p.name, path=path + '.' + p.identifier, identifier=p.identifier,
+                                    kind=p.type, description=p.description, group=group,
+                                    typeName=getattr(target, 'name', '') if target is not None else '')
+                        if p.type == 'COLLECTION':
+                            try:
+                                link['count'] = len(value)
+                            except TypeError:
+                                pass
+                        else:
+                            link['typeName'] = getattr(getattr(value, 'bl_rna', None), 'name', link['typeName'])
+                            link['detail'] = _display_name(value, '')
+                        children.append(link)
                 else:
-                    props.append(property_info(p, obj))
+                    props.append(dict(property_info(p, obj), group=group))
             except Exception:
                 continue
     elif hasattr(obj, '__iter__'):
+        type_name = 'Collection'
         for index, item in enumerate(obj):
             if index >= 500:
                 break
             name = getattr(item, 'name', str(index))
             # Numeric keys also work for collections whose items have duplicate names.
-            children.append(dict(name=name, path=path + '[' + str(index) + ']'))
-    return dict(title=getattr(obj, 'name', path), description=path,
-                available=True, properties=props, children=children)
+            children.append(dict(name=name, path=path + '[' + str(index) + ']', kind='ITEM',
+                                 typeName=getattr(getattr(item, 'bl_rna', None), 'name', '')))
+    try:
+        crumbs = _crumbs(path)
+    except Exception:
+        crumbs = []
+    return dict(title=_display_name(obj, crumbs[-1]['name'] if crumbs else path) if obj is not None else
+                (crumbs[-1]['name'] if crumbs else path),
+                description=path, available=obj is not None, properties=props, children=children,
+                typeName=type_name, typeDescription=type_description, crumbs=crumbs, missing=missing)
 
 
 def _budget_module():

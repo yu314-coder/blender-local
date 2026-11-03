@@ -123,13 +123,13 @@ public struct BPanel<Content: View>: View {
             } label: {
                 HStack(spacing: 5) {
                     Image(systemName: open ? "chevron.down" : "chevron.right")
-                        .font(.system(size: 9, weight: .bold))
-                    Text(title).font(BTheme.Font.ui(12, weight: .medium))
+                        .font(.system(size: 11, weight: .bold))
+                    Text(title).font(BTheme.Font.ui(13, weight: .medium))
                     Spacer(minLength: 0)
                 }
                 .foregroundStyle(BTheme.text)
                 .padding(.horizontal, 8)
-                .frame(height: BTheme.Metric.rowHeight)
+                .frame(height: BTheme.Metric.touchRow)
                 .frame(maxWidth: .infinity)
                 .background(BTheme.widget.opacity(0.45))
                 .clipShape(RoundedRectangle(cornerRadius: BTheme.Metric.corner))
@@ -254,13 +254,13 @@ public struct BNumberField: View {
                 Rectangle().fill(accent).frame(width: 3)
             }
             Text(label)
-                .font(BTheme.Font.ui(11))
+                .font(BTheme.Font.ui(13))
                 .foregroundStyle(BTheme.textDim)
                 .padding(.leading, 6)
             Spacer(minLength: 4)
             if let typed = typing {
                 TextField("", text: Binding(get: { typed }, set: { typing = $0 }))
-                    .font(BTheme.Font.mono(11))
+                    .font(BTheme.Font.mono(13))
                     .foregroundStyle(BTheme.text)
                     .multilineTextAlignment(.trailing)
                     .keyboardType(.numbersAndPunctuation)
@@ -273,12 +273,12 @@ public struct BNumberField: View {
                     .frame(maxWidth: 90)
             } else {
                 Text(unit.format(value))
-                    .font(BTheme.Font.mono(11))
+                    .font(BTheme.Font.mono(13))
                     .foregroundStyle(dragStart == nil ? BTheme.text : BTheme.active)
                     .padding(.trailing, 8)
             }
         }
-        .frame(height: 22)
+        .frame(height: BTheme.Metric.touchField)
         .background(BTheme.field)
         .clipShape(RoundedRectangle(cornerRadius: BTheme.Metric.corner))
         // Blender puts a pair of arrows on a number field to say it scrubs.
@@ -388,7 +388,7 @@ public struct BOutlinerRow: View {
                 Spacer(minLength: 0)
             }
             .padding(.horizontal, 6)
-            .frame(height: 22)
+            .frame(height: BTheme.Metric.touchField)
             .frame(maxWidth: .infinity)
             .background(selected ? BTheme.select.opacity(0.22) : .clear)
         }
@@ -407,5 +407,44 @@ public struct BEditorDivider: View {
                 width:  axis == .vertical   ? BTheme.Metric.hairline : nil,
                 height: axis == .horizontal ? BTheme.Metric.hairline : nil
             )
+    }
+}
+
+/// A row that opens another view: an icon, a title with a dim caption under
+/// it, and a chevron, 44 points tall for a finger. The Data API links were a
+/// line of 12-point text with nothing to say what was behind them or that
+/// they could be tapped (the user, November 3: "the data api is especially
+/// confusing to use").
+public struct BLinkRow: View {
+    var icon: String
+    var title: String
+    var caption: String?
+
+    public init(icon: String, title: String, caption: String? = nil) {
+        self.icon = icon; self.title = title; self.caption = caption
+    }
+
+    public var body: some View {
+        HStack(spacing: 10) {
+            Image(systemName: icon)
+                .font(.system(size: 14))
+                .foregroundStyle(BTheme.textDim)
+                .frame(width: 20)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(title).font(BTheme.Font.ui(13)).foregroundStyle(BTheme.text)
+                if let caption {
+                    Text(caption).font(BTheme.Font.ui(11)).foregroundStyle(BTheme.textDim)
+                        .lineLimit(2).fixedSize(horizontal: false, vertical: true)
+                }
+            }
+            Spacer(minLength: 0)
+            Image(systemName: "chevron.right")
+                .font(.system(size: 12, weight: .semibold))
+                .foregroundStyle(BTheme.textDim)
+        }
+        .padding(.horizontal, 12)
+        .frame(minHeight: 44)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .contentShape(Rectangle())
     }
 }

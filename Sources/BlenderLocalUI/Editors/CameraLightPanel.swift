@@ -45,7 +45,7 @@ struct CameraLightPanel: View {
             } else {
                 number("Focal Length", display.lens, step: 0.5) { set("lens", min(max($0, 1), 5000), undo: $1) }
                 Text("\(Int(display.verticalAngle * 180 / .pi))° tall at \(Int(display.aspectX)) × \(Int(display.aspectY))")
-                    .font(BTheme.Font.ui(10)).foregroundStyle(BTheme.textDim)
+                    .font(BTheme.Font.ui(12)).foregroundStyle(BTheme.textDim)
             }
             // Blender's Lens panel ends with these, as Clip Start and End.
             number("Clip Start", display.clipStart, step: 0.01, unit: .meters) { set("clip_start", max($0, 1e-4), undo: $1) }
@@ -55,7 +55,7 @@ struct CameraLightPanel: View {
         BPanel("Cameras") {
             if display.isSceneCamera {
                 Text("Renders go through this camera.")
-                    .font(BTheme.Font.ui(11)).foregroundStyle(BTheme.textDim)
+                    .font(BTheme.Font.ui(13)).foregroundStyle(BTheme.textDim)
             } else {
                 BButton("Set Active Object as Camera", icon: "video") {
                     _ = bridge?.run(Bpy.setSceneCamera(object.name), undo: "Set Active Object as Camera")
@@ -80,7 +80,7 @@ struct CameraLightPanel: View {
             picker("Type", choices: LightDisplay.Kind.allCases.map { ($0.rawValue, $0.label) },
                    selected: display.kind.rawValue) { set("type", choice: $0, undo: $1) }
             HStack {
-                Text("Color").font(BTheme.Font.ui(11)).foregroundStyle(BTheme.textDim)
+                Text("Color").font(BTheme.Font.ui(13)).foregroundStyle(BTheme.textDim)
                 Spacer()
                 ColorPicker("", selection: Binding(
                     get: { Color(.sRGB, red: Double(display.color.x), green: Double(display.color.y),
@@ -98,11 +98,11 @@ struct CameraLightPanel: View {
             if display.kind == .sun {
                 number("Strength", display.energy, step: 0.05) { set("energy", max($0, 0), undo: $1) }
                 Text("W/m², the sun's power at the surface")
-                    .font(BTheme.Font.ui(10)).foregroundStyle(BTheme.textDim)
+                    .font(BTheme.Font.ui(12)).foregroundStyle(BTheme.textDim)
             } else {
                 number("Power", display.energy, step: 5) { set("energy", max($0, 0), undo: $1) }
                 Text("Watts")
-                    .font(BTheme.Font.ui(10)).foregroundStyle(BTheme.textDim)
+                    .font(BTheme.Font.ui(12)).foregroundStyle(BTheme.textDim)
             }
             // Then what Blender's Light panel draws by type (DATA_PT_EEVEE_light,
             // 5.2.1): Radius for a point or a spot, Shape and Size for an area.
@@ -113,7 +113,7 @@ struct CameraLightPanel: View {
                     set("shadow_soft_size", max($0, 0), undo: $1)
                 }
                 Text("Bigger is softer shadows")
-                    .font(BTheme.Font.ui(10)).foregroundStyle(BTheme.textDim)
+                    .font(BTheme.Font.ui(12)).foregroundStyle(BTheme.textDim)
             }
             if display.kind == .area {
                 picker("Shape", choices: LightDisplay.Shape.allCases.map { ($0.rawValue, $0.label) },
@@ -153,7 +153,7 @@ struct CameraLightPanel: View {
     private func picker(_ label: String, choices: [(String, String)], selected: String,
                         set: @escaping (String, String) -> Void) -> some View {
         HStack {
-            Text(label).font(BTheme.Font.ui(11)).foregroundStyle(BTheme.textDim)
+            Text(label).font(BTheme.Font.ui(13)).foregroundStyle(BTheme.textDim)
             Spacer()
             Menu {
                 ForEach(choices, id: \.0) { value, title in
@@ -165,9 +165,9 @@ struct CameraLightPanel: View {
                 }
             } label: {
                 Text(choices.first { $0.0 == selected }?.1 ?? selected)
-                    .font(BTheme.Font.ui(11)).foregroundStyle(BTheme.text)
+                    .font(BTheme.Font.ui(13)).foregroundStyle(BTheme.text)
                     .padding(.horizontal, 8)
-                    .frame(height: 22)
+                    .frame(height: BTheme.Metric.touchField)
                     .background(BTheme.widget)
                     .clipShape(RoundedRectangle(cornerRadius: BTheme.Metric.corner))
             }

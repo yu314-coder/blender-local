@@ -200,9 +200,23 @@ let areas = ["Workspaces", "File", "Add", "Adjust Last Operation", "View", "Sele
              "Image to 3D", "Editors", "Input"]
 check("every area of the app has entries", areas.allSatisfy { a in inventory.contains { $0.area == a } },
       areas.filter { a in !inventory.contains { $0.area == a } }.joined(separator: ", "))
-check("every mode is entered: Edit, Sculpt, Vertex, Weight and Texture Paint, and Object Mode back",
-      ["mode.edit_large", "mode.object_large", "mode.sculpt", "mode.vertex_paint", "mode.weight_paint",
-       "mode.texture_paint", "mode.object_from_sculpt"].allSatisfy { k in FeatureTest.planned(cycles: false).contains { $0.key == k } })
+// The modes the app offers are entered; one it hides (InteractionMode.isOffered: Object
+// and Edit Mode only, unless BLENDER_LOCAL_ALL_MODES) is listed as not tested, saying so.
+let modeEntries: [(key: String, mode: InteractionMode)] = [
+    ("mode.edit_large", .edit), ("mode.object_large", .object), ("mode.sculpt", .sculpt),
+    ("mode.vertex_paint", .vertexPaint), ("mode.weight_paint", .weightPaint),
+    ("mode.texture_paint", .texturePaint), ("mode.object_from_sculpt", .sculpt)]
+check("every offered mode is entered, and a hidden one says it is hidden",
+      modeEntries.allSatisfy { e in
+          let entry = inventory.first { $0.key == e.key }!
+          return e.mode.isOffered
+              ? FeatureTest.planned(cycles: false).contains { $0.key == e.key }
+              : FeatureTest.notPlanned(cycles: false).contains { $0.name == entry.name && $0.reason.contains("is hidden") }
+      })
+check("Object and Edit Mode are offered; Sculpt and the paint modes are hidden",
+      InteractionMode.object.isOffered && InteractionMode.edit.isOffered
+      && !InteractionMode.sculpt.isOffered && !InteractionMode.vertexPaint.isOffered
+      && !InteractionMode.weightPaint.isOffered && !InteractionMode.texturePaint.isOffered)
 check("the continuous interactions are drags, strokes and playback",
       Set(inventory.filter { $0.kind == .continuous }.map(\.key)) == ["view.orbit", "view.pan", "view.zoom",
           "tool.move", "tool.rotate", "tool.scale", "tool.measure", "select.box", "paint.vertex", "paint.weight",

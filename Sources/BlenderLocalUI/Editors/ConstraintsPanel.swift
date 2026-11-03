@@ -29,7 +29,7 @@ struct ConstraintsPanel: View {
             }
             if object.constraints.isEmpty {
                 Text("No constraints")
-                    .font(BTheme.Font.ui(11)).foregroundStyle(BTheme.textDim)
+                    .font(BTheme.Font.ui(13)).foregroundStyle(BTheme.textDim)
                     .padding(.horizontal, 12)
             }
         }
@@ -119,7 +119,7 @@ private struct ConstraintCard: View {
             TextField(con.typeLabel, text: Binding(get: { draftName ?? con.name },
                                                    set: { draftName = $0 }))
                 .textFieldStyle(.plain)
-                .font(BTheme.Font.ui(11))
+                .font(BTheme.Font.ui(13))
                 .foregroundStyle(con.valid ? BTheme.text : Color.red)
                 .autocorrectionDisabled()
                 .focused($nameFocused)
@@ -163,7 +163,7 @@ private struct ConstraintCard: View {
                 send(ConstraintsBpy.remove(con.name, of: object.name))
             }
         }
-        .frame(height: 22)
+        .frame(height: BTheme.Metric.touchField)
     }
 
     private func commitName() {
@@ -263,13 +263,16 @@ private struct ConstraintCard: View {
                 BlenderDataBrowser(bridge: bridge, startPath: ConstraintsBpy.dataPath(con.name),
                                    revision: session.backendRevision)
             } label: {
-                fieldLabel("Settings", "Data API ›")
+                BLinkRow(icon: "list.bullet.indent", title: "Data API",
+                         caption: "This constraint's settings, under Blender's names")
+                    .background(BTheme.field)
+                    .clipShape(RoundedRectangle(cornerRadius: BTheme.Metric.corner))
             }
             .buttonStyle(.plain)
         }
         Text(con.unread ? "Blender's settings for this \(con.typeLabel) could not be read"
                         : "\(con.typeLabel) has no rows of its own in this panel")
-            .font(BTheme.Font.ui(10)).foregroundStyle(BTheme.textDim)
+            .font(BTheme.Font.ui(12)).foregroundStyle(BTheme.textDim)
             .fixedSize(horizontal: false, vertical: true)
     }
 
@@ -302,7 +305,7 @@ private struct ConstraintCard: View {
     /// Each button's text is its undo step, as Blender names a field's edit.
     private func switches(_ heading: String, _ items: [(String, String)]) -> some View {
         HStack(spacing: 3) {
-            Text(heading).font(BTheme.Font.ui(11)).foregroundStyle(BTheme.textDim)
+            Text(heading).font(BTheme.Font.ui(13)).foregroundStyle(BTheme.textDim)
             Spacer()
             ForEach(items, id: \.1) { item in
                 let on = con.bool(item.1) == true
@@ -311,7 +314,7 @@ private struct ConstraintCard: View {
                                             to: ConstraintsBpy.literal(!on), undo: item.0))
                 } label: {
                     Text(item.0)
-                        .font(BTheme.Font.ui(11))
+                        .font(BTheme.Font.ui(13))
                         .foregroundStyle(on ? Color.white : BTheme.textDim)
                         .frame(width: 24, height: 20)
                         .background(on ? BTheme.select : BTheme.widget)
@@ -323,13 +326,13 @@ private struct ConstraintCard: View {
                 .accessibilityValue(on ? "On" : "Off")
             }
         }
-        .frame(height: 22)
+        .frame(height: BTheme.Metric.touchField)
         .disabled(session.isRunning)
     }
 
     private func flag(_ label: String, _ key: String) -> some View {
         HStack {
-            Text(label).font(BTheme.Font.ui(11)).foregroundStyle(BTheme.textDim)
+            Text(label).font(BTheme.Font.ui(13)).foregroundStyle(BTheme.textDim)
             Spacer()
             Toggle("", isOn: Binding(get: { con.bool(key) == true }, set: { on in
                 send(ConstraintsBpy.set(key, of: con.name, on: object.name,
@@ -338,7 +341,7 @@ private struct ConstraintCard: View {
             .labelsHidden()
             .scaleEffect(0.7)
         }
-        .frame(height: 22)
+        .frame(height: BTheme.Metric.touchField)
         .disabled(session.isRunning)
     }
 
@@ -363,7 +366,7 @@ private struct ConstraintCard: View {
     private func limit(_ heading: String, use: String, key: String, unit: NumberFieldUnit,
                        label: String = "") -> some View {
         HStack(spacing: 4) {
-            Text(heading).font(BTheme.Font.ui(11)).foregroundStyle(BTheme.textDim)
+            Text(heading).font(BTheme.Font.ui(13)).foregroundStyle(BTheme.textDim)
                 .frame(width: 70, alignment: .leading)
             Toggle("", isOn: Binding(get: { con.bool(use) == true }, set: { on in
                 send(ConstraintsBpy.set(use, of: con.name, on: object.name,
@@ -402,8 +405,8 @@ private struct ConstraintCard: View {
     private func wide(_ operation: ConstraintsBpy.Operation) -> some View {
         Button { operate(operation) } label: {
             Text(operation.label)
-                .font(BTheme.Font.ui(11)).foregroundStyle(BTheme.text)
-                .frame(maxWidth: .infinity).frame(height: 22)
+                .font(BTheme.Font.ui(13)).foregroundStyle(BTheme.text)
+                .frame(maxWidth: .infinity).frame(height: BTheme.Metric.touchField)
                 .background(BTheme.widget)
                 .clipShape(RoundedRectangle(cornerRadius: BTheme.Metric.corner))
         }
@@ -428,12 +431,12 @@ private struct ConstraintCard: View {
 
     private func fieldLabel(_ label: String, _ value: String, dim: Bool = false) -> some View {
         HStack(spacing: 4) {
-            Text(label).font(BTheme.Font.ui(11)).foregroundStyle(BTheme.textDim)
+            Text(label).font(BTheme.Font.ui(13)).foregroundStyle(BTheme.textDim)
             Spacer()
-            Text(value).font(BTheme.Font.mono(11)).foregroundStyle(dim ? BTheme.textDim : BTheme.text)
+            Text(value).font(BTheme.Font.mono(13)).foregroundStyle(dim ? BTheme.textDim : BTheme.text)
         }
         .padding(.horizontal, 6)
-        .frame(height: 22)
+        .frame(height: BTheme.Metric.touchField)
         .frame(maxWidth: .infinity)
         .background(BTheme.field)
         .clipShape(RoundedRectangle(cornerRadius: BTheme.Metric.corner))

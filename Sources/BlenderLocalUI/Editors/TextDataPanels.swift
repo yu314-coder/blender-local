@@ -20,7 +20,7 @@ struct TextDataPanels: View {
             BodyTextField(bridge: bridge, object: object, current: settings.body)
             if let chars = settings.number("chars") {
                 Text("\(Int(chars)) characters")
-                    .font(BTheme.Font.ui(10)).foregroundStyle(BTheme.textDim)
+                    .font(BTheme.Font.ui(12)).foregroundStyle(BTheme.textDim)
             }
         }
         ForEach(["Shape", "Geometry", "Bevel", "Transform", "Alignment", "Spacing"], id: \.self) { panel in
@@ -61,12 +61,12 @@ struct TextDataPanels: View {
 
     private func fieldRow(_ label: String, _ value: String) -> some View {
         HStack(spacing: 4) {
-            Text(label).font(BTheme.Font.ui(11)).foregroundStyle(BTheme.textDim)
+            Text(label).font(BTheme.Font.ui(13)).foregroundStyle(BTheme.textDim)
             Spacer()
-            Text(value).font(BTheme.Font.mono(11)).foregroundStyle(BTheme.text)
+            Text(value).font(BTheme.Font.mono(13)).foregroundStyle(BTheme.text)
         }
         .padding(.horizontal, 6)
-        .frame(height: 22)
+        .frame(height: BTheme.Metric.touchField)
         .frame(maxWidth: .infinity)
         .background(BTheme.field)
         .clipShape(RoundedRectangle(cornerRadius: BTheme.Metric.corner))
@@ -100,7 +100,7 @@ struct BodyTextField: View {
                 .accessibilityLabel("Body Text")
             if focused || draft != nil {
                 Button("Done") { commit() }
-                    .font(BTheme.Font.ui(11))
+                    .font(BTheme.Font.ui(13))
             }
         }
         .onChange(of: focused) { _, now in
@@ -133,7 +133,7 @@ struct BodyTextSheet: View {
                               ended: dismiss)
             } else {
                 Text("Blender's text for \(object.name) has not arrived yet.")
-                    .font(BTheme.Font.ui(11)).foregroundStyle(BTheme.textDim)
+                    .font(BTheme.Font.ui(13)).foregroundStyle(BTheme.textDim)
             }
         }
         .padding(14)
@@ -221,7 +221,7 @@ struct EmptyDataPanels: View {
                 row("Image", display.imageName.isEmpty ? "None" : display.imageName)
                 if !display.imageName.isEmpty && !display.imageHasData {
                     Text("Blender could not read this file as an image: only its frame is drawn")
-                        .font(BTheme.Font.ui(10)).foregroundStyle(BTheme.textDim)
+                        .font(BTheme.Font.ui(12)).foregroundStyle(BTheme.textDim)
                         .fixedSize(horizontal: false, vertical: true)
                 }
             }
@@ -238,12 +238,12 @@ struct EmptyDataPanels: View {
 
     private func row(_ label: String, _ value: String) -> some View {
         HStack(spacing: 4) {
-            Text(label).font(BTheme.Font.ui(11)).foregroundStyle(BTheme.textDim)
+            Text(label).font(BTheme.Font.ui(13)).foregroundStyle(BTheme.textDim)
             Spacer()
-            Text(value).font(BTheme.Font.mono(11)).foregroundStyle(BTheme.text).lineLimit(1)
+            Text(value).font(BTheme.Font.mono(13)).foregroundStyle(BTheme.text).lineLimit(1)
         }
         .padding(.horizontal, 6)
-        .frame(height: 22)
+        .frame(height: BTheme.Metric.touchField)
         .frame(maxWidth: .infinity)
         .background(BTheme.field)
         .clipShape(RoundedRectangle(cornerRadius: BTheme.Metric.corner))
@@ -252,33 +252,33 @@ struct EmptyDataPanels: View {
     private func segmented(_ label: String, _ choices: [(String, String)], selected: String,
                            key: String) -> some View {
         HStack(spacing: 3) {
-            Text(label).font(BTheme.Font.ui(11)).foregroundStyle(BTheme.textDim)
+            Text(label).font(BTheme.Font.ui(13)).foregroundStyle(BTheme.textDim)
             Spacer()
             ForEach(choices, id: \.0) { id, name in
                 Button { if id != selected { image(key, "'\(id)'", undo: label) } } label: {
-                    Text(name).font(BTheme.Font.ui(11))
+                    Text(name).font(BTheme.Font.ui(13))
                         .foregroundStyle(id == selected ? Color.white : BTheme.textDim)
-                        .padding(.horizontal, 6).frame(height: 20)
+                        .padding(.horizontal, 6).frame(height: BTheme.Metric.touchField)
                         .background(id == selected ? BTheme.select : BTheme.widget)
                         .clipShape(RoundedRectangle(cornerRadius: 3))
                 }
                 .buttonStyle(.plain)
             }
         }
-        .frame(height: 22)
+        .frame(height: BTheme.Metric.touchField)
     }
 
     /// `undo` is the property's own name where Blender's row draws no text
     /// (Opacity's checkbox is `use_empty_image_alpha`, "Use Alpha").
     private func flag(_ label: String, on: Bool, key: String, undo: String? = nil) -> some View {
         HStack {
-            Text(label).font(BTheme.Font.ui(11)).foregroundStyle(BTheme.textDim)
+            Text(label).font(BTheme.Font.ui(13)).foregroundStyle(BTheme.textDim)
             Spacer()
             Toggle("", isOn: Binding(get: { on }, set: { image(key, $0 ? "True" : "False", undo: undo ?? label) }))
                 .labelsHidden()
                 .scaleEffect(0.7)
         }
-        .frame(height: 22)
+        .frame(height: BTheme.Metric.touchField)
     }
 }
 

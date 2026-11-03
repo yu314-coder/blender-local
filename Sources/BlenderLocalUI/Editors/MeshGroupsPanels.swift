@@ -132,7 +132,7 @@ struct MeshGroupsPanels: View {
                 HStack(spacing: 5) {
                     Image(systemName: "person.2.crop.square.stack")
                         .font(.system(size: 10)).foregroundStyle(BTheme.textDim)
-                    Text(group.name).font(BTheme.Font.ui(11))
+                    Text(group.name).font(BTheme.Font.ui(13))
                         .foregroundStyle(active ? BTheme.title : BTheme.text)
                         .lineLimit(1)
                     Spacer()
@@ -151,7 +151,7 @@ struct MeshGroupsPanels: View {
                 Image(systemName: group.locked ? "lock.fill" : "lock.open")
                     .font(.system(size: 10))
                     .foregroundStyle(group.locked ? BTheme.text : BTheme.textDim)
-                    .frame(width: 22, height: 20)
+                    .frame(width: BTheme.Metric.touchButton, height: BTheme.Metric.touchField)
             }
             .buttonStyle(.plain)
             .disabled(!listUsable)
@@ -249,7 +249,7 @@ struct MeshGroupsPanels: View {
                 HStack(spacing: 5) {
                     Image(systemName: "point.3.connected.trianglepath.dotted")
                         .font(.system(size: 10)).foregroundStyle(BTheme.textDim)
-                    Text(key.name).font(BTheme.Font.ui(11))
+                    Text(key.name).font(BTheme.Font.ui(13))
                         .foregroundStyle(active ? BTheme.title : BTheme.text)
                         .lineLimit(1)
                     Spacer(minLength: 2)
@@ -275,7 +275,7 @@ struct MeshGroupsPanels: View {
                 Image(systemName: key.mute ? "square" : "checkmark.square.fill")
                     .font(.system(size: 12))
                     .foregroundStyle(key.mute ? BTheme.textDim : BTheme.text)
-                    .frame(width: 22, height: 20)
+                    .frame(width: BTheme.Metric.touchButton, height: BTheme.Metric.touchField)
             }
             .buttonStyle(.plain)
             .disabled(!usable)
@@ -356,7 +356,7 @@ struct MeshGroupsPanels: View {
     @ViewBuilder
     private func note(_ text: String) -> some View {
         Text(text)
-            .font(BTheme.Font.ui(10)).foregroundStyle(BTheme.textDim)
+            .font(BTheme.Font.ui(12)).foregroundStyle(BTheme.textDim)
             .fixedSize(horizontal: false, vertical: true)
             .frame(maxWidth: .infinity, alignment: .leading)
     }
@@ -377,8 +377,8 @@ struct MeshGroupsPanels: View {
     @ViewBuilder
     private func wideButton(_ label: String, action: @escaping () -> Void) -> some View {
         Button(action: action) {
-            Text(label).font(BTheme.Font.ui(11)).foregroundStyle(BTheme.text)
-                .frame(maxWidth: .infinity).frame(height: 22)
+            Text(label).font(BTheme.Font.ui(13)).foregroundStyle(BTheme.text)
+                .frame(maxWidth: .infinity).frame(height: BTheme.Metric.touchField)
                 .background(BTheme.widget)
                 .clipShape(RoundedRectangle(cornerRadius: BTheme.Metric.corner))
         }
@@ -391,25 +391,25 @@ struct MeshGroupsPanels: View {
     @ViewBuilder
     private func flag(_ label: String, on: Bool, set: @escaping (Bool) -> Void) -> some View {
         HStack {
-            Text(label).font(BTheme.Font.ui(11)).foregroundStyle(BTheme.textDim)
+            Text(label).font(BTheme.Font.ui(13)).foregroundStyle(BTheme.textDim)
             Spacer()
             Toggle("", isOn: Binding(get: { on }, set: set))
                 .labelsHidden()
                 .scaleEffect(0.7)
         }
-        .frame(height: 22)
+        .frame(height: BTheme.Metric.touchField)
     }
 
     @ViewBuilder
     private func fieldLabel(_ label: String, _ value: String, dim: Bool) -> some View {
         HStack(spacing: 4) {
-            Text(label).font(BTheme.Font.ui(11)).foregroundStyle(BTheme.textDim)
+            Text(label).font(BTheme.Font.ui(13)).foregroundStyle(BTheme.textDim)
             Spacer()
-            Text(value).font(BTheme.Font.mono(11))
+            Text(value).font(BTheme.Font.mono(13))
                 .foregroundStyle(dim ? BTheme.textDim : BTheme.text)
         }
         .padding(.horizontal, 6)
-        .frame(height: 22)
+        .frame(height: BTheme.Metric.touchField)
         .frame(maxWidth: .infinity)
         .background(BTheme.field)
         .clipShape(RoundedRectangle(cornerRadius: BTheme.Metric.corner))
@@ -462,13 +462,13 @@ private struct NameField: View {
 
     var body: some View {
         HStack(spacing: 4) {
-            Text(label).font(BTheme.Font.ui(11)).foregroundStyle(BTheme.textDim)
+            Text(label).font(BTheme.Font.ui(13)).foregroundStyle(BTheme.textDim)
             TextField("", text: Binding(get: { draft ?? name }, set: { typed in
                 if draft == nil { draftCommit = commit }
                 draft = typed
             }))
                 .textFieldStyle(.plain)
-                .font(BTheme.Font.mono(11))
+                .font(BTheme.Font.mono(13))
                 .foregroundStyle(BTheme.text)
                 .multilineTextAlignment(.trailing)
                 .autocorrectionDisabled()
@@ -479,7 +479,7 @@ private struct NameField: View {
                 .onChange(of: focused) { _, now in if !now { end() } }
         }
         .padding(.horizontal, 6)
-        .frame(height: 22)
+        .frame(height: BTheme.Metric.touchField)
         .background(BTheme.field)
         .clipShape(RoundedRectangle(cornerRadius: BTheme.Metric.corner))
         .onChange(of: name) { old, new in

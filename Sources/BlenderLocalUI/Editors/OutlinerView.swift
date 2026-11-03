@@ -83,10 +83,12 @@ struct OutlinerView: View {
                 }
             } label: {
                 HStack(spacing: 3) {
-                    Image(systemName: display.icon).font(.system(size: 10))
-                    Image(systemName: "chevron.down").font(.system(size: 7))
+                    Image(systemName: display.icon).font(.system(size: 13))
+                    Image(systemName: "chevron.down").font(.system(size: 9))
                 }
                 .foregroundStyle(BTheme.textDim)
+                .frame(minWidth: 40, minHeight: 34)
+                .contentShape(Rectangle())
             }
             Text(display == .scene ? "Scene" : (scene.collections?.viewLayer ?? "View Layer"))
                 .font(BTheme.Font.ui(12)).foregroundStyle(BTheme.text)
@@ -100,8 +102,9 @@ struct OutlinerView: View {
                     bridge?.run(CollectionsBpy.new(inside: parent.uid))
                 } label: {
                     Image(systemName: "folder.badge.plus")
-                        .font(.system(size: 11)).foregroundStyle(BTheme.textDim)
-                        .frame(width: 22, height: 20)
+                        .font(.system(size: 14)).foregroundStyle(BTheme.textDim)
+                        .frame(width: 40, height: 34)
+                        .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
                 .hoverEffect(.highlight)
@@ -115,23 +118,25 @@ struct OutlinerView: View {
     private var searchRow: some View {
         HStack(spacing: 5) {
             Image(systemName: "magnifyingglass")
-                .font(.system(size: 10)).foregroundStyle(BTheme.textDim)
+                .font(.system(size: 12)).foregroundStyle(BTheme.textDim)
             TextField("Search", text: $search)
                 .textFieldStyle(.plain)
-                .font(BTheme.Font.ui(11))
+                .font(BTheme.Font.ui(Touch.text))
                 .foregroundStyle(BTheme.text)
                 .autocorrectionDisabled()
             if !search.isEmpty {
                 Button { search = "" } label: {
                     Image(systemName: "xmark.circle.fill")
-                        .font(.system(size: 10)).foregroundStyle(BTheme.textDim)
+                        .font(.system(size: 14)).foregroundStyle(BTheme.textDim)
+                        .frame(width: 36, height: 36)
+                        .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
                 .hoverEffect(.highlight)
             }
         }
-        .padding(.horizontal, 8)
-        .frame(height: 24)
+        .padding(.horizontal, 10)
+        .frame(height: 36)
         .background(BTheme.field.opacity(0.5))
     }
 
@@ -158,7 +163,7 @@ struct OutlinerView: View {
 
                 if rows.isEmpty && !search.isEmpty {
                     Text("No match for “\(search)”")
-                        .font(BTheme.Font.ui(11)).foregroundStyle(BTheme.textDim)
+                        .font(BTheme.Font.ui(Touch.text)).foregroundStyle(BTheme.textDim)
                         .padding(.vertical, 10)
                 }
             }
@@ -166,7 +171,20 @@ struct OutlinerView: View {
     }
 
     /// How far in each level of the parent tree sits.
-    static let indent: CGFloat = 14
+    static let indent: CGFloat = 18
+
+    /// Sizes a finger can use (2026-11-03, the user on an iPad: the side
+    /// panels were hard to use). Blender's rows are 20 pixels for a mouse;
+    /// these were 20 points, with toggles 18 points wide and icons of 8 to
+    /// 10. Rows are now 40 points, each toggle and triangle a 36-point
+    /// column the full height of its row, and the text 13 points.
+    enum Touch {
+        static let row: CGFloat = 40
+        static let text: CGFloat = 13
+        static let icon: CGFloat = 14
+        static let toggle: CGFloat = 36
+        static let triangle: CGFloat = 30
+    }
 
     // MARK: collections
 
@@ -186,9 +204,10 @@ struct OutlinerView: View {
                 else { collapsed.insert(entry.id) }
             } label: {
                 Image(systemName: collapsed.contains(entry.id) ? "chevron.right" : "chevron.down")
-                    .font(.system(size: 8))
+                    .font(.system(size: 11, weight: .semibold))
                     .foregroundStyle(BTheme.textDim.opacity(hasChildren ? 1 : 0.3))
-                    .frame(width: 14)
+                    .frame(width: Touch.triangle, height: Touch.row)
+                    .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
             .hoverEffect(.highlight)
@@ -200,9 +219,10 @@ struct OutlinerView: View {
                     bridge?.run(CollectionsBpy.set(.exclude, of: entry, in: tree, on: entry.excluded))
                 } label: {
                     Image(systemName: entry.excluded ? "square" : "checkmark.square.fill")
-                        .font(.system(size: 10))
+                        .font(.system(size: Touch.icon))
                         .foregroundStyle(entry.excluded ? BTheme.textDim : BTheme.text)
-                        .frame(width: 16)
+                        .frame(width: Touch.toggle, height: Touch.row)
+                        .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
                 .hoverEffect(.highlight)
@@ -212,14 +232,14 @@ struct OutlinerView: View {
             }
 
             Image(systemName: entry.isSceneCollection ? "photo" : "square.stack.3d.up")
-                .font(.system(size: 10))
+                .font(.system(size: Touch.icon))
                 .foregroundStyle(entry.active ? BTheme.active : BTheme.textDim)
-                .frame(width: 16)
+                .frame(width: 22)
 
             if renamingCollection == entry.id {
                 TextField("", text: $draftCollectionName)
                     .textFieldStyle(.plain)
-                    .font(BTheme.Font.ui(11))
+                    .font(BTheme.Font.ui(Touch.text))
                     .foregroundStyle(BTheme.text)
                     .autocorrectionDisabled()
                     .focused($collectionNameFocused)
@@ -231,7 +251,7 @@ struct OutlinerView: View {
                     }
             } else {
                 Text(entry.name)
-                    .font(BTheme.Font.ui(11))
+                    .font(BTheme.Font.ui(Touch.text))
                     .foregroundStyle(excluded || entry.hidden ? BTheme.textDim : BTheme.text)
                     .lineLimit(1)
                     .accessibilityLabel(entry.active ? "\(entry.name), active collection" : entry.name)
@@ -246,8 +266,8 @@ struct OutlinerView: View {
                 collectionColumns(entry, in: tree)
             }
         }
-        .padding(.leading, 8 + CGFloat(entry.depth) * Self.indent)
-        .frame(height: 20)
+        .padding(.leading, 4 + CGFloat(entry.depth) * Self.indent)
+        .frame(height: Touch.row)
         .background(entry.active ? BTheme.select.opacity(0.18) : Color.clear)
         .contentShape(Rectangle())
         .onTapGesture {
@@ -275,11 +295,11 @@ struct OutlinerView: View {
     /// Selection) and the camera (Disable in Renders). The monitor, Disable
     /// in Viewports, shows only when it is set, as for objects.
     private func collectionColumns(_ entry: CollectionTree.Entry, in tree: CollectionTree) -> some View {
-        HStack(spacing: 2) {
+        HStack(spacing: 0) {
             if entry.disabled {
                 Image(systemName: "display.trianglebadge.exclamationmark")
-                    .font(.system(size: 9)).foregroundStyle(BTheme.active)
-                    .frame(width: 18)
+                    .font(.system(size: Touch.icon)).foregroundStyle(BTheme.active)
+                    .frame(width: Touch.toggle, height: Touch.row)
                     .help("Disable in Viewports")
                     .accessibilityLabel("Disable in Viewports")
                     .accessibilityValue("On")
@@ -306,9 +326,10 @@ struct OutlinerView: View {
                               action: @escaping () -> Void) -> some View {
         Button(action: action) {
             Image(systemName: icon)
-                .font(.system(size: 9.5))
+                .font(.system(size: Touch.icon))
                 .foregroundStyle(on ? BTheme.active : BTheme.textDim.opacity(0.8))
-                .frame(width: 18)
+                .frame(width: Touch.toggle, height: Touch.row)
+                .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
         .hoverEffect(.highlight)
@@ -335,7 +356,7 @@ struct OutlinerView: View {
             if depth > 0 {
                 Rectangle()
                     .fill(BTheme.textDim.opacity(0.35))
-                    .frame(width: 1, height: 20)
+                    .frame(width: 1, height: Touch.row)
                     .padding(.leading, 14 + CGFloat(depth - 1) * Self.indent)
                     .padding(.trailing, Self.indent - 7)
                     .accessibilityHidden(true)
@@ -346,23 +367,24 @@ struct OutlinerView: View {
                 else { expanded.insert(obj.id) }
             } label: {
                 Image(systemName: expanded.contains(obj.id) ? "chevron.down" : "chevron.right")
-                    .font(.system(size: 8))
+                    .font(.system(size: 11, weight: .semibold))
                     .foregroundStyle(BTheme.textDim)
-                    .frame(width: 14)
+                    .frame(width: Touch.triangle, height: Touch.row)
+                    .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
                 .hoverEffect(.highlight)
             .padding(.leading, depth > 0 ? 0 : 8)
 
             Image(systemName: obj.outlinerIcon)
-                .font(.system(size: 10))
+                .font(.system(size: Touch.icon))
                 .foregroundStyle(obj.id == scene.activeID ? BTheme.active : BTheme.textDim)
-                .frame(width: 16)
+                .frame(width: 22)
 
             if renaming == obj.id {
                 TextField("", text: $draftName)
                     .textFieldStyle(.plain)
-                    .font(BTheme.Font.ui(11))
+                    .font(BTheme.Font.ui(Touch.text))
                     .foregroundStyle(BTheme.text)
                     .autocorrectionDisabled()
                     .onSubmit { commitRename(obj) }
@@ -377,7 +399,7 @@ struct OutlinerView: View {
                 let dimmed = !obj.visible
                     && (!obj.outsideLocalView || obj.hiddenInViewLayer || obj.disabledInViewports)
                 Text(obj.name)
-                    .font(BTheme.Font.ui(11))
+                    .font(BTheme.Font.ui(Touch.text))
                     .foregroundStyle(scene.selection.contains(obj.id) ? BTheme.title
                                      : excluded ? BTheme.textDim.opacity(0.6)
                                      : dimmed ? BTheme.textDim : BTheme.text)
@@ -393,7 +415,7 @@ struct OutlinerView: View {
             Spacer(minLength: 4)
             restrictionColumns(obj)
         }
-        .frame(height: 20)
+        .frame(height: Touch.row)
         .background(scene.selection.contains(obj.id)
                     ? BTheme.select.opacity(0.35) : Color.clear)
         .contentShape(Rectangle())
@@ -402,6 +424,48 @@ struct OutlinerView: View {
             // Selection only: no reason to read every mesh back for a click.
             bridge?.select(Bpy.select(obj.name))
         }
+        .contextMenu { objectMenu(obj) }
+    }
+
+    /// Blender's Outliner menu for an object (`OUTLINER_MT_object`), on a
+    /// long press or a right-click: Delete and Delete Hierarchy, the three
+    /// select rows, and Rename, which Blender does with a double-click or F2
+    /// (`outliner.item_rename`, "Rename"). Delete was in no menu before: the
+    /// row had none, so an object could be deleted only from the 3D View.
+    /// Deleting acts on objects, so it waits for Object Mode, as Blender's
+    /// Outliner refuses to delete the object being edited.
+    @ViewBuilder
+    private func objectMenu(_ obj: BKObject) -> some View {
+        let busy = session.isRunning
+        let objectMode = scene.mode == .object
+        let hasChildren = scene.objects.contains { $0.parentName == obj.name }
+        Button("Delete", systemImage: "xmark", role: .destructive) {
+            bridge?.run(OutlinerBpy.delete(obj.name, hierarchy: false))
+        }
+        .disabled(busy || !objectMode)
+        Button("Delete Hierarchy", role: .destructive) {
+            bridge?.run(OutlinerBpy.delete(obj.name, hierarchy: true))
+        }
+        .disabled(busy || !objectMode || !hasChildren)
+        Divider()
+        Button("Select", systemImage: "cursorarrow") {
+            bridge?.select(OutlinerBpy.select(obj.name, hierarchy: false))
+        }
+        .disabled(busy || !objectMode)
+        Button("Select Hierarchy") {
+            bridge?.select(OutlinerBpy.select(obj.name, hierarchy: true))
+        }
+        .disabled(busy || !objectMode || !hasChildren)
+        Button("Deselect") {
+            bridge?.select(OutlinerBpy.deselect(obj.name))
+        }
+        .disabled(busy || !objectMode || !scene.selection.contains(obj.id))
+        Divider()
+        Button("Rename", systemImage: "pencil") {
+            renaming = obj.id
+            draftName = obj.name
+        }
+        .disabled(busy)
     }
 
     /// Blender's restriction columns: the eye (hide in viewport) and the camera
@@ -415,7 +479,7 @@ struct OutlinerView: View {
     /// `hide_viewport`, so an object hidden with H showed a closed eye whose
     /// tap set a flag that was already off, and stayed hidden.
     private func restrictionColumns(_ obj: BKObject) -> some View {
-        HStack(spacing: 2) {
+        HStack(spacing: 0) {
             if obj.disabledInViewports {
                 // The monitor: `hide_viewport`, whose name — "Disable in
                 // Viewports" — is what Blender's tooltip and its step say,
@@ -424,9 +488,10 @@ struct OutlinerView: View {
                     bridge?.run(Bpy.setDisabledInViewports(obj.name, false), undo: "Disable in Viewports")
                 } label: {
                     Image(systemName: "display.trianglebadge.exclamationmark")
-                        .font(.system(size: 9))
+                        .font(.system(size: Touch.icon))
                         .foregroundStyle(BTheme.active)
-                        .frame(width: 18)
+                        .frame(width: Touch.toggle, height: Touch.row)
+                        .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
                 .hoverEffect(.highlight)
@@ -439,9 +504,10 @@ struct OutlinerView: View {
                 bridge?.run(Bpy.setHidden(obj.name, !obj.hiddenInViewLayer), undo: "Hide in Viewport")
             } label: {
                 Image(systemName: obj.hiddenInViewLayer ? "eye.slash" : "eye")
-                    .font(.system(size: 10))
+                    .font(.system(size: Touch.icon))
                     .foregroundStyle(obj.hiddenInViewLayer ? BTheme.active : BTheme.textDim)
-                    .frame(width: 18)
+                    .frame(width: Touch.toggle, height: Touch.row)
+                    .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
                 .hoverEffect(.highlight)
@@ -454,9 +520,10 @@ struct OutlinerView: View {
                 bridge?.run(Bpy.setHideRender(obj.name, !obj.hideRender), undo: "Disable in Renders")
             } label: {
                 Image(systemName: obj.hideRender ? "camera.fill" : "camera")
-                    .font(.system(size: 9))
+                    .font(.system(size: Touch.icon))
                     .foregroundStyle(obj.hideRender ? BTheme.active : BTheme.textDim.opacity(0.7))
-                    .frame(width: 18)
+                    .frame(width: Touch.toggle, height: Touch.row)
+                    .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
                 .hoverEffect(.highlight)
@@ -485,11 +552,11 @@ struct OutlinerView: View {
         // ones Blender no longer holds.
         Text(obj.visible ? "\(obj.mesh.vertices.count) verts · \(obj.mesh.indices.count / 3) tris"
                          : "hidden · not mirrored until shown")
-            .font(BTheme.Font.mono(9))
+            .font(BTheme.Font.mono(11))
             .foregroundStyle(BTheme.textDim.opacity(0.7))
             .frame(maxWidth: .infinity, alignment: .leading)
-            .padding(.leading, 62)
-            .frame(height: 16)
+            .padding(.leading, 68)
+            .frame(height: 24)
 
         // By name, as Blender's Outliner lists them: a Geometry Nodes
         // modifier's kind says nothing, and "Smooth by Angle" does.
@@ -516,15 +583,15 @@ struct OutlinerView: View {
                      id: UUID?, action: @escaping () -> Void) -> some View {
         HStack(spacing: 5) {
             Image(systemName: icon)
-                .font(.system(size: 10)).foregroundStyle(BTheme.textDim)
+                .font(.system(size: Touch.icon - 2)).foregroundStyle(BTheme.textDim)
             Text(name)
-                .font(BTheme.Font.ui(11))
+                .font(BTheme.Font.ui(Touch.text))
                 .foregroundStyle(selected ? BTheme.title : BTheme.text)
                 .lineLimit(1)
             Spacer()
         }
-        .padding(.leading, CGFloat(depth) * 16 + 12)
-        .frame(height: 20)
+        .padding(.leading, CGFloat(depth) * 18 + 14)
+        .frame(height: Touch.row - 6)
         .contentShape(Rectangle())
         .onTapGesture(perform: action)
     }

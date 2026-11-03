@@ -1,5 +1,62 @@
 # Blender Local — the app
 
+## November 3, evening: two modes, side panels a finger can use
+
+The user, testing build 47 on an iPad: keep two modes only, Object Mode and
+Edit Mode, and do them better; the side panels are hard to use and things are
+hard to delete; the Data API is especially confusing.
+
+- **Object Mode and Edit Mode only** (`InteractionMode.isOffered`). Sculpt
+  Mode, Vertex Paint, Weight Paint and Texture Paint keep their code and come
+  back in a build with `BLENDER_LOCAL_ALL_MODES`; without it the mode menu,
+  Ctrl+Tab and the brush tools offer only the two, a paint mode is never
+  entered, and a scene saved in a hidden mode — the working scene here was
+  saved in Sculpt Mode — or a script that went into one goes back to Object
+  Mode once nothing runs (`leaveHiddenMode`). Test All Features lists the
+  hidden modes' eleven features as not tested, saying why.
+- **Touch sizes** (`BTheme.Metric.touchField` 32, `touchRow` 36,
+  `touchButton` 36). Measured with `-ui-audit` in a 1,194 × 834 window before
+  and after: the Outliner's rows 20 → 40 points, its eye, select and camera
+  toggles 6–14 → 36 × 40, triangles 7 × 4 → 30 × 40, text 11 → 13; the
+  Properties tabs 50 × 36 → 62 × 48, number fields and rows 22 → 32 (the
+  shared `BNumberField`, so the Sidebar and the headers too), panel headers 26
+  → 36, steppers 22 × 20 → 36 × 32, the modifier's remove ✕ a bare 9-point
+  icon → 36 × 36; the Sidebar 240 → 290 wide, its tabs 22 × 48 → 36 × 64.
+- **The Outliner's line can be dragged** (`bl_outliner_share`), as Blender
+  resizes areas: with 40-point rows a fixed 260-point Outliner showed four.
+- **Delete from the Outliner.** An object's row had no menu, so an object
+  could be deleted only from the 3D View. A long press or a right-click now
+  opens Blender's Outliner menu for an object (`OUTLINER_MT_object`): Delete,
+  Delete Hierarchy, Select, Select Hierarchy, Deselect, and Rename (Blender's
+  double-click or F2). `OutlinerBpy` selects the row's object (with its
+  children for a hierarchy) and sends `object.delete`, one "Delete" step —
+  Blender's `outliner.delete` needs an Outliner area. Measured in 5.2.1:
+  Delete keeps the children and unparents them; Delete Hierarchy takes them
+  all. Checked in the app with a real right-click: the menu opened on Ball's
+  row and Delete removed it.
+- **The Data API, readable.** It was Blender's RNA as rows of JSON: a
+  Location was `[0.0, 0.0, 0.0]` in a text box, a rotation in radians, an enum
+  a quoted identifier, and the way in was a 12-point "Data API" line with
+  nothing to say it could be tapped. The browser (`BlenderDataBrowser`) now
+  draws each property as Blender's own Data API does: its name with the
+  identifier small under it, then the widget Blender gives that kind — a
+  checkbox, a menu of the enum's items, X/Y/Z fields in metres for a Location
+  and degrees for a rotation (`DataAPIFormat`, from the property's subtype and
+  unit that `_blenderkit_sync.property_info` reads), a slider for a Factor, a
+  swatch for a color, a text field. A heading names what the page shows
+  (Object, Bevel Modifier) with Blender's description of it; the path's steps
+  lead back up; settings come first, links (›) to the mesh, modifiers and
+  material slots next, values Blender will not let be set folded away at the
+  end; a Filter narrows the rows; a long press copies the data path. Each
+  change is still one write through `set_property` and one undo step. The ways
+  in are 44-point rows with a chevron and a caption ("Every setting of this
+  object, under Blender's names"), under the Properties editor, the camera and
+  light panel, and a modifier or constraint with no rows of its own. With
+  nothing selected the dock shows the Properties editor (its Scene tab), as
+  Blender does, rather than the raw tree. `tests/dataapi` checks the
+  formatting; `tests/dataapi/blender/verify.py` checks `property_info` against
+  Blender 5.2.1.
+
 ## November 3, later: right-click and Blender's keys
 
 The user's report: "missing the right key feature and lots of hot keys".
