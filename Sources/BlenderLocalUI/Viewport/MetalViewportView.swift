@@ -62,6 +62,11 @@ struct MetalViewportView: UIViewRepresentable {
     /// Raised once a sculpt stroke ends — the finger lifts, or a single dab —
     /// with the object it changed, so the stroke can be kept.
     var onStrokeEnd: (BKObject) -> Void = { _ in }
+    /// A right-click, at its point: Blender's context menu. Nil where the
+    /// view has none (behind a sheet), which leaves the click to nothing.
+    var onSecondaryClick: ((CGPoint) -> Void)? = nil
+    /// The keys the view carries itself (ViewportKeymap.swift).
+    var viewKeys: ViewKeyCommands? = nil
 
     /// Which gizmo the active tool shows. Blender draws one only for the
     /// transform tools; Tweak deliberately shows none, so a one-finger drag
@@ -87,6 +92,7 @@ struct MetalViewportView: UIViewRepresentable {
         // A subclass only so the view can take the keyboard: see ViewportMTKView.
         let view = ViewportMTKView()
         view.onTab = onToggleEditing
+        view.viewKeys = viewKeys
         view.device = MTLCreateSystemDefaultDevice()
         view.colorPixelFormat = .bgra8Unorm
         view.depthStencilPixelFormat = .depth32Float
@@ -158,6 +164,19 @@ struct MetalViewportView: UIViewRepresentable {
         tap.require(toFail: pencilDrag)
         view.addGestureRecognizer(tap)
 
+        // A mouse's or a trackpad's right-click: Blender's context menu.
+        // UIKit hands a right-click to a context-menu interaction whatever
+        // the app's pointer settings — a tap recogniser's `.secondary` button
+        // mask sees nothing without `UIApplicationSupportsIndirectInputEvents`,
+        // which would change how every click arrives — so the interaction
+        // takes it and opens Blender's menu in place of the system's. A
+        // finger's or a Pencil's long-press opens nothing (`TouchKindWatcher`):
+        // a Pencil resting before a stroke is not asking for a menu.
+        view.addInteraction(UIContextMenuInteraction(delegate: context.coordinator))
+        let watcher = TouchKindWatcher()
+        view.addGestureRecognizer(watcher)
+        context.coordinator.touchWatcher = watcher
+
         context.coordinator.view = view
         #if DEBUG
         context.coordinator.paintLaunchStrokeIfRequested()
@@ -178,6 +197,7 @@ struct MetalViewportView: UIViewRepresentable {
         #endif
         context.coordinator.parent = self
         (view as? ViewportMTKView)?.onTab = onToggleEditing
+        (view as? ViewportMTKView)?.viewKeys = viewKeys
         // While a camera drag is under way the view's camera is a step behind
         // the drawn one (`Coordinator.liveCamera`).
         context.coordinator.renderer?.camera = context.coordinator.liveCamera ?? camera
@@ -187,7 +207,8 @@ struct MetalViewportView: UIViewRepresentable {
         context.coordinator.renderer?.gizmoMode = Self.gizmoMode(for: tool, scene: scene)
     }
 
-    final class Coordinator: NSObject, UIGestureRecognizerDelegate, UIPencilInteractionDelegate {
+    final class Coordinator: NSObject, UIGestureRecognizerDelegate, UIPencilInteractionDelegate,
+                             UIContextMenuInteractionDelegate {
         var parent: MetalViewportView
         var renderer: ViewportRenderer?
         weak var view: MTKView?
@@ -1220,6 +1241,7 @@ struct MetalViewportView: UIViewRepresentable {
             case .began, .changed: lastPointer = g.location(in: view)
             default:               lastPointer = nil
             }
+            ViewportPointer.location = lastPointer
             // Loop Cut previews the ring under the pointer, and the Knife the
             // segment its next point would add, as Blender's do as the mouse
             // moves.
@@ -1344,6 +1366,20 @@ struct MetalViewportView: UIViewRepresentable {
             let object = parent.scene.active
             return parent.scene.editSelection.tapped(hit, action: action, mode: parent.scene.selectMode,
                                                      cage: object?.editCage, topology: object?.editTopology)
+        }
+
+        /// Fingers and Pencils on the view, so a long-press by either is not
+        /// taken for a right-click.
+        weak var touchWatcher: TouchKindWatcher?
+
+        /// A right-click (or a pointer's long click): Blender's context menu,
+        /// drawn by the workspace. Nil — no system menu — every time.
+        func contextMenuInteraction(_ interaction: UIContextMenuInteraction,
+                                    configurationForMenuAtLocation location: CGPoint) -> UIContextMenuConfiguration? {
+            guard touchWatcher?.fingerOrPencilDown != true, let open = parent.onSecondaryClick else { return nil }
+            (view as? ViewportMTKView)?.takeKeyboard()
+            DispatchQueue.main.async { open(location) }
+            return nil
         }
 
         @objc func handleTap(_ g: UITapGestureRecognizer) {
@@ -1494,6 +1530,9 @@ extension MetalViewportView {
 final class ViewportMTKView: MTKView {
     /// Nil where Tab means nothing, which also leaves the keyboard alone.
     var onTab: (() -> Void)?
+    /// Blender's keys a menu row cannot carry: the F keys, and the ⌘ twin
+    /// Blender gives every Ctrl key on a Mac (ViewportKeymap.swift).
+    var viewKeys: ViewKeyCommands?
 
     override var canBecomeFirstResponder: Bool { onTab != nil }
 
@@ -1501,10 +1540,34 @@ final class ViewportMTKView: MTKView {
         guard onTab != nil else { return nil }
         let tab = UIKeyCommand(input: "\t", modifierFlags: [], action: #selector(tabPressed))
         tab.wantsPriorityOverSystemBehavior = true
-        return [tab]
+        return [tab] + (viewKeys == nil ? [] : Self.chordCommands)
+    }
+
+    /// Built once: the chords are the keymap's, which do not change.
+    private static let chordCommands: [UIKeyCommand] = ViewportKey.viewKeys.compactMap { chord in
+        guard let key = ViewportKey.uiKey(chord) else { return nil }
+        let command = UIKeyCommand(title: "", action: #selector(chordPressed(_:)), input: key.input,
+                                   modifierFlags: key.modifiers, propertyList: chord)
+        command.wantsPriorityOverSystemBehavior = true
+        return command
     }
 
     @objc private func tabPressed() { onTab?() }
+
+    @objc private func chordPressed(_ sender: UIKeyCommand) {
+        guard let chord = sender.propertyList as? String else { return }
+        viewKeys?.press(chord)
+    }
+
+    /// A chord with nothing to do now is not taken, so UIKit passes the key
+    /// on (to the menu bar's own row on it, if there is one).
+    override func canPerformAction(_ action: Selector, withSender sender: Any?) -> Bool {
+        if action == #selector(chordPressed(_:)) {
+            guard let chord = (sender as? UIKeyCommand)?.propertyList as? String, let viewKeys else { return false }
+            return viewKeys.canPress(chord)
+        }
+        return super.canPerformAction(action, withSender: sender)
+    }
 
     override func didMoveToWindow() {
         super.didMoveToWindow()
@@ -1515,6 +1578,59 @@ final class ViewportMTKView: MTKView {
         guard onTab != nil, window != nil, !isFirstResponder else { return }
         becomeFirstResponder()
     }
+}
+
+/// Watches the touches on the 3D View without ever recognising: whether a
+/// finger or a Pencil is down, which the context-menu interaction's
+/// long-press is then not a right-click.
+final class TouchKindWatcher: UIGestureRecognizer {
+    private var down: Set<ObjectIdentifier> = []
+    var fingerOrPencilDown: Bool { !down.isEmpty }
+
+    override init(target: Any? = nil, action: Selector? = nil) {
+        super.init(target: target, action: action)
+        cancelsTouchesInView = false
+        delaysTouchesBegan = false
+        delaysTouchesEnded = false
+    }
+
+    override func touchesBegan(_ touches: Set<UITouch>, with event: UIEvent) {
+        for touch in touches where touch.type == .direct || touch.type == .pencil {
+            down.insert(ObjectIdentifier(touch))
+        }
+    }
+
+    override func touchesEnded(_ touches: Set<UITouch>, with event: UIEvent) { lift(touches) }
+    override func touchesCancelled(_ touches: Set<UITouch>, with event: UIEvent) { lift(touches) }
+
+    private func lift(_ touches: Set<UITouch>) {
+        for touch in touches { down.remove(ObjectIdentifier(touch)) }
+        if down.isEmpty { state = .failed }
+    }
+
+    /// Another recogniser taking the touch (an orbit) fails this one, and
+    /// UIKit resets it: the touches it was counting are then the other's,
+    /// and over, as far as a long-press is concerned.
+    override func reset() { down.removeAll() }
+
+    override func canPrevent(_ preventedGestureRecognizer: UIGestureRecognizer) -> Bool { false }
+    override func canBePrevented(by preventingGestureRecognizer: UIGestureRecognizer) -> Bool { false }
+}
+
+/// The keys a 3D View carries itself, as its workspace gives them: the
+/// chords, whether one has anything to do now, and pressing it.
+struct ViewKeyCommands {
+    let chords: [String]
+    let canPress: (String) -> Bool
+    let press: (String) -> Void
+}
+
+/// Where a mouse, trackpad or Pencil last hovered over a 3D View, in the
+/// view's coordinates; nil once it left. A key's menu (Shift+A, M) opens
+/// there, as Blender's do at the mouse. Not observed: it changes with every
+/// move of the pointer, and nothing draws from it.
+@MainActor enum ViewportPointer {
+    static var location: CGPoint?
 }
 
 /// Whether a text field or text view has the keyboard, anywhere in the window.

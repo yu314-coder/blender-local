@@ -121,6 +121,12 @@ EXACT = {
 # Add Object Constraint ▸ Relationship), and is no pivot point.
 EXACT_ELSEWHERE = {("Sources/BlenderLocalBridge/Constraints.swift", "Pivot")}
 
+# An ANYWHERE name that is Blender's own in one menu, by file: the Edit Mode
+# context menu's Edge column labels `mesh.edge_face_add` "New Face from Edges"
+# (VIEW3D_MT_edit_mesh_context_menu, space_view3d.py, 5.2.1); its Vertex column
+# and the Vertex menu say New Edge/Face from Vertices.
+ANYWHERE_ELSEWHERE = {("Sources/BlenderLocalUI/Chrome/ViewportMenus.swift", "New Face from Edges")}
+
 # Undo steps: what Blender's undo history shows for the same action
 # (measured in desktop 5.2.1, docs/blender-names.md). These old labels were
 # the app's own words for steps Blender names otherwise.
@@ -277,7 +283,7 @@ def problems(literals, path, python=False):
     found = []
     for line, text, before in literals:
         for old, new, pattern in ANY_RE:
-            if pattern.search(text):
+            if pattern.search(text) and (str(path), old) not in ANYWHERE_ELSEWHERE:
                 found.append(f"{path}:{line}: \"{text[:70]}\" has \"{old}\" (Blender: {new})")
         label = label_of(text)
         if label in EXACT and (str(path), label) not in EXACT_ELSEWHERE:

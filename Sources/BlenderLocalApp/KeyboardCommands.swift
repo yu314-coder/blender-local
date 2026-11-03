@@ -128,6 +128,71 @@ struct ViewportKeyActions {
     /// Local View has something to do.
     var inLocalView: Bool = false
     var canToggleLocalView: Bool = false
+
+    // MARK: Blender's pop-up menus (ViewportMenus.swift) and the rest of its keys
+
+    /// Opens one of Blender's menus at the pointer.
+    var openMenu: (ViewportMenu) -> Void = { _ in }
+    /// The Add menu's rows past Mesh: curves, text, lattice, empties, images,
+    /// lights and the camera (ObjectAddMenus.swift).
+    var addObject: (ObjectAddition) -> Void = { _ in }
+    var addImage: ((ReferenceImages.Kind) -> Void)? = nil
+    var mode: InteractionMode = .object
+    /// Editing a curve's or a lattice's points rather than a mesh.
+    var editingCurve = false
+    var editingLattice = false
+    /// How many objects are selected, for Join's row (Blender draws it only
+    /// for more than one).
+    var selectedCount = 0
+    /// Blender's type of the active object (`MESH`, `CAMERA`, `LIGHT`…).
+    var activeType: String? = nil
+    var activeName: String? = nil
+    /// While a mesh is edited, how many vertices, edges and faces are
+    /// selected, when the mirror has counted them: the Edit Mode context
+    /// menu draws some rows only past a count, as Blender's does. Asked when
+    /// a menu opens — read here, it would redraw the 3D View's screen on
+    /// every change of the counts (KeyedRefresh.swift).
+    var selectedElements: () -> (vertices: Int, edges: Int, faces: Int)? = { nil }
+    var shading: ViewportShading = .solid
+    var setShading: (ViewportShading) -> Void = { _ in }
+    /// Asked when a menu opens, for the same reason: with Local on an
+    /// animated object it changes at every frame.
+    var orientation: () -> TransformOrientation? = { nil }
+    var setOrientation: (TransformOrientation) -> Void = { _ in }
+    /// The modes the active object can go to, and going there.
+    var modes: [InteractionMode] = []
+    var enterMode: (InteractionMode) -> Void = { _ in }
+    /// Mesh ▸ Vertex ▸ Extrude to Cursor or Add (Ctrl+right click).
+    var extrudeToCursor: () -> Void = {}
+    /// Transform ▸ Shear, in Object or Edit Mode.
+    var shear: () -> Void = {}
+    var snap: (SnapBpy) -> Void = { _ in }
+    var setActiveCamera: (() -> Void)? = nil
+    var copyObjects: () -> Void = {}
+    var pasteObjects: () -> Void = {}
+    /// F2: Rename Active Object…
+    var rename: (() -> Void)? = nil
+    var insertKeyframe: () -> Void = {}
+    var deleteKeyframes: () -> Void = {}
+    /// Numpad 4/6/8/2 (`view3d.view_orbit`), Numpad 9, Ctrl+Numpad 4/6/8/2.
+    var orbit: (_ azimuth: Float, _ elevation: Float) -> Void = { _, _ in }
+    var pan: (_ dx: Float, _ dy: Float) -> Void = { _, _ in }
+    /// Snapping (Shift+Tab) and Proportional Editing (O): Blender's tool
+    /// settings, as the header's popovers set them.
+    var toggleSnap: () -> Void = {}
+    var toggleProportional: () -> Void = {}
+    /// Toolbar (T), Maximize Area (Ctrl+Space), Adjust Last Operation (F9),
+    /// Repeat Last (Shift+R).
+    var toggleToolbar: () -> Void = {}
+    var maximize: () -> Void = {}
+    var adjustLastOperation: () -> Void = {}
+    var canRepeatLast: () -> Bool = { false }
+    var repeatLast: () -> Void = {}
+    /// F3, Blender's Search: the Operator Search.
+    var searchOperators: () -> Void = {}
+    /// The brush panel a right-click opens in Sculpt Mode, Vertex Paint and
+    /// Weight Paint (BrushContextPanel.swift); nil in the other modes.
+    var brushPanel: (() -> AnyView)? = nil
 }
 
 private struct AppKeyActionsKey: FocusedValueKey { typealias Value = AppKeyActions }
@@ -274,6 +339,9 @@ struct BlenderCommands: Commands {
                 .keyboardShortcut("z", modifiers: .shift)
             Button("Toggle X-Ray") { v.toggleXRay() }
                 .keyboardShortcut("z", modifiers: .option)
+            Divider()
+            // Blender's pies and the rest of its 3D View keys (ViewportKeymap.swift).
+            ViewportKeyRows(menu: .view, actions: v)
         }
     }
 
@@ -357,6 +425,8 @@ struct BlenderCommands: Commands {
                     .keyboardShortcut("l", modifiers: .control)
                     .disabled(!v.editingMesh || v.isRunning)
             }
+            Divider()
+            ViewportKeyRows(menu: .select, actions: v)
         } else {
             Button(Workspace.layout.rawValue) { app?.showWorkspace(.layout) }
                 .disabled(app == nil)
@@ -434,8 +504,14 @@ struct BlenderCommands: Commands {
             ObjectMenuMoreItems(state: v.objectRelations, collections: v.collections,
                                 perform: v.perform, run: v.run, askNewCollection: v.askNewCollection)
             // With the Measure tool and an active ruler, Delete is Ruler
-            // Remove (`deleteSelected`), which needs no active object.
-            Button("Delete") { v.deleteSelected() }
+            // Remove (`deleteSelected`), which needs no active object. While
+            // a mesh is edited it is Blender's Delete menu, as X is
+            // (VIEW3D_MT_edit_mesh_delete: Vertices, Edges, Faces, the
+            // dissolves).
+            Button("Delete") {
+                if v.editing && v.editingMesh && v.rulerRemove == nil { v.openMenu(.delete) }
+                else { v.deleteSelected() }
+            }
                 .keyboardShortcut(.delete, modifiers: [])
                 .disabled(!(v.hasActiveObject || v.rulerRemove != nil) || v.isRunning)
             Divider()
@@ -496,6 +572,13 @@ struct BlenderCommands: Commands {
                 .disabled(!v.editing || v.isRunning)
             Button("Subdivide") { v.mesh(.subdivide) }
                 .disabled(!v.editing || v.isRunning)
+            Divider()
+            // Blender's Object Mode and Edit Mode keys and the menus they
+            // open at the pointer (ViewportKeymap.swift).
+            ViewportKeyRows(menu: .object, actions: v)
+            if v.editing {
+                Section("Mesh") { ViewportKeyRows(menu: .mesh, actions: v) }
+            }
             Divider()
             // View ▸ Sidebar, ticked while it is out, on Blender's N.
             Toggle("Sidebar", isOn: Binding(get: { v.sidebarShown }, set: { _ in v.toggleSidebar() }))

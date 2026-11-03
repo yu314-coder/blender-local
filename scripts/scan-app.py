@@ -22,7 +22,7 @@ HOOKS = ["-workspace", "-eval64", "-stub", "-add", "-adjust", "-mesh", "-caret",
          "-sculpt-undo-depth", "-name-draft", "-name-draft-switch", "-vwpaint-passes", "-sculpt-repeat",
          "-cut-ops", "-cut-view", "-cut-wait", "-select-pick", "-select-pick-view", "-select-pick-wait",
          "-transform-ops", "-relations-ops", "-textimage-ops", "-measure-ops", "-measure-overlays",
-         "-data-api", "-self-test", "-feature-test", "-feature-test-cycles", "-feature-test-only", "-frame-timing",
+         "-data-api", "-self-test", "-feature-test", "-feature-test-cycles", "-feature-test-only", "-frame-timing", "-menu-ops", "-menu-dump",
          "-ui-audit", "-ui-frame"]
 app, mode = pathlib.Path(sys.argv[1]), sys.argv[2]
 root = pathlib.Path(__file__).resolve().parent.parent / "Sources"

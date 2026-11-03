@@ -52,6 +52,20 @@ struct LayoutWorkspace: View {
     /// view it was set from. The guide is drawn while the view has not moved.
     @State private var cameraView: (aspect: CGFloat, camera: ViewportCamera, name: String)?
     @State private var showOperations = false
+    /// Blender's pop-up menu open at the pointer — a right-click's context
+    /// menu, Shift+A's Add, M's Move to Collection (ViewportMenus.swift).
+    @State private var popupMenu: PopupMenuModel?
+    /// Where the 3D View sits in the workspace, which the menu is placed in.
+    @State private var viewportOrigin: CGPoint = .zero
+    /// F2's Rename Active Object… prompt.
+    @State private var renaming = false
+    @State private var renameText = ""
+    /// View ▸ Toolbar, Blender's T.
+    @AppStorage("bl_toolbar_shown") private var showsToolbar = true
+    /// What Ctrl+Space's Toggle Maximize Area put away, to bring back.
+    @State private var maximizedFrom: (editors: Bool, sidebar: Bool, toolbar: Bool)?
+    /// The redo panel's own setting, which F9 opens.
+    @AppStorage("bl_redo_expanded") private var redoExpanded = false
     @State private var catalogue = OperatorCatalogue()
     /// The failure on screen, until it times out or is tapped away.
     @State private var shownReport: BpyBridge.Report?
@@ -269,6 +283,7 @@ struct LayoutWorkspace: View {
     /// nothing is being typed into.
     private var keysLive: Bool {
         panel == nil && !showOperations && !searchOpen && !TextEntryFocus.shared.isEditing
+            && popupMenu == nil && !renaming
     }
 
     var body: some View {
@@ -285,7 +300,7 @@ struct LayoutWorkspace: View {
             // underneath: an upright iPad's view alone is too short for Edit
             // Mode's twelve buttons.
             HStack(spacing: 0) {
-                toolShelf
+                if showsToolbar { toolShelf }
                 GeometryReader { geo in
                     let wide = geo.size.width >= geo.size.height
                     let layout = wide ? AnyLayout(HStackLayout(spacing: 0)) : AnyLayout(VStackLayout(spacing: 0))
@@ -302,11 +317,19 @@ struct LayoutWorkspace: View {
                                               onCommit: { name in if !session.usesRealBlender { undo.push(name, scene) } },
                                               onCycleTool: { choose(tool.next) },
                                               onToggleEditing: keysLive ? toggleEditingFromKeyboard : nil,
-                                              onStrokeEnd: keepStroke)
+                                              onStrokeEnd: keepStroke,
+                                              onSecondaryClick: keysLive ? { openMenu(.context, at: $0) } : nil,
+                                              viewKeys: keysLive ? viewKeyCommands : nil)
                                 .background(GeometryReader { geo in
                                     Color.clear
-                                        .onAppear { viewportSize = geo.size }
+                                        .onAppear {
+                                            viewportSize = geo.size
+                                            viewportOrigin = geo.frame(in: .named(Self.space)).origin
+                                        }
                                         .onChange(of: geo.size) { _, size in viewportSize = size }
+                                        .onChange(of: geo.frame(in: .named(Self.space)).origin) { _, origin in
+                                            viewportOrigin = origin
+                                        }
                                 })
                             // The rectangle a box-select drag is sweeping. Screen-space
                             // and changing every frame, so it is drawn here rather than in
@@ -1323,8 +1346,46 @@ struct LayoutWorkspace: View {
             await runGroupsOps(args[i + 1].split(separator: ",").map(String.init))
         }
         #endif
+        #if DEBUG
+        // `-menu-ops a;b;…` drives Blender's menus and keys as the pointer
+        // and the keyboard reach them (ViewportMenus.swift, ViewportKeymap.swift),
+        // once the bridge is up and no script is running: `menu:<name>[@x,y]`
+        // opens one at a point in the 3D View, `key:<chord>` presses a key as
+        // the 3D View's own key command or a menu bar row would, `row:<a>/<b>`
+        // runs the open menu's row (through its submenus), `close`, `wait:<s>`,
+        // `py:<expression>` prints what Blender holds. Each step prints the
+        // menu it left open.
+        .task(id: bridge == nil) {
+            let args = ProcessInfo.processInfo.arguments
+            guard let i = args.firstIndex(of: "-menu-ops"), i + 1 < args.count, bridge != nil else { return }
+            try? await Task.sleep(nanoseconds: 3_000_000_000)
+            while session.isRunning { try? await Task.sleep(nanoseconds: 100_000_000) }
+            for token in args[i + 1].split(separator: ";").map(String.init) {
+                await runMenuOp(token)
+            }
+            print("[bk] menu-ops: done"); fflush(stdout)
+        }
+        #endif
+        .overlay {
+            if let popupMenu {
+                PopupMenuOverlay(model: popupMenu) { self.popupMenu = nil }
+            }
+        }
+        .coordinateSpace(name: Self.space)
         .sheet(isPresented: $showOperations) {
             OperatorSearch(catalogue: catalogue, bridge: bridge, isPresented: $showOperations)
+        }
+        // F2, and the context menu's Rename Active Object…: Blender's name
+        // panel (TOPBAR_PT_name), one field.
+        .alert("Rename Active Object", isPresented: $renaming) {
+            TextField("Name", text: $renameText)
+                .autocorrectionDisabled()
+            Button("Rename") {
+                if let name = scene.active?.name, !renameText.isEmpty, renameText != name {
+                    bridge?.run(Bpy.rename(name, to: renameText), undo: "Rename")
+                }
+            }
+            Button("Cancel", role: .cancel) {}
         }
         // Select ▸ Select Pattern…: Blender's `*` and `?` wildcards, added to
         // the selection, not case sensitive — its defaults.
@@ -1958,7 +2019,221 @@ struct LayoutWorkspace: View {
             askNewCollection: askNewCollection,
             inLocalView: scene.localView != nil,
             canToggleLocalView: session.usesRealBlender && !session.isRunning
-                && (scene.localView != nil || !scene.selection.isEmpty || editing))
+                && (scene.localView != nil || !scene.selection.isEmpty || editing),
+            openMenu: { openMenu($0) },
+            addObject: { bridge?.add($0, at: scene.cursor, view: camera) },
+            addImage: session.usesRealBlender ? { imageRequest = $0 } : nil,
+            mode: scene.mode,
+            editingCurve: editingPoints && !activeIsLattice,
+            editingLattice: editingPoints && activeIsLattice,
+            selectedCount: scene.selection.count,
+            activeType: scene.active?.blenderType,
+            activeName: scene.active?.name,
+            selectedElements: {
+                guard let stats = scene.editMeasurements?.statistics else { return nil }
+                return (vertices: stats.verticesSelected, edges: stats.edgesSelected, faces: stats.facesSelected)
+            },
+            shading: shading,
+            setShading: { shading = $0 },
+            orientation: { scene.orientation.type },
+            setOrientation: { setOrientation($0) },
+            modes: availableModes,
+            enterMode: { enterMode($0) },
+            extrudeToCursor: extrudeToCursor,
+            shear: {
+                guard session.usesRealBlender else { return }
+                bridge?.perform(editing ? LastOperator.shear() : LastOperator.shearObjects())
+            },
+            snap: { bridge?.run($0.command) },
+            setActiveCamera: scene.active?.blenderType == "CAMERA" && session.usesRealBlender
+                ? { bridge?.run(ActiveCameraBpy.set) } : nil,
+            copyObjects: { bridge?.run(ObjectBufferBpy.copy) },
+            pasteObjects: { bridge?.run(ObjectBufferBpy.paste) },
+            rename: scene.active == nil ? nil : {
+                renameText = scene.active?.name ?? ""
+                renaming = true
+            },
+            insertKeyframe: { keyframe(insert: true) },
+            deleteKeyframes: { keyframe(insert: false) },
+            orbit: { azimuth, elevation in camera.orbit(dx: azimuth, dy: elevation) },
+            pan: { dx, dy in camera.pan(dx: dx, dy: dy) },
+            toggleSnap: { bridge?.run(ToolsBpy.useSnap(!scene.tools.useSnap)) },
+            toggleProportional: {
+                bridge?.run(ToolsBpy.proportional(!scene.tools.isProportional(editing: editing), editing: editing))
+            },
+            toggleToolbar: { showsToolbar.toggle() },
+            maximize: toggleMaximize,
+            adjustLastOperation: { redoExpanded = true },
+            canRepeatLast: { bridge?.repeatable != nil },
+            repeatLast: { if let op = bridge?.repeatable { bridge?.perform(op) } },
+            searchOperators: { showOperations = true },
+            brushPanel: session.usesRealBlender && [.sculpt, .vertexPaint, .weightPaint].contains(scene.mode)
+                ? { AnyView(BrushContextPanel(scene: scene, session: session, bridge: bridge)) } : nil)
+    }
+
+    #if DEBUG
+    /// One step of `-menu-ops`.
+    func runMenuOp(_ token: String) async {
+        let (verb, rest) = token.firstIndex(of: ":").map { (String(token[..<$0]), String(token[token.index(after: $0)...])) }
+            ?? (token, "")
+        var said = ""
+        switch verb {
+        case "menu":
+            let parts = rest.split(separator: "@")
+            guard let menu = ViewportMenu(rawValue: String(parts[0])) else { said = "no such menu"; break }
+            var point: CGPoint?
+            if parts.count > 1 {
+                let xy = parts[1].split(separator: ",").compactMap { Double($0) }
+                if xy.count == 2 { point = CGPoint(x: xy[0], y: xy[1]) }
+            }
+            openMenu(menu, at: point)
+            said = popupMenu == nil ? "nothing opened" : "opened"
+        case "key":
+            let known = ViewportKey.canPressViewKey(rest, viewportKeys) || ViewportKey.entry(rest, viewportKeys) != nil
+            let pressed = known && ViewportKey.pressViewKey(rest, viewportKeys)
+            said = pressed ? "pressed" : "means nothing here"
+        case "row":
+            guard let model = popupMenu else { said = "no menu open"; break }
+            var items = model.items
+            var found: PopupItem?
+            for (n, name) in rest.split(separator: "/").map(String.init).enumerated() {
+                func flat(_ rows: [PopupItem]) -> [PopupItem] {
+                    rows.flatMap { item -> [PopupItem] in
+                        if case .columns(let columns) = item.kind { return columns.flatMap(flat) }
+                        return [item]
+                    }
+                }
+                guard let item = flat(items).first(where: { $0.title == name }) else { found = nil; break }
+                found = item
+                if case .submenu(let build) = item.kind, n < rest.split(separator: "/").count - 1 { items = build() }
+            }
+            guard let item = found, case .action(let run) = item.kind else { said = "no such row"; break }
+            guard item.enabled else { said = "row is greyed out"; break }
+            popupMenu = nil
+            run()
+            said = "ran \(item.title)"
+        case "close":
+            popupMenu = nil
+        case "do":
+            // The setup a test needs that is not a Blender key here: A, and
+            // the select mode.
+            switch rest {
+            case "all": viewportKeys.selectAll()
+            case "vertex": setSelectMode(.vertex)
+            case "edge": setSelectMode(.edge)
+            case "face": setSelectMode(.face)
+            default: said = "no such action"
+            }
+        case "wait":
+            try? await Task.sleep(nanoseconds: UInt64((Double(rest) ?? 1) * 1_000_000_000))
+        case "py":
+            said = bridge?.capture("print(" + rest + ")")?.trimmingCharacters(in: .whitespacesAndNewlines) ?? "?"
+        default:
+            said = "no such step"
+        }
+        try? await Task.sleep(nanoseconds: 400_000_000)
+        while session.isRunning { try? await Task.sleep(nanoseconds: 100_000_000) }
+        print("[bk] menu-ops \(token): \(said); \(scene.mode.label), \(scene.objects.count) objects, "
+              + "active \(scene.active?.name ?? "none"), selected \(scene.selection.count), "
+              + "cursor \(scene.cursor), banner \(bridge?.report.map { "\($0.operation): \($0.message)" } ?? "none")")
+        if let popupMenu {
+            print("[bk] menu " + popupMenu.dump().replacingOccurrences(of: "\n", with: "\n[bk] menu "))
+        }
+        fflush(stdout)
+    }
+    #endif
+
+    // MARK: Blender's menus at the pointer, and its other keys
+
+    /// The workspace's coordinate space, which the pop-up menu is drawn in.
+    private static let space = "bk-layout"
+
+    /// Opens one of Blender's menus where the pointer is over the 3D View —
+    /// where a right-click was, or for a key, where the mouse or trackpad
+    /// last hovered — or in the middle of the view without a pointer.
+    private func openMenu(_ menu: ViewportMenu, at point: CGPoint? = nil) {
+        let local = point ?? ViewportPointer.location
+            ?? CGPoint(x: viewportSize.width / 2, y: viewportSize.height / 2)
+        let anchor = CGPoint(x: viewportOrigin.x + local.x, y: viewportOrigin.y + local.y)
+        guard let model = ViewportMenu.model(menu, viewportKeys, at: anchor) else { return }
+        popupMenu = model
+        #if DEBUG
+        if ProcessInfo.processInfo.arguments.contains("-menu-dump") {
+            print("[bk] menu " + model.dump().replacingOccurrences(of: "\n", with: "\n[bk] menu "))
+            fflush(stdout)
+        }
+        #endif
+    }
+
+    /// X and Delete, as Blender's: in Object Mode X asks first and Delete
+    /// does not; while a mesh is edited both open the Delete menu; with a
+    /// ruler out, or a curve's or a lattice's points, both delete.
+    private func deleteKey(confirm: Bool) {
+        if tool == .measure, scene.activeRuler != nil { deleteSelected(); return }
+        if editing && !editingPoints { openMenu(.delete); return }
+        if confirm && scene.mode == .object { openMenu(.deleteObjects); return }
+        deleteSelected()
+    }
+
+    /// The modes the mode menu offers the active object, in its order.
+    private var availableModes: [InteractionMode] {
+        guard scene.active != nil else { return [] }
+        var modes: [InteractionMode] = [.object]
+        if canEdit || canEditPoints { modes.append(.edit) }
+        if canEdit {
+            modes.append(.sculpt)
+            if session.usesRealBlender { modes += PaintModeBpy.modes }
+            modes.append(.texturePaint)
+        }
+        return modes
+    }
+
+    /// Ctrl+Tab's Mode menu: each mode entered as the mode menu enters it.
+    private func enterMode(_ mode: InteractionMode) {
+        guard mode != scene.mode else { return }
+        switch mode {
+        case .object:       toObjectMode()
+        case .edit:         setEditing(true)
+        case .sculpt:       choose(.sculptDraw)
+        case .texturePaint: choose(.paintDraw)
+        case .vertexPaint, .weightPaint: enterPaintMode(mode)
+        }
+    }
+
+    /// I and Alt+I from the context menu, as the timeline's keys run them
+    /// (`TimelineDriver.insertKeyframe`).
+    private func keyframe(insert: Bool) {
+        guard !session.isRunning else { return }
+        if session.usesRealBlender {
+            bridge?.run(insert ? BpyAnimation.insertKeyframe : BpyAnimation.deleteKeyframe,
+                        undo: insert ? BpyAnimation.insertUndoName : BpyAnimation.deleteUndoName)
+        } else if insert ? scene.insertKeyframe() > 0 : scene.deleteKeyframe() > 0 {
+            session.log(insert ? "bpy.ops.anim.keyframe_insert()" : "bpy.ops.anim.keyframe_delete_v3d()")
+        }
+    }
+
+    /// Ctrl+Space, Blender's Toggle Maximize Area: the 3D View alone — the
+    /// toolbar, the editors and the Sidebar put away — and back as it was.
+    private func toggleMaximize() {
+        if let was = maximizedFrom {
+            showsEditors = was.editors
+            showsSidebar = was.sidebar
+            showsToolbar = was.toolbar
+            maximizedFrom = nil
+        } else {
+            maximizedFrom = (showsEditors, showsSidebar, showsToolbar)
+            showsEditors = false
+            showsSidebar = false
+            showsToolbar = false
+        }
+    }
+
+    /// The keys the 3D View carries itself (ViewportKeymap.swift): Blender's
+    /// ⌘ twins and the F keys.
+    private var viewKeyCommands: ViewKeyCommands {
+        ViewKeyCommands(chords: ViewportKey.viewKeys,
+                        canPress: { ViewportKey.canPressViewKey($0, viewportKeys) },
+                        press: { _ = ViewportKey.pressViewKey($0, viewportKeys) })
     }
 
     /// Delete, Backspace or X — and More ▸ Delete Selected. Objects in object
@@ -2134,9 +2409,12 @@ struct LayoutWorkspace: View {
     @ViewBuilder private var keyAliases: some View {
         if keysLive {
             ZStack {
-                Button("Delete") { deleteSelected() }
+                // Blender's X: a confirmation in Object Mode, the Delete menu
+                // while a mesh is edited; its Delete key the same without the
+                // confirmation.
+                Button("Delete") { deleteKey(confirm: true) }
                     .keyboardShortcut("x", modifiers: [])
-                Button("Delete") { deleteSelected() }
+                Button("Delete") { deleteKey(confirm: false) }
                     .keyboardShortcut(.deleteForward, modifiers: [])
             }
             .opacity(0)

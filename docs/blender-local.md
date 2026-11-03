@@ -1,5 +1,83 @@
 # Blender Local — the app
 
+## November 3, later: right-click and Blender's keys
+
+The user's report: "missing the right key feature and lots of hot keys".
+A right-click in the 3D View did nothing — no recogniser asked for the
+pointer's second button — and the keys that open a menu in Blender (Shift+A,
+Ctrl+A, M, X, Ctrl+E and the pies) had no way in, because a SwiftUI menu
+opens only when its button is tapped and no key can tap one.
+
+- **Blender's menus at the pointer** (`PopupMenu.swift`, `ViewportMenus.swift`).
+  Drawn by the app in Blender's style — the menu's title, each row's key on
+  the right, a submenu opening beside its row when the pointer reaches it,
+  Up/Down/Return/Left/Right and Escape — over the window, where the
+  right-click was or where the pointer last hovered (the view's middle
+  without one). Every row runs an action the app already had, under
+  Blender's name for that menu (space_view3d.py, 5.2.1); a row Blender has
+  and the app cannot run is left out. A pie is drawn as the list of its
+  items.
+- **Right-click** opens the mode's context menu: Object
+  (`VIEW3D_MT_object_context_menu` — shading, Join, Convert, Set Origin,
+  Copy/Paste Objects, the duplicates, Rename Active Object…, Mirror, Snap,
+  Parent, Move to Collection, Insert Keyframe, Delete; a camera's Set Active
+  Camera first), Edit Mode's Vertex, Edge or Face column
+  (`VIEW3D_MT_edit_mesh_context_menu`, rows past a selection count as
+  Blender draws them), a curve's and a lattice's, and in Sculpt Mode,
+  Vertex Paint and Weight Paint Blender's brush panel (Radius, Strength,
+  Weight). UIKit gives a right-click to a context-menu interaction whatever
+  the app's pointer settings — a tap recogniser's `.secondary` mask saw
+  nothing on this Mac, as the app does not opt in to
+  `UIApplicationSupportsIndirectInputEvents` — so the interaction takes it
+  and opens Blender's menu in place of the system's. A finger's or a
+  Pencil's long-press opens nothing (`TouchKindWatcher`): a Pencil resting
+  before a stroke is not asking for a menu.
+- **Blender's keys** (`ViewportKeymap.swift`, one table; blender_default.py's
+  3D View, Object Mode and Mesh keymaps): Shift+A Add, Ctrl+A Apply, X
+  (asks first) and Delete, Ctrl+P / Alt+P Parent, Ctrl+L Link/Transfer Data,
+  M / Shift+M collections, Alt+G/R/S Clear Location/Rotation/Scale,
+  Ctrl+C / Ctrl+V Copy/Paste Objects, Shift+S Snap, Z Shading, ` View,
+  Ctrl+Tab Mode, Comma Orientation, Shift+Tab Snapping, O Proportional
+  Editing, T Toolbar, Ctrl+Space Toggle Maximize Area, Shift+C, Shift+R
+  Repeat Last, Shift+G / Shift+L Select Grouped / Linked (Select Similar
+  while editing), F2 Rename, F3 Search, F9 Adjust Last Operation, the number
+  row's 4/6/8/2/9 orbit and Ctrl+4/6/8/2 pan (Blender's Emulate Numpad,
+  15° steps, directions measured in 5.2.1). While editing: E, Alt+E, F, M,
+  Alt+M, P, Y, J, X and Delete (the Delete menu), Ctrl+V/E/F, Alt+N,
+  Shift+Ctrl+B, Ctrl+T, Alt+J, Shift+N, Shift+Ctrl+N, Alt+S, Shift+Alt+S,
+  Shift+Ctrl+Alt+S, Shift+V, Shift+E, Shift+Ctrl+R, Ctrl+X. The menu bar
+  draws a row for each key that applies in the mode; the 3D View carries
+  the F keys itself, and Blender's macOS ⌘ twin of every Ctrl key
+  (`keyconfig_data_oskey_from_ctrl_for_macos`, its exceptions kept, the
+  number row left to ⌘1/⌘2's tabs).
+- **New operators**, measured in desktop 5.2.1 with the app's context
+  (`ViewportMenuOps.swift`): the seven Snap operators fail their poll
+  without a 3D View and run under the borrowed one; Clear
+  Location/Rotation/Scale, Copy and Paste Objects need none; Set Active
+  Object as Camera and Subdivision Set need it. Shift+R repeats the last
+  operator with its last arguments (`BpyBridge.repeatable`), which unlike
+  the redo panel's outlives the selection changing.
+- **Checked in the app**, with the new DEBUG hook `-menu-ops` (open a menu,
+  press a chord, run a row, print Blender's state) and `-menu-dump`: every
+  menu above prints Blender's rows; Shift+A ▸ Mesh ▸ Cube added a cube;
+  Snap ▸ Selection to Cursor moved it to the cursor's (2, 0, 0), Cursor to
+  World Origin and Cursor to Selected moved the cursor; Alt+G cleared its
+  location; Ctrl+C, Ctrl+V pasted Cube.001; Shift+R added another cube; in
+  Edit Mode E took a cube from 8 to 16 vertices and Delete ▸ Faces removed
+  the selected faces. With real input on this Mac: a right-click opened the
+  Object menu at the pointer and its Duplicate Objects row duplicated the
+  Ball; Shift+A opened Add with Mesh's submenu beside it. Host suites names,
+  featuretest, objectops and transformops pass; the names scanner allows
+  "New Face from Edges" in the context menu's Edge column, Blender's own
+  label there.
+- **Not yet:** F12 (Render Image needs the Rendering tab to start a render
+  on arrival), Shift+right-click's 3D cursor and Ctrl+right-click's Extrude
+  to Cursor (the interaction gives no modifier keys), Blender's modal G/R/S
+  with the pointer and typed values, the sculpt brush keys, the
+  `wm.context_modal_mouse` rows (Adjust Focal Length, Adjust Light Power),
+  and Ctrl+0–5 Subdivision Set (the number row is Blender's emulated numpad
+  here, as the views were).
+
 ## November 3: the timeline without the editors, Eevee's shadow pool, the Scripting tab
 
 Measured on this Mac (Mac16,10) with the iPad build, optimized

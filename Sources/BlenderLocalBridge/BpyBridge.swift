@@ -79,6 +79,12 @@ public final class BpyBridge {
     }
     private var remembered: LastOperator?
     private var rememberedMark: String?
+
+    /// The last operator performed, with the arguments it last ran with, for
+    /// Blender's Repeat Last (Shift+R): unlike `adjustable` it outlives the
+    /// selection changing under it and the commands run since, which is what
+    /// repeating it is for.
+    public private(set) var repeatable: LastOperator?
     /// Whether the remembered operator is adjusted the way Blender's redo panel
     /// does it — undo, run again, push — rather than through its
     /// `LastOperator.Restoration`. Settled when it was performed, by whether
@@ -390,6 +396,7 @@ public final class BpyBridge {
         remembered = op
         rememberedMark = historyMark
         adjustableGeneration &+= 1
+        repeatable = op
     }
 
     /// A selection made in the viewport. In Blender a click is an operator of
@@ -543,6 +550,7 @@ public final class BpyBridge {
             op.subject = capture("print(bpy.context.view_layer.objects.active.name)")
         }
         remembered = op
+        repeatable = op
         session.replaceLastOperator(op.python)
         if record { writeAdjustment(op) }
         rememberedMark = historyMark
@@ -576,6 +584,7 @@ public final class BpyBridge {
             op.subject = capture("print(bpy.context.view_layer.objects.active.name)")
         }
         remembered = op
+        repeatable = op
         session.replaceLastOperator(op.python)
         session.recordBackendChange(op.name, replace: true)
         rememberedMark = historyMark
