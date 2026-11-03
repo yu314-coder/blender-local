@@ -73,7 +73,9 @@ struct SidebarN: View {
         }
         .frame(width: BTheme.Metric.sidebarWidth)
         .background(BTheme.header.opacity(0.94))
-        .task(id: itemKey) { refreshItem() }
+        // Keyed in a view of its own: the frame redraws it, not the sidebar
+        // (KeyedRefresh).
+        .background(KeyedRefresh(key: { itemKey }, refresh: { refreshItem() }))
     }
 
     /// What the Item tab's numbers may change with: any command or undo (the
@@ -100,7 +102,9 @@ struct SidebarN: View {
         return ItemKey(revision: session.backendRevision, running: session.isRunning, mode: scene.mode,
                        active: scene.activeID, global: itemGlobal,
                        edit: [edit.vertices, edit.edges, edit.faces], history: edit.history, tab: tab,
-                       frame: scene.frameCurrent, subframe: scene.animation.subframe)
+                       // Only the Item tab's numbers move with the frame.
+                       frame: tab == .item ? scene.frameCurrent : 0,
+                       subframe: tab == .item ? scene.animation.subframe : 0)
     }
 
     private func refreshItem() {

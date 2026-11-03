@@ -1389,7 +1389,9 @@ struct LayoutWorkspace: View {
         // object selection a tap changes without one, the mode — and, for
         // Normal in Edit Mode, the viewport's edit selection, which the
         // bridge hands Blender first (`captureWithSelection`).
-        .task(id: orientationKey) { refreshOrientation() }
+        // Keyed in a view of its own, so the frame in the key redraws that
+        // view and not this screen at every frame of playback (KeyedRefresh).
+        .background(KeyedRefresh(key: { orientationKey }, refresh: { refreshOrientation() }))
         // Test All Features' way to this view's own functions (`featureTestDoor`).
         .task(id: bridge == nil) { await FeatureTestDoor.hold(featureTestDoor) }
         #if DEBUG
@@ -1424,13 +1426,17 @@ struct LayoutWorkspace: View {
         // Only Normal follows the edit selection; anything else would read
         // Blender again for every tap.
         let followsSelection = scene.orientation.type == .normal && scene.mode == .edit
+        let followsFrame = scene.orientation.type?.followsObject ?? true
         let edit = scene.editSelection
         return OrientationKey(revision: session.backendRevision, running: session.isRunning,
                               mode: scene.mode, active: scene.activeID, selection: scene.selection,
                               edit: followsSelection ? [edit.vertices, edit.edges, edit.faces] : [],
                               history: followsSelection ? edit.history : [],
                               activeFace: followsSelection ? edit.activeFace : nil,
-                              frame: scene.frameCurrent, subframe: scene.animation.subframe)
+                              // Global, View and Cursor are the same at every
+                              // frame: playing in them asks Blender nothing.
+                              frame: followsFrame ? scene.frameCurrent : 0,
+                              subframe: followsFrame ? scene.animation.subframe : 0)
     }
 
     private func refreshOrientation() {

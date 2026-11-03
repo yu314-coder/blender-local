@@ -84,7 +84,13 @@ struct ScriptingWorkspace: View {
                 }
             }
         }
-        .task { refreshMetadata() }
+        // After the tab's first frame: the editor's completions can wait a
+        // moment, the tab should not (the first read walks every operator).
+        .task {
+            try? await Task.sleep(nanoseconds: 50_000_000)
+            guard !Task.isCancelled else { return }
+            refreshMetadata()
+        }
         .onDisappear {
             draft.saveTask?.cancel()
             var draft = document

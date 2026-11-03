@@ -2758,8 +2758,32 @@ def complete_source(source, path):
         return []
 
 
+# Monaco's operator list, kept for the session: (signature, operators).
+_EDITOR_OPERATORS = None
+
+
+def _python_operator_ids():
+    """The idnames of the operators Python registered — an add-on's, a
+    script's. Blender's own, in C, are fixed for the build."""
+    ids, todo = set(), list(bpy.types.Operator.__subclasses__())
+    while todo:
+        cls = todo.pop()
+        idname = getattr(cls, 'bl_idname', None)
+        if idname:
+            ids.add(idname)
+        todo.extend(cls.__subclasses__())
+    return frozenset(ids)
+
+
 def editor_metadata():
-    """One snapshot for Monaco; editing never invokes the interpreter."""
+    """One snapshot for Monaco; editing never invokes the interpreter.
+
+    The operators are read once a session and again only when Python's
+    change: walking all of bpy.ops and reading each one's RNA is about 2,500
+    operators, 46 ms in desktop 5.2.1 and 82 ms of the Scripting tab's first
+    frame in the app on an M4, every time the tab opened. The members of the
+    scene and the object are read each time: those change with the file."""
+    global _EDITOR_OPERATORS
     result = {'members': {}, 'operators': {}}
     for path in ('bpy', 'bpy.context', 'bpy.context.scene', 'bpy.context.object',
                  'bpy.data', 'bpy.types', 'bpy.context.scene.render'):
@@ -2768,6 +2792,10 @@ def editor_metadata():
             result['members'][path] = [n for n in dir(obj) if not n.startswith('_')]
         except (AttributeError, ValueError):
             pass
+    signature = (bpy.app.version, _python_operator_ids())
+    if _EDITOR_OPERATORS is not None and _EDITOR_OPERATORS[0] == signature:
+        result['operators'] = _EDITOR_OPERATORS[1]
+        return result
     for module in dir(bpy.ops):
         if module.startswith('_'):
             continue
@@ -2788,6 +2816,7 @@ def editor_metadata():
                 except (AttributeError, RuntimeError):
                     pass
             result['operators']['bpy.ops.' + module + '.' + name] = info
+    _EDITOR_OPERATORS = (signature, result['operators'])
     return result
 
 

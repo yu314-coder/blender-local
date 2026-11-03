@@ -1,5 +1,76 @@
 # Blender Local — the app
 
+## November 3: the timeline without the editors, Eevee's shadow pool, the Scripting tab
+
+Measured on this Mac (Mac16,10) with the iPad build, optimized
+(`-configuration Debug SWIFT_OPTIMIZATION_LEVEL=-O SWIFT_COMPILATION_MODE=wholemodule`),
+the editors' dock shown. Other sessions loaded the Mac through the morning
+(load averages 8 to 13, a remote-desktop session and four simulators): the
+same build swung from 96 to 68 Smooth between runs, so every change below
+was measured A/B in one sitting, and the final runs at load 4.
+
+- **A frame change redrew the 3D View's whole screen and the Properties
+  editor.** `LayoutWorkspace` built its orientation key, and
+  `PropertiesView` and the Sidebar their Dimensions keys, in their own
+  bodies with the frame in them, so every frame of playback or a scrub ran
+  those bodies and their `.task`s — the orientation one a call into Blender
+  each frame. The frame change itself costs 1 ms (median of 96, worst 6 ms;
+  DEBUG `-frame-timing` prints each), and the main thread was busy 283 ms of
+  8 s in a time profile; the views were the rest. Now each key is read in a
+  view of its own behind the editor (`KeyedRefresh`), and holds the frame
+  only when the answer can change with it: the orientation in Local, Normal,
+  Gimbal and Parent (`TransformOrientation.followsObject`), the Dimensions
+  on the Data tab, the Item tab's numbers on the Item tab. Same sitting,
+  `-feature-test-only` (new DEBUG hook) of the timeline's features: the
+  scrub 21–25 frames in its second, median 50–67 ms → 43–46 frames, median
+  16.7; Play 41–58 → 54–76 frames in two seconds — what the dock-hidden runs
+  had, so the editors cost nothing per frame now. Still right: the
+  `-transform-ops frame:` check of October's review, a cube keyed from
+  rotation Z 0 to 1.2 between frames 1 and 20 in Local, reads Blender's
+  axes at 20, 10 and 1 ((0.3624, 0.9320, 0), (0.8511, 0.5250, 0), the
+  identity) and the Sidebar the same Dimensions ((4, 2, 2), (2.9211, 2, 2),
+  (2, 2, 2)).
+- **An Eevee render's memory was mostly its shadow pool.** Blender
+  allocates `scene.eevee.shadow_pool_size` up front, 512 MB by default: an
+  Eevee render of the startup cube at 480 × 270 took the app from 275 MB
+  to a 1,475 MB peak. Peak against pool, in the app: 512 → 1,475 MB, 256 →
+  1,221, 128 → 1,094, 64 → 1,015, 32 → 932; desktop 5.2.1 rendering a copy
+  of an 82-object scene at 960 × 540: 1,531, 1,280, 1,079, 1,017 MB — every
+  picture identical to the 512 one, pixel for pixel. The Render panel now
+  holds the pool to its quality for the render (`Quality.eeveeShadowPool`:
+  Draft 64, Good 128, Best 256 MB), keeps a smaller one a scene asks for,
+  and puts the scene's own back after, in the `finally` that already put
+  the camera back. Test All Features' Eevee render (Draft): 1,467 → 1,020
+  MB peak. `run-render-blender-check.sh` has five new checks.
+- **The Scripting tab read every operator each time it opened.**
+  `editor_metadata` walked all 2,498 of `bpy.ops` and read each one's RNA:
+  46 ms in desktop 5.2.1, 82 ms of the tab's first frame in the app. The
+  operators are kept for the session now and read again only when Blender's
+  version or the Python operators' idnames change (a registered operator is
+  listed at once); a second read is 1.8 ms. The first read waits for the
+  tab's first frame (50 ms on). The tab's longest stall: 336–551 ms →
+  177–300 ms; the rest is the web view and the console being made.
+- **Full Test All Features, final build, load 4:** 94 and 97 Smooth of 111
+  (November 1, a quiet Mac: 96); Eevee's render peak 1,180–1,248 MB (1,655).
+
+Not yet done:
+- The scrub in the full run is still 23–26 frames in its second: by then
+  the scene holds the earlier features' objects, and the views that still
+  follow every frame there were not found (the targeted runs have the
+  sphere alone).
+- Vertex and Weight Paint strokes on the 64,226-vertex sphere keep their
+  p95 of 50–67 ms: each chunk takes the stroke back and replays all of it
+  (Blender's one undo step and its own spacing), up to 51 ms a chunk.
+- The Scripting tab's web view and console are made on its first visit.
+- After an Eevee render about 270 MB stays (Blender's GPU module and
+  shaders).
+
+Testing note: an `-eval64` script edits the app's working scene, which it
+autosaves into `Documents/autosave.blend` and reopens at launch. One such
+script replaced it this morning; it came back from a Time Machine local
+snapshot. Scene-changing launches now go through a wrapper that copies
+autosave.blend aside first and back after.
+
 ## November 1: Blender's layout — the toolbar, one mode menu, and the editors beside the view
 
 The user said the app's real problem might be that it is hard to use, so the

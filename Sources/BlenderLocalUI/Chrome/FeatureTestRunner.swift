@@ -171,6 +171,12 @@ final class FeatureTestRunner {
         _ = await waitForLayout()
 
         for (offset, entry) in planned.enumerated() {
+            #if DEBUG
+            // `-feature-test-only a,b,…`: those features alone, in the list's
+            // order — name the ones a feature builds on too (`anim.scrub`
+            // wants `sculpt.voxel_remesh` and `anim.insert_keyframe`).
+            if let only = FeatureTestLaunch.only, !only.contains(entry.key) { continue }
+            #endif
             let index = offset + 1
             run.index = index
             run.current = entry.name
@@ -1610,6 +1616,13 @@ enum FeatureTestLaunch {
     static var requested: Bool { ProcessInfo.processInfo.arguments.contains("-feature-test") }
     /// `-feature-test-cycles` turns the Cycles switch on.
     static var cycles: Bool { ProcessInfo.processInfo.arguments.contains("-feature-test-cycles") }
+    /// `-feature-test-only key,key,…`: run only these features (keys as in
+    /// `FeatureTest.entries`); nil runs them all.
+    static var only: Set<String>? {
+        let args = ProcessInfo.processInfo.arguments
+        guard let i = args.firstIndex(of: "-feature-test-only"), i + 1 < args.count else { return nil }
+        return Set(args[i + 1].split(separator: ",").map { String($0.trimmingCharacters(in: .whitespaces)) })
+    }
     static var opened = false
     static var ran = false
 }

@@ -446,6 +446,11 @@ public final class TimelineDriver {
     /// How many frame changes were sent, for the tests.
     @ObservationIgnored public private(set) var framesSent = 0
 
+    #if DEBUG
+    /// DEBUG `-frame-timing`: each frame change's cost printed (`[bk-frame]`).
+    static let logsTiming = ProcessInfo.processInfo.arguments.contains("-frame-timing")
+    #endif
+
     public init() {}
 
     public func bind(scene: BKScene, session: BpySession, bridge: BpyBridge?) {
@@ -477,15 +482,29 @@ public final class TimelineDriver {
             scene.frameCurrent = target
             return true
         }
+        #if DEBUG
+        let began = CFAbsoluteTimeGetCurrent()
+        #endif
         guard let answer = session.capture(BpyAnimation.frameSet(target, subframe: subframe)) else {
             // The traceback is in the console; playback must not repeat it
             // sixty times a second.
             stopPlayback()
             return false
         }
-        if answer.contains(BpyAnimation.fullMirrorMarker) {
+        #if DEBUG
+        let frameDone = CFAbsoluteTimeGetCurrent()
+        #endif
+        let full = answer.contains(BpyAnimation.fullMirrorMarker)
+        if full {
             _ = session.capture(BpyAnimation.fullMirror)
         }
+        #if DEBUG
+        if Self.logsTiming {
+            let end = CFAbsoluteTimeGetCurrent()
+            print(String(format: "[bk-frame] %d: frame_set %.1f ms%@", target, (frameDone - began) * 1000,
+                         full ? String(format: ", full mirror %.1f ms", (end - frameDone) * 1000) : ""))
+        }
+        #endif
         return true
     }
 

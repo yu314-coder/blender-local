@@ -28,6 +28,17 @@ public enum TransformOrientation: Int, CaseIterable, Identifiable, Sendable {
         self = found
     }
 
+    /// Whether the axes turn with an object's transform — the active object's
+    /// own, its parent's, its rotation channels — so that an animated one
+    /// turns them as the frame changes: Local, Normal, Gimbal and Parent.
+    /// Global, View and Cursor are the same at every frame.
+    public var followsObject: Bool {
+        switch self {
+        case .local, .normal, .gimbal, .parent: return true
+        case .global, .view, .cursor: return false
+        }
+    }
+
     /// Blender's icons for the items, as SF Symbols.
     public var icon: String {
         switch self {

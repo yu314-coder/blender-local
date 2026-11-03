@@ -339,6 +339,34 @@ check("and the finished render is read back as built (%r)" % finished, finished 
 check("disarmed, a render says nothing", ("print", warning) not in third, third[:3])
 scene.render.engine = 'BLENDER_WORKBENCH'
 
+print("\n  Eevee's shadow pool, held to the quality for the render (Quality.eeveeShadowPool)")
+seen = []
+def _pool_at_render(render_scene, *_):
+    seen.append(render_scene.eevee.shadow_pool_size)
+bpy.app.handlers.render_pre.append(_pool_at_render)
+try:
+    scene.eevee.shadow_pool_size = '512'
+    run("RENDER_EEVEE", os.path.join(WORK, "eevee.png"))
+    check("Good renders with a 128 MB pool, where Blender's default is 512", seen[-1:] == ['128'], seen)
+    check("and the scene's own 512 is back after", scene.eevee.shadow_pool_size == '512',
+          scene.eevee.shadow_pool_size)
+    check("the image is written", os.path.getsize(os.path.join(WORK, "eevee.png")) > 0)
+    scene.eevee.shadow_pool_size = '32'
+    run("RENDER_EEVEE", os.path.join(WORK, "eevee32.png"))
+    check("a scene that asks for less keeps its own (32)", seen[-1:] == ['32']
+          and scene.eevee.shadow_pool_size == '32', (seen, scene.eevee.shadow_pool_size))
+    scene.eevee.shadow_pool_size = '1024'
+    cameras = len(bpy.data.cameras)
+    run("RENDER_EEVEE_BEST", os.path.join(WORK, "eevee-best.png"))
+    check("Best from the 3D View renders with 256, puts 1024 back and leaves no camera",
+          seen[-1:] == ['256'] and scene.eevee.shadow_pool_size == '1024'
+          and len(bpy.data.cameras) == cameras,
+          (seen, scene.eevee.shadow_pool_size, len(bpy.data.cameras), cameras))
+finally:
+    bpy.app.handlers.render_pre.remove(_pool_at_render)
+    scene.eevee.shadow_pool_size = '512'
+    scene.render.engine = 'BLENDER_WORKBENCH'
+
 print()
 if failures:
     print(f"{len(failures)} FAILED")

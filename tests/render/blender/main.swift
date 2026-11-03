@@ -28,6 +28,10 @@ emit("RENDER_VIEW", RenderRequest(engine: .workbench, quality: .draft, width: wi
 emit("RENDER_CYCLES", RenderRequest(engine: .cycles, quality: .best, width: width, height: height,
                                     source: .sceneCamera, output: "@OUT@",
                                     deviceReport: "@DEVICE@").python)
+emit("RENDER_EEVEE", RenderRequest(engine: .eevee, quality: .good, width: width, height: height,
+                                   source: .sceneCamera, output: "@OUT@").python)
+emit("RENDER_EEVEE_BEST", RenderRequest(engine: .eevee, quality: .best, width: width, height: height,
+                                        source: .view(view.renderCamera), output: "@OUT@").python)
 
 // Where the app puts these points in the picture, as fractions across and up
 // from the bottom left — what Blender's world_to_camera_view answers.

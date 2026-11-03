@@ -56,6 +56,21 @@ public struct RenderRequest: Equatable, Sendable {
             case .best: return 256
             }
         }
+        /// The most an Eevee render's shadow pool may hold, in MB
+        /// (`scene.eevee.shadow_pool_size`, Render ▸ Shadows ▸ Pool Size).
+        /// Blender allocates the whole pool up front and its default is 512:
+        /// measured on an M4, an Eevee render of the startup cube peaked at
+        /// 1,475 MB with 512, 1,094 with 128 and 1,015 with 64, and desktop
+        /// 5.2.1 rendering an 82-object scene at 960 × 540 the same (1,531,
+        /// 1,079, 1,017 MB) — every picture identical to the 512 one. A scene
+        /// that asks for less keeps its own; its setting is put back after.
+        public var eeveeShadowPool: Int {
+            switch self {
+            case .draft: return 64
+            case .good: return 128
+            case .best: return 256
+            }
+        }
     }
 
     /// Which camera the image is taken from.
@@ -210,6 +225,18 @@ public struct RenderRequest: Equatable, Sendable {
             "if hasattr(scene, 'eevee'):",
             "    scene.eevee.taa_render_samples = \(quality.eeveeSamples)",
         ]
+        // Eevee's shadow pool, held to the quality's size for this render
+        // (`Quality.eeveeShadowPool`) and put back after, even if it raises.
+        var cleanup: [String] = []
+        if engine == .eevee {
+            lines += [
+                "_bk_pool = getattr(getattr(scene, 'eevee', None), 'shadow_pool_size', None)",
+                "if _bk_pool is not None and int(_bk_pool) > \(quality.eeveeShadowPool):",
+                "    scene.eevee.shadow_pool_size = '\(quality.eeveeShadowPool)'",
+            ]
+            cleanup += ["    if _bk_pool is not None:",
+                        "        scene.eevee.shadow_pool_size = _bk_pool"]
+        }
         lines += deviceLines
         if let deviceReport {
             lines += ["try:",
@@ -220,7 +247,6 @@ public struct RenderRequest: Equatable, Sendable {
         // Blender says how far along it is — "Rendering 25 / 128 samples" —
         // through the render_stats handler, on the thread the render blocks.
         // Written to a file because that thread is not the interface's.
-        var cleanup: [String] = []
         if let progressReport {
             lines += [
                 "def _bk_progress(_text, _extra=None):",

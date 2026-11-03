@@ -34,11 +34,18 @@ struct PropertiesView: View {
             content
         }
         .background(BTheme.properties)
-        .task(id: DimensionsKey(revision: session.backendRevision, running: session.isRunning,
-                                active: scene.activeID, tab: tab, mode: scene.mode,
-                                frame: scene.frameCurrent, subframe: scene.animation.subframe)) {
-            readDimensions()
-        }
+        // Keyed in a view of its own: the frame redraws it, not this editor,
+        // at every frame of playback (KeyedRefresh). Only the Data tab shows
+        // the Dimensions, so only it follows the frame.
+        .background(KeyedRefresh(key: { dimensionsKey }, refresh: { readDimensions() }))
+    }
+
+    private var dimensionsKey: DimensionsKey {
+        let data = tab == .data
+        return DimensionsKey(revision: session.backendRevision, running: session.isRunning,
+                             active: scene.activeID, tab: tab, mode: scene.mode,
+                             frame: data ? scene.frameCurrent : 0,
+                             subframe: data ? scene.animation.subframe : 0)
     }
 
     /// What Blender's Dimensions may change with. The frame too: a frame
