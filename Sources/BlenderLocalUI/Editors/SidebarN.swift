@@ -21,6 +21,8 @@ struct SidebarN: View {
     var bridge: BpyBridge?
     @Binding var camera: ViewportCamera
     var tool: ActiveTool = .select
+    /// Closes the Sidebar, as N and More's switch do.
+    var onClose: (() -> Void)?
     @State private var tab: Tab = .item
     /// The 3D cursor's fields while they are dragged; Blender's once written.
     @State private var cursorDraft: SIMD3<Float>?
@@ -45,31 +47,29 @@ struct SidebarN: View {
         case tool = "Tool"
         case view = "View"
         var id: String { rawValue }
+
+        var icon: String {
+            switch self {
+            case .item: return "cube"
+            case .tool: return "wrench.adjustable"
+            case .view: return "eye"
+            }
+        }
     }
 
     var body: some View {
-        HStack(spacing: 0) {
-            VStack(spacing: 0) {
-                BHeader {
-                    Text(tab.rawValue)
-                        .font(BTheme.Font.ui(12, weight: .medium))
-                        .foregroundStyle(BTheme.text)
-                    Spacer()
-                }
-                ScrollView {
-                    VStack(alignment: .leading, spacing: 0) {
-                        switch tab {
-                        case .item: itemPanels
-                        case .tool: toolPanels
-                        case .view: viewPanels
-                        }
+        VStack(spacing: 0) {
+            tabBar
+            ScrollView {
+                VStack(alignment: .leading, spacing: 0) {
+                    switch tab {
+                    case .item: itemPanels
+                    case .tool: toolPanels
+                    case .view: viewPanels
                     }
-                    .padding(.bottom, 12)
                 }
+                .padding(.bottom, 12)
             }
-            .frame(maxWidth: .infinity)
-
-            tabStrip
         }
         .frame(width: BTheme.Metric.sidebarWidth)
         .background(BTheme.header.opacity(0.94))
@@ -126,29 +126,52 @@ struct SidebarN: View {
         #endif
     }
 
-    /// Blender draws the tabs as rotated labels on the panel's outer edge.
-    private var tabStrip: some View {
-        VStack(spacing: 2) {
+    /// Blender's tabs, across the top: each its icon and its name, a finger's
+    /// height, and a close button beside them. Blender draws them as labels
+    /// turned on their side down the panel's outer edge, which on an iPad
+    /// were sideways words in a 36-point strip (the user, November 4: the
+    /// sidebar "is bad and hard to use").
+    private var tabBar: some View {
+        HStack(spacing: 4) {
             ForEach(Tab.allCases) { t in
                 Button { tab = t } label: {
-                    Text(t.rawValue)
-                        .font(BTheme.Font.ui(12, weight: tab == t ? .medium : .regular))
-                        .foregroundStyle(tab == t ? BTheme.title : BTheme.textDim)
-                        .fixedSize()
-                        .rotationEffect(.degrees(90))
-                        // A finger's tab: 36 points across, 64 down.
-                        .frame(width: 36, height: 64)
-                        .background(tab == t ? BTheme.widget : Color.clear)
+                    HStack(spacing: 6) {
+                        Image(systemName: t.icon)
+                            .font(.system(size: 14, weight: .medium))
+                        Text(t.rawValue)
+                            .font(BTheme.Font.ui(13, weight: tab == t ? .semibold : .regular))
+                    }
+                    .foregroundStyle(tab == t ? Color.white : BTheme.textDim)
+                    .frame(maxWidth: .infinity)
+                    .frame(height: 36)
+                    .background(tab == t ? BTheme.select : Color.clear,
+                                in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+                    .frame(height: 44)
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .hoverEffect(.highlight)
+                .accessibilityLabel(t.rawValue)
+                .accessibilityAddTraits(tab == t ? .isSelected : [])
+            }
+            if let onClose {
+                Button(action: onClose) {
+                    Image(systemName: "xmark")
+                        .font(.system(size: 13, weight: .semibold))
+                        .foregroundStyle(BTheme.textDim)
+                        .frame(width: 40, height: 44)
                         .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
                 .hoverEffect(.highlight)
+                .accessibilityLabel("Close Sidebar")
             }
-            Spacer()
         }
-        .padding(.top, 6)
-        .frame(width: 36)
+        .padding(.horizontal, 6)
         .background(BTheme.header)
+        .overlay(alignment: .bottom) {
+            Rectangle().fill(Color.black.opacity(0.4)).frame(height: BTheme.Metric.hairline)
+        }
     }
 
     // MARK: Item

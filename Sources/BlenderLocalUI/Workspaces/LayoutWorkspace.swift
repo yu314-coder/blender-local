@@ -40,6 +40,8 @@ struct LayoutWorkspace: View {
     /// so Edit Mode had nowhere to type a vertex's position (round 3's
     /// review, toolkit item 3).
     @State private var showsSidebar = false
+    /// More's panel (`morePanel`) is open.
+    @State private var showsMore = false
     /// The Outliner and the Properties editor beside the 3D View
     /// (`editorsDock`), open as Blender opens them; kept across launches.
     @AppStorage("bl_editors_shown") private var showsEditors = true
@@ -390,7 +392,8 @@ struct LayoutWorkspace: View {
                             // Blender draws it, below Frame All and above the info row.
                             if showsSidebar {
                                 SidebarN(scene: scene, session: session, bridge: bridge,
-                                         camera: $camera, tool: tool)
+                                         camera: $camera, tool: tool,
+                                         onClose: { showsSidebar = false })
                                     .clipShape(RoundedRectangle(cornerRadius: BTheme.Metric.corner))
                                     .padding(.top, 70)
                                     .padding(.trailing, 8)
@@ -1847,7 +1850,7 @@ struct LayoutWorkspace: View {
                             setPickShift: { pickShift = $0 },
                             // As the 3D View is handed `pick` (`body`).
                             picks: editing && !editingPoints)
-        } label: { menuLabel("Select", icon: "cursorarrow.rays") }
+        } label: { menuLabel("Select", icon: "selection.pin.in.out") }
         .disabled(scene.objects.isEmpty)
     }
 
@@ -2836,7 +2839,7 @@ struct LayoutWorkspace: View {
             Button("Invert") { bridge?.run(selectAllCommand("INVERT"), undo: SelectMenu.selectAllUndo) }
             Divider()
             Text("Tap a point; a knot takes its handles. Shift adds.")
-        } label: { menuLabel("Select", icon: "cursorarrow.rays") }
+        } label: { menuLabel("Select", icon: "selection.pin.in.out") }
         if activeIsLattice {
             Menu {
                 Button(PointsBpy.makeRegular.label) { runPoints(PointsBpy.makeRegular) }
@@ -3241,7 +3244,7 @@ struct LayoutWorkspace: View {
                 bridge?.run(Bpy.deleteSelectedGlobally, undo: UndoStep.delete)
             }
             .disabled(scene.selection.isEmpty || session.isRunning)
-        } label: { menuLabel("Object", icon: "cube") }
+        } label: { menuLabel("Object", icon: "cube.fill") }
         .accessibilityIdentifier("header.object")
     }
 
@@ -3684,7 +3687,9 @@ struct LayoutWorkspace: View {
                    isOn: Binding(get: { scene.tools.connected },
                                  set: { bridge?.run(ToolsBpy.connected($0)) }))
         } label: {
-            settingLabel(icon: "circle.dashed", active: on)
+            // Blender's proportional-editing icon, a dot in a circle; the
+            // dashed circle is Circle Select's.
+            settingLabel(icon: "smallcircle.filled.circle", active: on)
         }
         .accessibilityLabel("Proportional Editing")
     }
@@ -3713,90 +3718,234 @@ struct LayoutWorkspace: View {
     /// "More" is the app's own: Blender has no such menu, and every row in it
     /// is named as Blender names it.
     private var moreMenu: some View {
-        Menu {
-            Button("Frame All", systemImage: "viewfinder") { camera.frameAll(scene.objects) }
-            Button("Frame Selected", systemImage: "scope") { camera.frameSelected(in: scene) }
-            // View ▸ Local View: the selection by itself, through the
-            // borrowed 3D View's own Local View (`_blenderkit_localview`).
-            LocalViewItems(inLocalView: scene.localView != nil,
-                           canToggle: session.usesRealBlender && !session.isRunning
-                               && (scene.localView != nil || !scene.selection.isEmpty || editing),
-                           run: { bridge?.run($0) })
-            // What a render will show, without rendering it: Blender's
-            // View ▸ Cameras ▸ Active Camera (numpad 0) and its View ▸ Align
-            // View ▸ Align Active Camera to View, by their rows' names.
-            Menu("Cameras") {
-                Button("Active Camera", systemImage: "video") { lookThroughCamera() }
-                    .disabled(cameraToLookThrough == nil)
-                Button("Align Active Camera to View", systemImage: "camera.metering.center.weighted") {
-                    aimCameraAtView()
-                }.disabled(cameraToAlign == nil)
-            }
-            // Blender's header popover of the same name, and its four types.
-            Menu("Viewport Shading") {
-                ForEach(ViewportShading.allCases) { value in
-                    Button(value.label) { shading = value }.disabled(!value.isImplemented)
-                }
-                Divider()
-                // Blender's X-Ray: the surface drawn see-through, and the
-                // select tools taking what it hides, as Blender's do.
-                Toggle("X-Ray", isOn: $options.xray)
-            }
-            // Blender's Viewport Overlays popover's Statistics, and its Mesh
-            // Edit Mode popover's Measurement (VIEW3D_PT_overlay,
-            // VIEW3D_PT_overlay_edit_mesh_measurement, which polls for a mesh
-            // in Edit Mode), each read from Blender (EditMeasure.swift).
-            Menu("Viewport Overlays") {
-                Section(MeasureOverlays.textLabel) {
-                    Toggle(MeasureOverlays.statisticsLabel, isOn: $options.measure.statistics)
-                }
-                if !session.usesRealBlender {
-                    Text("Statistics reads Blender's edit mesh, which the simulator's stand-in does not have.")
-                } else if !editingMesh {
-                    Text("Statistics is drawn for a mesh in Edit Mode.")
-                }
-            }
-            if editingMesh {
-                Menu(MeasureOverlays.meshEditModeLabel) {
-                    Section(MeasureOverlays.measurementLabel) {
-                        Toggle(MeasureOverlays.edgeLengthLabel, isOn: $options.measure.edgeLength)
-                        Toggle(MeasureOverlays.edgeAngleLabel, isOn: $options.measure.edgeAngle)
-                        Toggle(MeasureOverlays.faceAreaLabel, isOn: $options.measure.faceArea)
-                        Toggle(MeasureOverlays.faceAngleLabel, isOn: $options.measure.faceAngle)
-                    }
-                }
-            }
-            Divider()
-            // The editors Blender has for these, by their names: the
-            // Properties editor, the Timeline, the Render menu's window, and
-            // Edit ▸ Operator Search.
-            Button("Properties") { show("Properties") }
-            // View ▸ Sidebar, Blender's N.
-            Toggle("Sidebar", isOn: $showsSidebar)
-            Toggle("Timeline", isOn: Bindable(scene).animation.showsTimeline)
-            Button("Render") { panel = "Render" }
-            Button("Operator Search") { showOperations = true }
-            Divider()
-            // The settings Blender's Tool Settings bar holds (View ▸ Tool
-            // Settings): Pivot Point, Options, Snapping, Proportional
-            // Editing — with room for the numbers a menu cannot hold.
-            Button("Tool Settings") { panel = "Tool Settings" }
-            // Blender keeps it under Object Data ▸ Remesh; it is an operator
-            // on the whole object, so it sits with the other ones here.
-            Button("QuadriFlow Remesh") { bridge?.perform(LastOperator.quadriflowRemesh()) }
-                .disabled(!canEdit || editing || session.isRunning)
-            // In Object Mode the header's Object menu has the rest, and in
-            // Edit Mode the Mesh menu, each in Blender's order; More kept a
-            // second copy of them, mixed with the view's rows. A curve's or
-            // a lattice's points have no such menu here, so they keep these.
-            if editingPoints { moreObjectRows }
-        } label: {
+        Button { showsMore = true } label: {
             Image(systemName: "ellipsis")
                 .font(.system(size: 15, weight: .medium))
                 .frame(width: 44, height: 44)
                 .contentShape(Rectangle())
         }
+        .buttonStyle(.plain)
+        .foregroundStyle(BTheme.text)
         .accessibilityLabel("More")
+        .popover(isPresented: $showsMore, arrowEdge: .top) {
+            morePanel
+                .presentationDetents([.medium, .large])
+        }
+    }
+
+    /// More, as a panel rather than a menu: it was a list of rows and
+    /// submenus — Cameras, Viewport Shading, Viewport Overlays — with the
+    /// toggles hidden two levels down and most rows without an icon (the
+    /// user, November 4: "the three dots one open is bad and hard to use").
+    /// The view's actions are tiles a finger can hit, the four shadings sit
+    /// side by side with the current one lit, and every setting that is on
+    /// or off is a switch that shows which. Every row is named as Blender
+    /// names it.
+    private var morePanel: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 18) {
+                moreSection("View") {
+                    LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 8), count: 3), spacing: 8) {
+                        moreTile("Frame All", icon: "arrow.up.left.and.down.right.magnifyingglass") {
+                            camera.frameAll(scene.objects)
+                        }
+                        moreTile("Frame Selected", icon: "dot.viewfinder",
+                                 enabled: !scene.selection.isEmpty || editing) {
+                            camera.frameSelected(in: scene)
+                        }
+                        // View ▸ Local View: the selection by itself, through
+                        // the borrowed 3D View's own (`_blenderkit_localview`).
+                        moreTile("Toggle Local View", icon: "circle.dashed.inset.filled",
+                                 active: scene.localView != nil,
+                                 enabled: session.usesRealBlender && !session.isRunning
+                                     && (scene.localView != nil || !scene.selection.isEmpty || editing)) {
+                            bridge?.run(LocalViewBpy.toggle)
+                        }
+                        // View ▸ Cameras ▸ Active Camera (numpad 0) and View ▸
+                        // Align View ▸ Align Active Camera to View.
+                        moreTile("Active Camera", icon: "video", enabled: cameraToLookThrough != nil) {
+                            lookThroughCamera()
+                        }
+                        moreTile("Align Active Camera to View", icon: "camera.viewfinder",
+                                 enabled: cameraToAlign != nil) {
+                            aimCameraAtView()
+                        }
+                        moreTile("Remove from Local View", icon: "minus.circle",
+                                 enabled: scene.localView != nil && !session.isRunning) {
+                            bridge?.run(LocalViewBpy.removeFrom)
+                        }
+                    }
+                }
+                // Blender's header popover of the same name: its four types,
+                // then X-Ray.
+                moreSection("Viewport Shading") {
+                    HStack(spacing: 8) {
+                        ForEach(ViewportShading.allCases) { value in
+                            moreTile(value.label, icon: value.icon, active: shading == value,
+                                     enabled: value.isImplemented, closes: false) { shading = value }
+                        }
+                    }
+                    moreSwitch("X-Ray", icon: "circle.lefthalf.striped.horizontal", isOn: $options.xray)
+                }
+                // Blender's Viewport Overlays popover's Statistics, and in a
+                // mesh's Edit Mode its Measurement (VIEW3D_PT_overlay,
+                // VIEW3D_PT_overlay_edit_mesh_measurement), each read from
+                // Blender (EditMeasure.swift).
+                moreSection("Viewport Overlays") {
+                    moreSwitch(MeasureOverlays.statisticsLabel, icon: "chart.bar.xaxis",
+                               isOn: $options.measure.statistics,
+                               note: !session.usesRealBlender
+                                   ? "Statistics reads Blender's edit mesh, which the simulator's stand-in does not have."
+                                   : (!editingMesh ? "Statistics is drawn for a mesh in Edit Mode." : nil))
+                    if editingMesh {
+                        moreSwitch(MeasureOverlays.edgeLengthLabel, icon: "arrow.left.and.right",
+                                   isOn: $options.measure.edgeLength)
+                        moreSwitch(MeasureOverlays.edgeAngleLabel, icon: "angle",
+                                   isOn: $options.measure.edgeAngle)
+                        moreSwitch(MeasureOverlays.faceAreaLabel, icon: "square.dashed",
+                                   isOn: $options.measure.faceArea)
+                        moreSwitch(MeasureOverlays.faceAngleLabel, icon: "triangle",
+                                   isOn: $options.measure.faceAngle)
+                    }
+                }
+                // The editors Blender has for these, by their names: the
+                // Properties editor, View ▸ Sidebar (N), the Timeline, the
+                // Render menu's window, the Tool Settings bar's settings, and
+                // Edit ▸ Operator Search.
+                moreSection("Editors") {
+                    moreRow("Properties", icon: "slider.horizontal.3") { show("Properties") }
+                    moreSwitch("Sidebar", icon: "sidebar.right", isOn: $showsSidebar)
+                    moreSwitch("Timeline", icon: "timeline.selection",
+                               isOn: Bindable(scene).animation.showsTimeline)
+                    moreRow("Render", icon: "camera.aperture") { panel = "Render" }
+                    moreRow("Tool Settings", icon: "wrench.and.screwdriver") { panel = "Tool Settings" }
+                    moreRow("Operator Search", icon: "magnifyingglass") { showOperations = true }
+                }
+                // Blender keeps it under Object Data ▸ Remesh.
+                moreSection("Remesh") {
+                    moreRow("QuadriFlow Remesh", icon: "square.grid.3x3.topleft.filled",
+                            enabled: canEdit && !editing && !session.isRunning) {
+                        bridge?.perform(LastOperator.quadriflowRemesh())
+                    }
+                }
+                // A curve's or a lattice's points have no Object or Mesh menu
+                // here, so their rows stay in More.
+                if editingPoints {
+                    moreSection("Object") {
+                        Menu { moreObjectRows } label: {
+                            moreRowLabel("Snap, Shading, Set Origin, Delete…", icon: "ellipsis.circle", chevron: true)
+                        }
+                        .buttonStyle(.plain)
+                    }
+                }
+            }
+            .padding(16)
+        }
+        .frame(minWidth: 340, idealWidth: 360)
+        .background(BTheme.menuBack)
+        .preferredColorScheme(.dark)
+    }
+
+    /// One of More's sections: a dim heading over its rows.
+    private func moreSection<Content: View>(_ title: String, @ViewBuilder _ content: () -> Content) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text(title)
+                .font(.system(size: 12, weight: .semibold))
+                .foregroundStyle(BTheme.textDim)
+            content()
+        }
+    }
+
+    /// A tile: an action with its icon over its name, lit while it is on.
+    /// Most close More, since what they do is in the view behind it.
+    private func moreTile(_ title: String, icon: String, active: Bool = false, enabled: Bool = true,
+                          closes: Bool = true, action: @escaping () -> Void) -> some View {
+        Button {
+            action()
+            if closes { showsMore = false }
+        } label: {
+            VStack(spacing: 6) {
+                Image(systemName: icon)
+                    .font(.system(size: 20, weight: .medium))
+                    .frame(height: 24)
+                Text(title)
+                    .font(BTheme.Font.ui(12))
+                    .multilineTextAlignment(.center)
+                    .lineLimit(2)
+                    .minimumScaleFactor(0.8)
+            }
+            .foregroundStyle(active ? Color.white : BTheme.text)
+            .padding(.horizontal, 4)
+            .frame(maxWidth: .infinity, minHeight: 72)
+            .background(active ? BTheme.select : BTheme.widget.opacity(0.35),
+                        in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+            .contentShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+        }
+        .buttonStyle(.plain)
+        .disabled(!enabled)
+        .opacity(enabled ? 1 : 0.4)
+        .accessibilityLabel(title)
+    }
+
+    /// A row that opens an editor or runs an operator, and closes More.
+    private func moreRow(_ title: String, icon: String, enabled: Bool = true,
+                         action: @escaping () -> Void) -> some View {
+        Button {
+            showsMore = false
+            action()
+        } label: {
+            moreRowLabel(title, icon: icon, chevron: true)
+        }
+        .buttonStyle(.plain)
+        .disabled(!enabled)
+        .opacity(enabled ? 1 : 0.4)
+    }
+
+    private func moreRowLabel(_ title: String, icon: String, chevron: Bool) -> some View {
+        HStack(spacing: 12) {
+            Image(systemName: icon)
+                .font(.system(size: 16, weight: .medium))
+                .frame(width: 24)
+            Text(title).font(BTheme.Font.ui(14))
+            Spacer(minLength: 8)
+            if chevron {
+                Image(systemName: "chevron.right")
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundStyle(BTheme.textDim)
+            }
+        }
+        .foregroundStyle(BTheme.text)
+        .padding(.horizontal, 12)
+        .frame(minHeight: 46)
+        .background(BTheme.widget.opacity(0.25), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+        .contentShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+    }
+
+    /// A setting that is on or off, as a switch that shows which. More stays
+    /// open: the change shows in the view behind it.
+    private func moreSwitch(_ title: String, icon: String, isOn: Binding<Bool>, note: String? = nil) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Toggle(isOn: isOn) {
+                HStack(spacing: 12) {
+                    Image(systemName: icon)
+                        .font(.system(size: 16, weight: .medium))
+                        .frame(width: 24)
+                    Text(title).font(BTheme.Font.ui(14))
+                }
+                .foregroundStyle(BTheme.text)
+            }
+            .tint(BTheme.select)
+            .padding(.horizontal, 12)
+            .frame(minHeight: 46)
+            .background(BTheme.widget.opacity(0.25), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+            if let note {
+                Text(note)
+                    .font(BTheme.Font.ui(11))
+                    .foregroundStyle(BTheme.textDim)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .padding(.horizontal, 12)
+            }
+        }
     }
 
     /// More's object rows, while there is no Object menu in the header.

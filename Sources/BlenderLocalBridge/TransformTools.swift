@@ -145,7 +145,7 @@ public enum TransformPivot: Int, CaseIterable, Identifiable, Codable, Sendable {
 
     public var icon: String {
         switch self {
-        case .boundingBoxCenter: return "rectangle.dashed"
+        case .boundingBoxCenter: return "rectangle.center.inset.filled"
         case .cursor:            return "scope"
         case .individualOrigins: return "circle.grid.2x2"
         case .medianPoint:       return "circle.and.line.horizontal"

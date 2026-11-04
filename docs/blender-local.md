@@ -1,5 +1,38 @@
 # Blender Local — the app
 
+## November 4, night: More as a panel, the Sidebar's tabs across the top, an icon for each button
+
+The user: change the icon for each button, and the sidebar the three dots
+open "is bad and hard to use".
+
+- **More** (the header's `…`) is a panel now (`morePanel`), a popover on an
+  iPad and a sheet on an iPhone, rather than a menu of rows and submenus. View:
+  tiles for Frame All, Frame Selected, Toggle Local View, Active Camera, Align
+  Active Camera to View and Remove from Local View. Viewport Shading: its four
+  types side by side, the current one lit, and X-Ray as a switch. Viewport
+  Overlays: Statistics and, in a mesh's Edit Mode, the four Measurement rows,
+  as switches. Editors: Properties, Sidebar and Timeline (switches), Render,
+  Tool Settings, Operator Search. Remesh: QuadriFlow Remesh. Every row has its
+  icon; the toggles had been two submenus down, with nothing to show whether
+  they were on. A tile acts and closes the panel; a switch leaves it open, the
+  change showing in the view behind it.
+- **The Sidebar** (N): Blender's Item, Tool and View tabs are across its top,
+  each with an icon and its name, 44 points tall, the current one lit, and a
+  close button beside them. They were labels turned on their side down a
+  36-point strip; without the strip its fields have the whole width.
+- **Icons**, one per meaning, each checked against the system's SF Symbols
+  catalogue for iOS 17: Rotate and Scale Apple's 3D rotate and scale, Inset an
+  inset square, Bevel a rounded corner, Loop Cut a square split across; the
+  header's Select menu a selection, its Object menu a filled cube (the stacked
+  squares are the Outliner's Collection); Proportional Editing Blender's dot in
+  a circle (the dashed circle is Circle Select's); the Bounding Box Center
+  pivot a centred square (the dashed one is Box Select's); Frame Selected a
+  viewfinder (the target is the 3D cursor's).
+
+Checked in the app with real clicks: More opened as the panel, its Sidebar
+switch opened the Sidebar, Frame Selected framed the Ball and closed the
+panel; the Sidebar's Tool tab and its close button.
+
 ## November 4, evening: a terminal like BenchCode's, and enum menus Blender agrees with
 
 **The Data API's enum menus.** The user, on build 50: Parent Type set to

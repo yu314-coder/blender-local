@@ -361,20 +361,3 @@ struct CollectionPickMenu: View {
         }
     }
 }
-
-/// View ▸ Local View (VIEW3D_MT_view_local): Toggle Local View, Blender's
-/// numpad /, and Remove from Local View.
-struct LocalViewItems: View {
-    var inLocalView: Bool
-    var canToggle: Bool
-    var run: (BlenderCommand) -> Void
-
-    var body: some View {
-        Menu("Local View") {
-            Button("Toggle Local View") { run(LocalViewBpy.toggle) }
-                .disabled(!canToggle)
-            Button("Remove from Local View") { run(LocalViewBpy.removeFrom) }
-                .disabled(!inLocalView)
-        }
-    }
-}
