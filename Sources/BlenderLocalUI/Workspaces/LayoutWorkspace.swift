@@ -42,6 +42,8 @@ struct LayoutWorkspace: View {
     @State private var showsSidebar = false
     /// More's panel (`morePanel`) is open.
     @State private var showsMore = false
+    /// The Transform panel (`transformPanel`) is open.
+    @State private var showsTransform = false
     /// The Outliner and the Properties editor beside the 3D View
     /// (`editorsDock`), open as Blender opens them; kept across launches.
     @AppStorage("bl_editors_shown") private var showsEditors = true
@@ -1531,38 +1533,6 @@ struct LayoutWorkspace: View {
         refreshOrientation()
     }
 
-    /// Blender's Orientation menu, the header's Transform Orientation: the
-    /// seven built-in orientations by their names, the one Blender holds
-    /// ticked. Before round 4 the only picker was ToolHeader's, which was
-    /// never on screen, and every gizmo was Global.
-    private var orientationMenu: some View {
-        let state = scene.orientation
-        return Menu {
-            ForEach(TransformOrientation.allCases) { value in
-                Button { setOrientation(value) } label: {
-                    Label(value.label, systemImage: state.type == value ? "checkmark" : value.icon)
-                }
-            }
-            if state.type == nil, let name = state.customName {
-                Label(name, systemImage: "checkmark")
-            }
-            if let why = state.unavailable {
-                Divider()
-                Text(why)
-            }
-        } label: {
-            if compactHeader {
-                settingLabel(icon: (state.type ?? .global).icon, active: state.type != .global)
-            } else {
-                menuLabel(state.label, icon: (state.type ?? .global).icon, active: state.type != .global)
-            }
-        }
-        .accessibilityLabel("Orientation")
-        .accessibilityValue(state.label)
-        // The simulator's stand-in has Global alone.
-        .disabled(!session.usesRealBlender)
-    }
-
     // MARK: selecting
 
     /// A Select menu row: Blender's operator through the bridge, as one undo
@@ -2182,13 +2152,15 @@ struct LayoutWorkspace: View {
         #endif
     }
 
-    /// X and Delete, as Blender's: in Object Mode X asks first and Delete
-    /// does not; while a mesh is edited both open the Delete menu; with a
-    /// ruler out, or a curve's or a lattice's points, both delete.
-    private func deleteKey(confirm: Bool) {
-        if tool == .measure, scene.activeRuler != nil { deleteSelected(); return }
-        if editing && !editingPoints { openMenu(.delete); return }
-        if confirm && scene.mode == .object { openMenu(.deleteObjects); return }
+    /// X, Delete and the forward-delete key delete, at once: in Object Mode
+    /// the selected objects, in a mesh's Edit Mode what the select mode
+    /// selects — vertices, edges or faces — and with the Measure tool its
+    /// ruler (`deleteSelected`). Blender asks first: X a confirmation in
+    /// Object Mode, and in Edit Mode both its Delete menu. On an iPad that
+    /// was a menu to answer for every delete (the user, November 4: "the del
+    /// button should be just del"); Blender's choices — Dissolve, Only Faces,
+    /// Edge Loops — are on the right-click menu and in Mesh ▸ Delete.
+    private func deleteKey() {
         deleteSelected()
     }
 
@@ -2426,12 +2398,10 @@ struct LayoutWorkspace: View {
     @ViewBuilder private var keyAliases: some View {
         if keysLive {
             ZStack {
-                // Blender's X: a confirmation in Object Mode, the Delete menu
-                // while a mesh is edited; its Delete key the same without the
-                // confirmation.
-                Button("Delete") { deleteKey(confirm: true) }
+                // X and forward-delete delete at once (`deleteKey`).
+                Button("Delete") { deleteKey() }
                     .keyboardShortcut("x", modifiers: [])
-                Button("Delete") { deleteKey(confirm: false) }
+                Button("Delete") { deleteKey() }
                     .keyboardShortcut(.deleteForward, modifiers: [])
             }
             .opacity(0)
@@ -2560,10 +2530,7 @@ struct LayoutWorkspace: View {
                         // proportional editing — in Object and Edit Mode —
                         // then the mirror row in the modes that draw it.
                         if scene.mode == .object || editing {
-                            orientationMenu
-                            pivotMenu
-                            snapMenu
-                            proportionalMenu
+                            transformButton
                         }
                         if showsSymmetry { symmetryControl }
                     }
@@ -2688,6 +2655,15 @@ struct LayoutWorkspace: View {
                         shelfItem(item.label, icon: item.icon, active: tool == item)
                     }
                     .accessibilityLabel(item.label)
+                }
+                // Image to 3D Model, the app's own, where it can be seen
+                // without opening a menu.
+                if scene.mode == .object {
+                    Rectangle().fill(BTheme.outline).frame(width: 36, height: 1).padding(.vertical, 4)
+                    Button { panel = "Image to 3D Model" } label: {
+                        shelfItem("Image to 3D", icon: "photo.artframe", active: panel == "Image to 3D Model")
+                    }
+                    .accessibilityLabel("Image to 3D Model")
                 }
                 if editing, !editingPoints {
                     Rectangle().fill(BTheme.outline).frame(width: 36, height: 1).padding(.vertical, 4)
@@ -3158,6 +3134,10 @@ struct LayoutWorkspace: View {
     /// Adds at the 3D cursor, and leaves the view alone, as Blender does.
     private var addMenu: some View {
         Menu {
+            // First, where it is seen: at the bottom, under every primitive,
+            // curve, light and camera, nobody found it (the user, November 4).
+            Button("Image to 3D Model…", systemImage: "photo.artframe") { panel = "Image to 3D Model" }
+            Divider()
             ForEach(PrimitiveKind.allCases) { kind in
                 Button(kind.displayName, systemImage: kind.icon) {
                     bridge?.perform(LastOperator.add(kind, at: scene.cursor))
@@ -3165,8 +3145,6 @@ struct LayoutWorkspace: View {
             }
             ObjectAddItems(add: { bridge?.add($0, at: scene.cursor, view: camera) },
                            addImage: session.usesRealBlender ? { imageRequest = $0 } : nil)
-            Divider()
-            Button("Image to 3D Model…", systemImage: "photo.artframe") { panel = "Image to 3D Model" }
         } label: { menuLabel("Add", icon: "plus") }
     }
 
@@ -3473,83 +3451,13 @@ struct LayoutWorkspace: View {
 
     // MARK: snapping, the pivot point and proportional editing
     //
-    // All three are Blender's `scene.tool_settings`, mirrored onto
-    // `scene.tools` after every command (TransformTools.swift). Every item
-    // below is one `bridge.run` and reads its state back from the scene, so a
-    // menu shows what Blender holds — including after a script changed it.
+    // In the Transform panel (`transformPanel`). All three are Blender's
+    // `scene.tool_settings`, mirrored onto `scene.tools` after every command
+    // (TransformTools.swift). Every choice there is one `bridge.run` and reads
+    // its state back from the scene, so the panel shows what Blender holds —
+    // including after a script changed it.
     // None carries an undo label: Blender pushes no undo step for a setting
     // either.
-
-    private var pivotMenu: some View {
-        Menu {
-            ForEach(TransformPivot.allCases) { value in
-                Button {
-                    bridge?.run(ToolsBpy.pivot(value))
-                } label: {
-                    Label(value.label,
-                          systemImage: scene.tools.pivot == value ? "checkmark" : value.icon)
-                }
-            }
-        } label: {
-            // Lit when the pivot is not Blender's default, which is the one
-            // thing the closed control can usefully say.
-            // An icon, as Blender's header draws it.
-            settingLabel(icon: scene.tools.pivot.icon, active: scene.tools.pivot != .medianPoint)
-        }
-        .accessibilityLabel("Pivot Point")
-    }
-
-    private var snapMenu: some View {
-        Menu {
-            Toggle("Snap", isOn: Binding(get: { scene.tools.useSnap },
-                                         set: { bridge?.run(ToolsBpy.useSnap($0)) }))
-            Section("Snap Target") {
-                ForEach(SnapElement.allCases) { element in
-                    let on = scene.tools.elements.contains(element)
-                    Button {
-                        var next = scene.tools.elements
-                        if next.contains(element) { next.remove(element) } else { next.insert(element) }
-                        bridge?.run(ToolsBpy.elements(next))
-                    } label: {
-                        Label(element.label, systemImage: on ? "checkmark" : "")
-                    }
-                    // Blender keeps at least one: assigning set() leaves the
-                    // value as it was (measured in 5.2.1).
-                    .disabled(on && scene.tools.elements.count == 1)
-                }
-            }
-            Section("Snap Target for Individual Elements") {
-                ForEach(SnapElementIndividual.allCases) { element in
-                    Button {
-                        var next = scene.tools.individual
-                        if next.contains(element) { next.remove(element) } else { next.insert(element) }
-                        bridge?.run(ToolsBpy.individual(next))
-                    } label: {
-                        Label(element.label,
-                              systemImage: scene.tools.individual.contains(element) ? "checkmark" : "")
-                    }
-                }
-            }
-            Section("Snap Base") {
-                ForEach(SnapTarget.allCases) { value in
-                    Button {
-                        bridge?.run(ToolsBpy.target(value))
-                    } label: {
-                        Label(value.label,
-                              systemImage: scene.tools.target == value ? "checkmark" : "")
-                    }
-                }
-            }
-        } label: {
-            // Lit when a drag will snap: the magnet on and an element a drag
-            // honours chosen (`snapsDrag`). Lit on the magnet alone, it said
-            // snapping was on with only Volume chosen, which no drag uses.
-            // Blender's magnet: SF Symbols has none (a "magnet" image drew
-            // nothing at all), so the snapping point on a grid stands in.
-            settingLabel(icon: "dot.squareshape.split.2x2", active: scene.tools.snapsDrag)
-        }
-        .accessibilityLabel("Snap")
-    }
 
     // MARK: mesh symmetry
     //
@@ -3650,48 +3558,6 @@ struct LayoutWorkspace: View {
         .overlay {
             RoundedRectangle(cornerRadius: 10).strokeBorder(BTheme.outline, lineWidth: BTheme.Metric.hairline)
         }
-    }
-
-    private var proportionalMenu: some View {
-        let on = scene.tools.isProportional(editing: editing)
-        return Menu {
-            // `use_proportional_edit` while editing, and
-            // `use_proportional_edit_objects` in Object Mode, by their names.
-            Toggle(editing ? "Proportional Editing" : "Proportional Editing Objects",
-                   isOn: Binding(get: { on },
-                                 set: { bridge?.run(ToolsBpy.proportional($0, editing: editing)) }))
-            Menu("Proportional Editing Falloff") {
-                ForEach(MeshEditor.ProportionalFalloff.allCases) { value in
-                    Button {
-                        bridge?.run(ToolsBpy.falloff(value))
-                    } label: {
-                        Label(value.label,
-                              systemImage: scene.tools.falloff == value ? "checkmark" : "")
-                    }
-                }
-            }
-            // A menu on iOS holds controls, not fields, so the header offers
-            // the sizes a drag actually wants; Tool Settings has the field
-            // for an exact one.
-            Menu("Proportional Size") {
-                ForEach(Self.proportionalSizes, id: \.self) { value in
-                    Button {
-                        bridge?.run(ToolsBpy.size(value))
-                    } label: {
-                        Label(String(format: "%g m", value),
-                              systemImage: abs(scene.tools.size - value) < 1e-4 ? "checkmark" : "")
-                    }
-                }
-            }
-            Toggle("Connected Only",
-                   isOn: Binding(get: { scene.tools.connected },
-                                 set: { bridge?.run(ToolsBpy.connected($0)) }))
-        } label: {
-            // Blender's proportional-editing icon, a dot in a circle; the
-            // dashed circle is Circle Select's.
-            settingLabel(icon: "smallcircle.filled.circle", active: on)
-        }
-        .accessibilityLabel("Proportional Editing")
     }
 
     /// The sizes Blender's own slider lands on most often. The field in
@@ -3844,6 +3710,169 @@ struct LayoutWorkspace: View {
         .frame(minWidth: 340, idealWidth: 360)
         .background(BTheme.menuBack)
         .preferredColorScheme(.dark)
+    }
+
+    /// Blender's header settings at its right end — Transform Orientations,
+    /// Pivot Point, Snapping, Proportional Editing — as one button that opens
+    /// them in a panel (`transformPanel`). They were four buttons of their
+    /// own, each a menu of small rows (the user, November 4: too many
+    /// buttons). It shows the orientation by name, as Blender's does, and
+    /// beside it the pivot, the magnet and proportional editing when they are
+    /// not at their defaults, lit.
+    private var transformButton: some View {
+        let state = scene.orientation
+        let snapping = scene.tools.snapsDrag
+        let proportional = scene.tools.isProportional(editing: editing)
+        let pivoted = scene.tools.pivot != .medianPoint
+        return Button { showsTransform = true } label: {
+            HStack(spacing: 6) {
+                Image(systemName: (state.type ?? .global).icon)
+                if !compactHeader { Text(state.label) }
+                if pivoted { Image(systemName: scene.tools.pivot.icon).foregroundStyle(BTheme.active) }
+                if snapping { Image(systemName: "dot.squareshape.split.2x2").foregroundStyle(BTheme.active) }
+                if proportional { Image(systemName: "smallcircle.filled.circle").foregroundStyle(BTheme.active) }
+                Image(systemName: "chevron.down")
+                    .font(.system(size: 8, weight: .semibold))
+                    .opacity(0.55)
+            }
+            .foregroundStyle(BTheme.text)
+            .padding(.horizontal, compactHeader ? 8 : 10)
+            .frame(minHeight: 44)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("Transform Orientations, Pivot Point, Snapping, Proportional Editing")
+        .accessibilityValue(state.label)
+        .popover(isPresented: $showsTransform, arrowEdge: .top) {
+            transformPanel
+                .presentationDetents([.medium, .large])
+        }
+    }
+
+    /// The four settings Blender's header holds at its right end, each as
+    /// Blender's popover has it, in the More panel's tiles and switches: a
+    /// choice is a tile lit when it is the current one, and the panel stays
+    /// open, since what changes is in the view behind it.
+    private var transformPanel: some View {
+        let state = scene.orientation
+        let tools = scene.tools
+        let real = session.usesRealBlender
+        let threeColumns = Array(repeating: GridItem(.flexible(), spacing: 8), count: 3)
+        return ScrollView {
+            VStack(alignment: .leading, spacing: 18) {
+                moreSection("Transform Orientations") {
+                    LazyVGrid(columns: threeColumns, spacing: 8) {
+                        ForEach(TransformOrientation.allCases) { value in
+                            moreTile(value.label, icon: value.icon, active: state.type == value,
+                                     enabled: real, closes: false) { setOrientation(value) }
+                        }
+                    }
+                    if state.type == nil, let name = state.customName {
+                        transformNote("Now: \(name)")
+                    }
+                    if let why = state.unavailable { transformNote(why) }
+                }
+                moreSection("Pivot Point") {
+                    LazyVGrid(columns: threeColumns, spacing: 8) {
+                        ForEach(TransformPivot.allCases) { value in
+                            moreTile(value.label, icon: value.icon, active: tools.pivot == value,
+                                     closes: false) { bridge?.run(ToolsBpy.pivot(value)) }
+                        }
+                    }
+                }
+                moreSection("Snapping") {
+                    moreSwitch("Snap", icon: "dot.squareshape.split.2x2",
+                               isOn: Binding(get: { scene.tools.useSnap },
+                                             set: { bridge?.run(ToolsBpy.useSnap($0)) }))
+                    transformNote("Snap Target")
+                    LazyVGrid(columns: threeColumns, spacing: 8) {
+                        ForEach(SnapElement.allCases) { element in
+                            let on = tools.elements.contains(element)
+                            moreChip(element.label, active: on, enabled: !(on && tools.elements.count == 1)) {
+                                var next = scene.tools.elements
+                                if next.contains(element) { next.remove(element) } else { next.insert(element) }
+                                bridge?.run(ToolsBpy.elements(next))
+                            }
+                        }
+                    }
+                    transformNote("Snap Target for Individual Elements")
+                    HStack(spacing: 8) {
+                        ForEach(SnapElementIndividual.allCases) { element in
+                            moreChip(element.label, active: tools.individual.contains(element)) {
+                                var next = scene.tools.individual
+                                if next.contains(element) { next.remove(element) } else { next.insert(element) }
+                                bridge?.run(ToolsBpy.individual(next))
+                            }
+                        }
+                    }
+                    transformNote("Snap Base")
+                    HStack(spacing: 8) {
+                        ForEach(SnapTarget.allCases) { value in
+                            moreChip(value.label, active: tools.target == value) {
+                                bridge?.run(ToolsBpy.target(value))
+                            }
+                        }
+                    }
+                }
+                moreSection("Proportional Editing") {
+                    moreSwitch(editing ? "Proportional Editing" : "Proportional Editing Objects",
+                               icon: "smallcircle.filled.circle",
+                               isOn: Binding(get: { scene.tools.isProportional(editing: editing) },
+                                             set: { bridge?.run(ToolsBpy.proportional($0, editing: editing)) }))
+                    transformNote("Proportional Editing Falloff")
+                    LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 8), count: 4), spacing: 8) {
+                        ForEach(MeshEditor.ProportionalFalloff.allCases) { value in
+                            moreChip(value.label, active: tools.falloff == value) {
+                                bridge?.run(ToolsBpy.falloff(value))
+                            }
+                        }
+                    }
+                    transformNote("Proportional Size")
+                    LazyVGrid(columns: threeColumns, spacing: 8) {
+                        ForEach(Self.proportionalSizes, id: \.self) { value in
+                            moreChip(String(format: "%g m", value), active: abs(tools.size - value) < 1e-4) {
+                                bridge?.run(ToolsBpy.size(value))
+                            }
+                        }
+                    }
+                    moreSwitch("Connected Only", icon: "point.3.connected.trianglepath.dotted",
+                               isOn: Binding(get: { scene.tools.connected },
+                                             set: { bridge?.run(ToolsBpy.connected($0)) }))
+                }
+            }
+            .padding(16)
+        }
+        .frame(minWidth: 340, idealWidth: 380)
+        .background(BTheme.menuBack)
+        .preferredColorScheme(.dark)
+    }
+
+    private func transformNote(_ text: String) -> some View {
+        Text(text)
+            .font(BTheme.Font.ui(12))
+            .foregroundStyle(BTheme.textDim)
+            .fixedSize(horizontal: false, vertical: true)
+    }
+
+    /// A choice without an icon, a finger's height: one of several the
+    /// Transform panel lists, lit when it is chosen.
+    private func moreChip(_ title: String, active: Bool, enabled: Bool = true,
+                          action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Text(title)
+                .font(BTheme.Font.ui(13))
+                .lineLimit(1)
+                .minimumScaleFactor(0.75)
+                .foregroundStyle(active ? Color.white : BTheme.text)
+                .padding(.horizontal, 6)
+                .frame(maxWidth: .infinity, minHeight: 40)
+                .background(active ? BTheme.select : BTheme.widget.opacity(0.35),
+                            in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+                .contentShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+        }
+        .buttonStyle(.plain)
+        .disabled(!enabled)
+        .opacity(enabled ? 1 : 0.4)
     }
 
     /// One of More's sections: a dim heading over its rows.

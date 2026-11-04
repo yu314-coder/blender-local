@@ -11,10 +11,72 @@ import Foundation
 ///
 /// `sync`, not `async`: half of these read the scene back to Python and have to
 /// return an answer. It cannot deadlock as long as the main thread never waits
-/// on the Python thread, which is why a script's run is fire-and-forget and why
-/// the interface refuses a second one while it is in flight.
+/// on the Python thread without serving these: a script's run is
+/// fire-and-forget, and the interface refuses a second one while it is in
+/// flight. The one place the main thread does wait, an operation run with the
+/// window kept turning (`BpySession.evaluateKeepingResponsive`), serves them
+/// itself through `MainWait` — not through the main queue, which does not run
+/// a block while the main thread is inside another, as it is in a main-actor
+/// task.
 @inline(__always)
 func onMain<T>(_ body: () -> T) -> T {
     if Thread.isMainThread { return body() }
+    if let waiter = MainWait.current { return waiter.run(body) }
     return DispatchQueue.main.sync(execute: body)
+}
+
+/// The main thread waiting for the script thread, and serving its `onMain`
+/// calls meanwhile: each is handed over here and run by the waiting loop
+/// (`serve`), which a semaphore wakes the moment one arrives.
+final class MainWait: @unchecked Sendable {
+    private static let lock = NSLock()
+    nonisolated(unsafe) private static var active: MainWait?
+    static var current: MainWait? {
+        lock.lock(); defer { lock.unlock() }
+        return active
+    }
+
+    /// Signalled for each call handed over, and once when the work is done.
+    let wake = DispatchSemaphore(value: 0)
+    private let queueLock = NSLock()
+    private var queue: [() -> Void] = []
+
+    /// Begins a wait; nothing is handed over before this.
+    static func begin() -> MainWait {
+        let waiter = MainWait()
+        lock.lock(); active = waiter; lock.unlock()
+        return waiter
+    }
+
+    /// Ends it, once the work is done and nothing more can be handed over.
+    func end() {
+        serve()
+        Self.lock.lock(); if Self.active === self { Self.active = nil }; Self.lock.unlock()
+    }
+
+    /// From the script thread: runs `body` on the main thread, through the
+    /// waiting loop, and returns its answer.
+    func run<T>(_ body: () -> T) -> T {
+        withoutActuallyEscaping(body) { body in
+            var result: T?
+            let done = DispatchSemaphore(value: 0)
+            queueLock.lock()
+            queue.append { result = body(); done.signal() }
+            queueLock.unlock()
+            wake.signal()
+            done.wait()
+            return result!
+        }
+    }
+
+    /// On the main thread: runs what has been handed over.
+    func serve() {
+        while true {
+            queueLock.lock()
+            let next = queue.isEmpty ? nil : queue.removeFirst()
+            queueLock.unlock()
+            guard let next else { return }
+            next()
+        }
+    }
 }

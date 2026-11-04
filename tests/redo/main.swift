@@ -454,8 +454,8 @@ check("slide vertices clamps at 0, where Blender's Clamp stops it, and slides al
 // tests/names holds every row to Blender's menus as 5.2.1 draws them).
 check("the groups are Blender's menus: Select Loops, its Mesh menu's, then Vertex, Edge and Face",
       LastOperator.Mesh.Group.allCases.map(\.rawValue)
-      == ["Select Loops", "Transform", "Extrude", "Merge", "Split", "Mesh", "Normals", "Average", "Clean Up",
-          "Delete", "Vertex", "Edge", "Face"],
+      == ["Select Loops", "Transform", "Extrude", "Merge", "Split", "Mesh", "Normals", "Shading", "Average",
+          "Clean Up", "Delete", "Vertex", "Edge", "Face"],
       "\(LastOperator.Mesh.Group.allCases.map(\.rawValue))")
 check("and the Edge group lists Blender's Edge menu's rows in its order",
       LastOperator.Mesh.Group.edge.rows.map(\.menuLabel)

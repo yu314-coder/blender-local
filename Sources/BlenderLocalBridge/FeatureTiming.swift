@@ -93,7 +93,18 @@ public final class MainThreadWatchdog: @unchecked Sendable {
             if sent == nil {
                 let posted = CACurrentMediaTime()
                 sent = posted
-                DispatchQueue.main.async { [weak self] in self?.answered(posted) }
+                // Asked of the main run loop, where touches arrive and frames
+                // are committed, rather than of the main queue: the queue
+                // runs no block while the main thread is inside another — a
+                // main-actor task waiting for Blender with the window kept
+                // turning (`BpySession.evaluateKeepingResponsive`) — though
+                // the run loop answers every turn. A main thread held by one
+                // long call answers neither, as before.
+                let main = CFRunLoopGetMain()
+                CFRunLoopPerformBlock(main, CFRunLoopMode.commonModes.rawValue) { [weak self] in
+                    self?.answered(posted)
+                }
+                CFRunLoopWakeUp(main)
             }
             let sampling = open
             lock.unlock()

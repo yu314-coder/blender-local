@@ -483,11 +483,16 @@ enum ViewportMenu: String, CaseIterable {
                  row(.unsubdivide), row(.splitSelection, "Split"), separate, row(.dissolveFaces),
                  row(.deleteFaces, "Delete Faces")]
 
+        // Blender's Delete menu (VIEW3D_MT_edit_mesh_delete) whole, under the
+        // column's own Delete: X and Delete delete at once now, by the select
+        // mode, so the right-click menu is where its other choices are — the
+        // dissolves, Only Faces, Edge Loops (the user, November 4).
+        let deleteMenu = PopupItem.submenu("Delete", enabled: !off) { meshRows(.delete, v) }
         let columns: [[PopupItem]]
         switch v.selectMode {
-        case .vertex: columns = [vertex]
-        case .edge:   columns = [edge]
-        case .face:   columns = [face]
+        case .vertex: columns = [vertex + [deleteMenu]]
+        case .edge:   columns = [edge + [deleteMenu]]
+        case .face:   columns = [face + [deleteMenu]]
         }
         return columns.count == 1 ? columns[0] : [.columns(columns)]
     }

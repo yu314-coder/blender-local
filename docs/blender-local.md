@@ -1,5 +1,58 @@
 # Blender Local — the app
 
+## November 4, late: one Transform button, Delete that deletes, Image to 3D in sight, no freezes
+
+The user, on build 52, with a Test All Features report from the iPad (1 Freeze,
+2 Slow): too many buttons on the header's right side; Delete should just
+delete, with the choices on a right-click only; Image to 3D Model could not be
+found; and the Blender Local folder in Files should show the Image to 3D model.
+
+- **One Transform button** (`transformButton`) in place of the header's four —
+  Transform Orientations, Pivot Point, Snapping, Proportional Editing. It shows
+  the orientation by name, as Blender's header does, and beside it the pivot,
+  the magnet and proportional editing, lit, when they are not at their
+  defaults. It opens a panel (`transformPanel`) in More's style: tiles for the
+  seven orientations and five pivots, Snap as a switch with its targets and
+  base as chips, Proportional Editing as a switch with its falloffs, sizes and
+  Connected Only. Each choice is one `bridge.run`, read back from Blender, and
+  the panel stays open.
+- **Delete deletes.** X, Delete and the forward-delete key delete at once: the
+  selected objects, or in a mesh's Edit Mode what the select mode selects —
+  vertices, edges or faces. Blender asks first (X's confirmation in Object
+  Mode, its Delete menu in Edit Mode). The menu is on the right-click now, as
+  a Delete submenu at the end of the Edit Mode context menu, and in Mesh ▸
+  Delete.
+- **Image to 3D Model** is the first row of Add, and a button of its own on the
+  toolbar in Object Mode; it was the last row of Add, under every primitive,
+  curve, light and camera.
+- **The model in Files.** TripoSG's weights are in Documents ▸ Models ▸ TripoSG,
+  where the Files app shows them in the Blender Local folder, out of iCloud
+  backups (2.6 GB that downloads again); a download from an earlier build is
+  moved there on launch, a rename on the same volume.
+- **No freezes.** Re-running Add UV Sphere at 288 × 224 from the redo panel froze
+  the iPad for 2.8 s: Blender's own `primitive_uv_sphere_add` takes 3.7 s at that
+  size in desktop 5.2.1, so the time cannot be taken out of it, only off the
+  main thread. A redo re-run (`readjust`) now runs on the script thread while
+  the main thread waits turning (`BpySession.evaluateKeepingResponsive`): the
+  window draws and takes touches, the top bar says "Add UV Sphere" with its
+  clock, and every other action waits, as during a script; the redo panel holds
+  its newest value until the run is done. The script thread's calls to the main
+  thread go through `MainWait`, which the waiting loop serves, since the main
+  queue runs no block while the main thread is inside another — as it is in a
+  main-actor task. glTF and FBX import (Python add-ons) run the same way;
+  measured in the app's console, the C++ importers (OBJ, STL, PLY, USD,
+  Alembic) fail their poll off the main thread, so they and every exporter
+  (which polls for the window) stay on it, kept turning by the script
+  heartbeat (`evaluateWithHeartbeat`, `captureKeepingResponsive`). On this Mac,
+  from Freeze 4.6 s, Slow 0.39 s and Slow 0.58 s to Smooth: the longest stalls
+  64, 55 and 33 ms.
+- **Test All Features asks the run loop**, not the main queue, whether the main
+  thread is answering (`MainThreadWatchdog`): the run loop is where touches
+  arrive and frames are committed, and it answers every turn of a wait kept
+  turning, while the main queue does not; a call that holds the main thread
+  answers neither, as before. A call that kept the window turning is held to
+  the stalls the watchdog saw rather than to its length.
+
 ## November 4, night: More as a panel, the Sidebar's tabs across the top, an icon for each button
 
 The user: change the icon for each button, and the sidebar the three dots
@@ -9050,7 +9103,7 @@ from the shipped binary before every release.
 | `-caret <offset>` | parks the caret, for the bracket boxes and the suggestion list |
 | `-fold <line>` | folds a region |
 | `-mirror` | turns the mirroring pass on against the shim |
-| `-image3d <path>` | Add ▸ Image to 3D Model on a picture, through the sheet's own prepare and create: Full 3D, or `-image3d-mode relief`; `-image3d-whole` skips the cut-out, `-image3d-detail low\|medium\|high`. The path must be inside the app's container (it is sandboxed); Full 3D needs the converted weights in `Library/Application Support/Models/TripoSG/` there (`cp -Rc` a converted folder; a clone costs no space). Full 3D uses seed 42 here |
+| `-image3d <path>` | Add ▸ Image to 3D Model on a picture, through the sheet's own prepare and create: Full 3D, or `-image3d-mode relief`; `-image3d-whole` skips the cut-out, `-image3d-detail low\|medium\|high`. The path must be inside the app's container (it is sandboxed); Full 3D needs the converted weights in `Documents/Models/TripoSG/` there (`Library/Application Support/Models/TripoSG/` before build 53, moved on launch) (`cp -Rc` a converted folder; a clone costs no space). Full 3D uses seed 42 here |
 | `-panel <name>` | opens a More-menu panel at launch: `Outliner`, `Properties`, `Tool Settings`, `Render`, `Image to 3D Model` (before round 4: Scene, Object Details, Transform Tools) |
 | `-properties-tab <tab>` | opens the Properties editor on a tab, e.g. `-panel Properties -properties-tab modifiers` |
 | `-modifier-dump` / `-modifier-steps <steps>` | prints the active object's modifier rows as the panel holds them, then runs comma-separated steps through what the buttons send: `+kind` (Add Modifier), `Name:viewport\|render\|up\|down\|apply\|remove`, a Multires `Name:subdivide\|unsubdivide\|deleteHigher\|applyBase`, or `Name:key=value;key=value` (an edit by Blender's property names), a declared row's button (`Name:bind_surface`, `bind_mesh`, `generate`, `hook_assign`, …), `+TYPE` (any Add Modifier row on the object, by Blender's type), `@select=Name`, plus `@mode=<MODE>` (F3's Run on `object.mode_set`) and `@hide=1\|0` (the Object tab's Show in Viewports); prints the banner on a failure; waits for `-eval64` to finish |

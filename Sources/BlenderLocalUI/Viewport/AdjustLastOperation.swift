@@ -28,6 +28,9 @@ struct AdjustLastOperation: View {
     @State private var trailing: Task<Void, Never>?
     /// A re-run has happened that its undo step does not record yet.
     @State private var unrecorded = false
+    /// A value waiting for a re-run still in Blender should write its undo
+    /// step when it runs (`rerun`).
+    @State private var waitingRecord = false
 
     /// Re-runs a second while a field is being dragged, at most.
     ///
@@ -291,6 +294,25 @@ struct AdjustLastOperation: View {
     /// this time so the next change removes the right one.
     private func rerun(record: Bool) {
         guard let op = draft, let bridge else { return }
+        // The last re-run is still working in Blender (a big one runs with
+        // the window kept turning, `BpySession.evaluateKeepingResponsive`):
+        // this value waits for it, and the newest value is the one that runs.
+        if bridge.isBusy {
+            waitingRecord = waitingRecord || record
+            if trailing == nil {
+                trailing = Task { @MainActor in
+                    while bridge.isBusy {
+                        try? await Task.sleep(nanoseconds: 50_000_000)
+                        guard !Task.isCancelled else { return }
+                    }
+                    trailing = nil
+                    let record = waitingRecord
+                    waitingRecord = false
+                    rerun(record: record)
+                }
+            }
+            return
+        }
         lastRun = Date()
         // Show what is in the scene, not what was asked for. If the re-run did
         // not happen — the object was deleted from the Outliner, the backup is

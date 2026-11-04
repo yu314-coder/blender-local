@@ -503,15 +503,13 @@ struct BlenderCommands: Commands {
             // Object menu has them.
             ObjectMenuMoreItems(state: v.objectRelations, collections: v.collections,
                                 perform: v.perform, run: v.run, askNewCollection: v.askNewCollection)
-            // With the Measure tool and an active ruler, Delete is Ruler
-            // Remove (`deleteSelected`), which needs no active object. While
-            // a mesh is edited it is Blender's Delete menu, as X is
-            // (VIEW3D_MT_edit_mesh_delete: Vertices, Edges, Faces, the
-            // dissolves).
-            Button("Delete") {
-                if v.editing && v.editingMesh && v.rulerRemove == nil { v.openMenu(.delete) }
-                else { v.deleteSelected() }
-            }
+            // Deletes at once, as X does: the selected objects, a mesh's
+            // selected vertices, edges or faces by the select mode, or with
+            // the Measure tool and an active ruler, the ruler (Ruler Remove,
+            // which needs no active object). Blender's Delete menu
+            // (VIEW3D_MT_edit_mesh_delete) is on the right-click menu and in
+            // Mesh ▸ Delete.
+            Button("Delete") { v.deleteSelected() }
                 .keyboardShortcut(.delete, modifiers: [])
                 .disabled(!(v.hasActiveObject || v.rulerRemove != nil) || v.isRunning)
             Divider()

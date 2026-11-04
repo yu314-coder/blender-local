@@ -372,6 +372,15 @@ public extension BpySession {
     }
 
     /// The line an importer is run by.
+    /// Whether an importer can run on the script thread, with the window kept
+    /// turning: Blender's Python add-ons (`import_scene.gltf`, `.fbx`) can;
+    /// its C++ ones (`wm.obj_import`, `.stl`, `.ply`, `.usd`, `.alembic`)
+    /// fail their poll off the main thread, where Blender has no window to
+    /// give them — measured in the app's console on November 4.
+    public static func importerRunsOffMainThread(_ op: String) -> Bool {
+        op.hasPrefix("import_scene.")
+    }
+
     static func importPython(_ op: String, from path: String) -> String {
         "bpy.ops.\(op)(filepath=\(Bpy.quote(path)))"
     }
@@ -394,7 +403,10 @@ public extension BpySession {
                      name: String = "Export-" + UUID().uuidString,
                      in folder: URL = SceneDocument.documentsURL) -> URL? {
         let url = folder.appendingPathComponent(name + "." + ext)
-        let result = capture(Self.exportPython(op, to: url.path))
+        // An exporter is Blender's seconds on a big scene, on the main thread
+        // (it polls for the window): kept turning, and the top bar says so.
+        let label = Self.exporters.first { $0.op == op }.map { "Exporting " + $0.label } ?? "Exporting"
+        let result = captureKeepingResponsive(Self.exportPython(op, to: url.path), label: label)
         guard result?.contains("FINISHED") == true,
               let size = try? FileManager.default
                   .attributesOfItem(atPath: url.path)[.size] as? Int, size > 0

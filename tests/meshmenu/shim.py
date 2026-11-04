@@ -74,7 +74,10 @@ for b in open(sys.argv[1]).read().split("#--"):
         blocks[head[4:]] = body
 
 # What the stand-in can do, as Blender does it.
-DOES = {"row.deleteVertices PERFORM", "row.deleteEdges PERFORM", "row.deleteFaces PERFORM"}
+DOES = {"row.deleteVertices PERFORM", "row.deleteEdges PERFORM", "row.deleteFaces PERFORM",
+        # Mesh ▸ Shading: the whole mesh drawn smooth or flat, as the
+        # simulator's mesh has no per-face flag to set (SceneOperators.swift).
+        "row.shadeSmoothFaces PERFORM", "row.shadeFlatFaces PERFORM"}
 # Recalculate Outside: FINISHED with nothing to turn, as Blender on a mesh
 # whose faces already face out (the stand-in builds them so).
 NOTHING = {"row.recalculateNormals PERFORM"}

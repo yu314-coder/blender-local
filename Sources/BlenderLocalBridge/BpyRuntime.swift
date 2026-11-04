@@ -394,11 +394,21 @@ public final class BpySession {
     /// which, because only a script's outcome belongs to the editor. A console
     /// statement that raises must not put an error card beside a script it has
     /// nothing to do with.
-    public enum RunKind: Sendable { case script, console }
+    /// What is running: a script from the editor, a console line, or an
+    /// operation from the interface long enough to be run where the window
+    /// can keep turning (`evaluateKeepingResponsive`, `captureKeepingResponsive`).
+    public enum RunKind: Sendable { case script, console, operation }
     /// The kind of the run in flight; nil when nothing runs.
     public private(set) var runKind: RunKind?
     /// The kind of the run that finished last.
     public private(set) var lastRunKind: RunKind?
+    /// What the operation in flight is doing, for the top bar: "Add UV
+    /// Sphere", "Exporting glTF 2.0". Nil when none runs.
+    public private(set) var workLabel: String?
+    /// How many operations have run with the main thread kept turning, so a
+    /// caller can tell whether its call was one (Test All Features measures
+    /// such a call by the main thread's real stalls, not by its length).
+    @ObservationIgnored public private(set) var responsiveRuns = 0
     /// A console run's output as it is written, for the terminal to draw.
     /// Called on the main thread.
     @ObservationIgnored public var onConsoleOutput: ((String) -> Void)?
@@ -1340,6 +1350,119 @@ public final class BpySession {
         console += output.filter { $0.kind != .input }
         if usesRealBlender { backendRevision &+= 1 }
         return output
+    }
+
+    /// `evaluate`, with Blender working on the script queue while the main
+    /// thread keeps turning: the window draws, the top bar says what is
+    /// running and for how long, and every other action is refused until it
+    /// ends, as during a script. For an operator Blender itself takes seconds
+    /// over — measured in desktop 5.2.1, a 288 × 224 UV Sphere is 3.7 s of
+    /// `primitive_uv_sphere_add` alone, and through the redo panel it froze
+    /// the iPad for 2.8 s (Test All Features, the user, November 4). The
+    /// caller still gets the output back when it returns, as from `evaluate`.
+    ///
+    /// On the main thread as `evaluate` is when the source needs it
+    /// (`ScriptThread.needsMainThread`) or scripts are kept there.
+    public func evaluateKeepingResponsive(_ source: String, scene: BKScene, label: String) -> [BpyLine] {
+        guard Thread.isMainThread, Self.runsOffMainThread, !isRunning,
+              !ScriptThread.needsMainThread(source) else {
+            return evaluate(source, scene: scene)
+        }
+        startGPUOnMainThread(before: source, scene: scene)
+        beginWork(label)
+        // The script thread's `onMain` calls come through `MainWait`, which
+        // this loop serves as they arrive; between them the window gets a
+        // turn about sixty times a second. Nothing here goes through the main
+        // queue, which does not run a block while this one is inside another.
+        let waiter = MainWait.begin()
+        let finished = ConsoleStream.Atomic()
+        let box = OutputBox()
+        let runtime = self.runtime
+        Self.scriptQueue.async {
+            box.lines = runtime.evaluate(source, scene: scene)
+            finished.value = true
+            waiter.wake.signal()
+        }
+        while !finished.value {
+            _ = waiter.wake.wait(timeout: .now() + 0.016)
+            waiter.serve()
+            ConsoleStream.pump()
+            tickWork()
+        }
+        waiter.end()
+        endWork()
+        let lines = box.lines
+        lastMirrorDuration = runtime.lastSyncDuration
+        console += lines.filter { $0.kind != .input }
+        if usesRealBlender { backendRevision &+= 1 }
+        return lines
+    }
+
+    /// `capture`, for a long one that has to stay on the main thread — an
+    /// exporter or an importer, whose operators poll for the window Blender
+    /// gives out there only. Blender's glTF add-on is Python, so the
+    /// heartbeat that keeps a script's window turning (`ConsoleStream`) keeps
+    /// this one's too, and the top bar says what is running meanwhile.
+    public func captureKeepingResponsive(_ source: String, label: String) -> String? {
+        guard !isRunning, let boundScene else { return nil }
+        beginWork(label)
+        ConsoleStream.tick = { [weak self] in self?.tickWork() }
+        // The label on the screen before Blender starts.
+        ConsoleStream.pump()
+        let heartbeat = ConsoleStream.startHeartbeat()
+        let lines = runtime.query(source, scene: boundScene)
+        heartbeat.cancel()
+        ConsoleStream.tick = nil
+        endWork()
+        if lines.contains(where: { $0.kind == .error }) {
+            console += lines
+            return nil
+        }
+        return lines.map(\.text).joined(separator: "\n").trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    /// `evaluate` on the main thread, kept turning by the heartbeat as a
+    /// script is, with the top bar saying what is running: for an importer,
+    /// which has to stay on the main thread and is a Python add-on.
+    public func evaluateWithHeartbeat(_ source: String, scene: BKScene, label: String) -> [BpyLine] {
+        guard Thread.isMainThread, !isRunning else { return evaluate(source, scene: scene) }
+        beginWork(label)
+        ConsoleStream.tick = { [weak self] in self?.tickWork() }
+        ConsoleStream.pump()
+        let heartbeat = ConsoleStream.startHeartbeat()
+        let lines = evaluate(source, scene: scene)
+        heartbeat.cancel()
+        ConsoleStream.tick = nil
+        endWork()
+        return lines
+    }
+
+    /// The script thread's answer, handed to the waiting main thread; the
+    /// atomic flag set after it is what orders the two.
+    private final class OutputBox: @unchecked Sendable {
+        var lines: [BpyLine] = []
+    }
+
+    private func beginWork(_ label: String) {
+        runKind = .operation
+        workLabel = label
+        runElapsed = 0
+        ConsoleStream.runStarted = Date()
+        isRunning = true
+    }
+
+    private func tickWork() {
+        guard let started = ConsoleStream.runStarted else { return }
+        let now = (Date().timeIntervalSince(started) * 10).rounded(.down) / 10
+        if now != runElapsed { runElapsed = now }
+    }
+
+    private func endWork() {
+        ConsoleStream.runStarted = nil
+        isRunning = false
+        workLabel = nil
+        runElapsed = 0
+        responsiveRuns += 1
     }
 
     /// Records an operator that actually ran, and surfaces any error.

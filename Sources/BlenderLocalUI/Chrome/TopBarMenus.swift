@@ -160,7 +160,9 @@ struct FileMenu: View {
         let before = scene.objects.count
         // The step is named after the importer, as Blender's undo history
         // names an import (`Import Wavefront OBJ`, ...).
-        let outcome = bridge.run(BpySession.importPython(format.op, from: url.path), undo: format.undo)
+        let outcome = bridge.run(BpySession.importPython(format.op, from: url.path), undo: format.undo,
+                                 working: "Importing " + format.label,
+                                 inBackground: BpySession.importerRunsOffMainThread(format.op))
         if outcome.succeeded, scene.objects.count > before {
             session.note("Imported \(url.lastPathComponent).")
         } else {

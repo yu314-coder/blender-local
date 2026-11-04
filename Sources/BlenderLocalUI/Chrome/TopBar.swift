@@ -265,7 +265,11 @@ struct RunStatusPill: View {
             if session.isRunning {
                 ProgressView().controlSize(.small).tint(BTheme.active)
                     .scaleEffect(0.7).frame(width: 12, height: 12)
-                Text("Running").foregroundStyle(BTheme.text)
+                // An operation names itself ("Add UV Sphere", "Exporting
+                // glTF 2.0"); a script or a console line is "Running".
+                Text(session.runKind == .operation ? (session.workLabel ?? "Working") : "Running")
+                    .foregroundStyle(BTheme.text)
+                    .lineLimit(1)
                 Text(String(format: "%.1f s", session.runElapsed))
                     .font(BTheme.Font.mono(11)).foregroundStyle(BTheme.textDim)
             } else if let run = session.lastRun {

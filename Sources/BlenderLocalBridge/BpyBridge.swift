@@ -162,8 +162,13 @@ public final class BpyBridge {
     /// `setup` runs first, in the same evaluation, and is not logged: the
     /// scaffolding an operator needs rather than the operator itself.
     @discardableResult
+    /// `working` names a long one — an importer — which then runs with the
+    /// window kept turning and the top bar saying so: on the script thread
+    /// when `inBackground` (`BpySession.evaluateKeepingResponsive`), else on
+    /// the main thread with the heartbeat (`evaluateWithHeartbeat`).
     public func run(_ python: String, undo label: String? = nil,
-                    quiet: Bool = false, setup: String? = nil) -> Outcome {
+                    quiet: Bool = false, setup: String? = nil, working: String? = nil,
+                    inBackground: Bool = false) -> Outcome {
         // In the mode it needs, and back to the one it found.
         //
         // Every menu action lands here, and before this each assumed a mode:
@@ -185,7 +190,9 @@ public final class BpyBridge {
         }
         parts += Bpy.autoKeying(after: python, scene: scene, interpreter: session.isRealRuntime)
         return execute(parts.joined(separator: "\n"), as: python, undo: label,
-                       quiet: quiet, replacesAdjustable: label != nil)
+                       quiet: quiet, replacesAdjustable: label != nil,
+                       keepingResponsive: inBackground ? working : nil,
+                       onMainWorking: inBackground ? nil : working)
     }
 
     /// Runs several statements as one operator — one undo step, one log entry.
@@ -216,7 +223,8 @@ public final class BpyBridge {
     /// mode, operator, mode back, backup discarded — so a Bevel on a heavy
     /// scene paid for reading the whole scene back five times.
     private func execute(_ body: String, as python: String, undo label: String?,
-                         quiet: Bool, replacesAdjustable: Bool) -> Outcome {
+                         quiet: Bool, replacesAdjustable: Bool, keepingResponsive work: String? = nil,
+                         onMainWorking mainWork: String? = nil) -> Outcome {
         guard let scene else {
             return Outcome(python: python, succeeded: false,
                            error: "no scene bound", objectsBefore: 0, objectsAfter: 0)
@@ -274,7 +282,9 @@ public final class BpyBridge {
 
         // The runtime mirrors bpy back into the display cache as part of
         // evaluating, so by the time this returns the viewport is current.
-        let lines = session.evaluate(source, scene: scene)
+        let lines = work.map { session.evaluateKeepingResponsive(source, scene: scene, label: $0) }
+            ?? mainWork.map { session.evaluateWithHeartbeat(source, scene: scene, label: $0) }
+            ?? session.evaluate(source, scene: scene)
         if push != nil { scene.editSelectionPending = false }
         let error = lines.last { $0.kind == .error }?.text
             .trimmingCharacters(in: .whitespaces)
@@ -515,6 +525,11 @@ public final class BpyBridge {
             .joined(separator: "\n")
     }
 
+    /// Blender is working on something: a script, a console line, or an
+    /// operation run with the window kept turning. The redo panel waits for
+    /// it rather than be refused.
+    public var isBusy: Bool { session.isRunning }
+
     /// Re-runs the remembered operator with changed arguments.
     ///
     /// Quiet, and it replaces the undo step rather than pushing a new one:
@@ -536,8 +551,10 @@ public final class BpyBridge {
         guard adjustable != nil else { return nil }
         if rememberedByUndo { return readjustThroughUndo(op) }
         var op = op
+        // A re-run can be Blender's seconds — a 288 × 224 UV Sphere — so the
+        // window keeps turning while it works.
         let outcome = execute(op.rerunPython, as: op.python, undo: nil, quiet: true,
-                              replacesAdjustable: false)
+                              replacesAdjustable: false, keepingResponsive: op.name)
         guard outcome.succeeded else {
             reportFailure(op.name, outcome.error ?? "It could not be run again.")
             return nil
@@ -572,7 +589,8 @@ public final class BpyBridge {
         }
         let body = Self.script(push: rememberedPush, discardBackup: false,
                                body: Self.performBody(for: op, backup: false))
-        let outcome = execute(body, as: op.python, undo: nil, quiet: true, replacesAdjustable: false)
+        let outcome = execute(body, as: op.python, undo: nil, quiet: true, replacesAdjustable: false,
+                              keepingResponsive: op.name)
         guard outcome.succeeded else {
             // Back to the step the rewind undid — the last adjustment that
             // worked — rather than leaving the operator undone.

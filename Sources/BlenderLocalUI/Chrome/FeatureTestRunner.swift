@@ -273,6 +273,7 @@ final class FeatureTestRunner {
     private func command(_ body: () throws -> String) async -> Measured {
         let reportBefore = bridge.report?.id
         let mirrorBefore = session.lastMirrorDuration
+        let responsiveBefore = session.responsiveRuns
         watchdog.begin()
         let t0 = CACurrentMediaTime()
         var detail = ""
@@ -290,9 +291,15 @@ final class FeatureTestRunner {
             detail += String(format: "; the mirror pass %.0f ms of it", mirror * 1000)
         }
         // The call held the main thread from start to end, which the
-        // watchdog, asking every 16 ms, can miss when it is short.
-        return Measured(stall: max(window.stall, t1 - t0), seconds: (shown ?? t1) - t0, peak: window.peak,
-                        detail: detail, failure: failure)
+        // watchdog, asking every 16 ms, can miss when it is short — unless it
+        // kept the main thread turning while Blender worked
+        // (`BpySession.evaluateKeepingResponsive`): then the stalls are the
+        // ones the watchdog saw, and the top bar showed the work meanwhile.
+        let responsive = session.responsiveRuns != responsiveBefore
+        if responsive { detail += detail.isEmpty ? "the window kept turning" : "; the window kept turning" }
+        return Measured(stall: responsive ? window.stall : max(window.stall, t1 - t0),
+                        seconds: (shown ?? t1) - t0, peak: window.peak,
+                        detail: detail, failure: failure, progressShown: responsive)
     }
 
     /// A long job: `body` runs it to its end (a script on its own thread, a
@@ -320,7 +327,7 @@ final class FeatureTestRunner {
     /// held to it as a long job is. Nothing on screen moves while it runs.
     private func longSync(_ body: () throws -> String) async -> Measured {
         var m = await command(body)
-        m.detail += "; no progress shown while it ran"
+        if !m.progressShown { m.detail += "; no progress shown while it ran" }
         return m
     }
 
@@ -1554,7 +1561,8 @@ final class FeatureTestRunner {
             let before = scene.objects.count
             let m = await longSync {
                 // File ▸ Import ▸ glTF 2.0's row (`FileMenu.importModel`).
-                try need(bridge.run(BpySession.importPython(op, from: url.path), undo: BpySession.importUndo(op)))
+                try need(bridge.run(BpySession.importPython(op, from: url.path), undo: BpySession.importUndo(op),
+                                    working: "Importing", inBackground: BpySession.importerRunsOffMainThread(op)))
                 return "\(before) -> \(scene.objects.count) objects"
             }
             discard(url)

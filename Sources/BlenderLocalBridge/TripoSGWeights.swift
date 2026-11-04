@@ -55,10 +55,40 @@ public final class TripoSGWeights: NSObject {
 
     public private(set) var state: State = .missing
 
-    /// VAST-AI's layout, which TripoSGModel(folder:) reads.
+    /// VAST-AI's layout, which TripoSGModel(folder:) reads: in Documents ▸
+    /// Models, where the Files app shows it in the Blender Local folder beside
+    /// the .blend files and renders (the user, November 4: the folder should
+    /// show the Image to 3D model). Kept out of iCloud backups — 2.6 GB that
+    /// downloads again — and deleted there, it is downloaded again when Image
+    /// to 3D Model next needs it.
     public static var folder: URL {
+        SceneDocument.documentsURL.appendingPathComponent("Models/TripoSG", isDirectory: true)
+    }
+
+    /// Where builds up to 52 kept it, which the Files app does not show.
+    static var applicationSupportFolder: URL {
         let base = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
         return base.appendingPathComponent("Models/TripoSG", isDirectory: true)
+    }
+
+    /// Moves a model downloaded by an earlier build into Documents: a rename
+    /// on the same volume, so nothing is downloaded or copied again.
+    static func moveIntoDocuments() {
+        let files = FileManager.default
+        let old = applicationSupportFolder
+        guard files.fileExists(atPath: old.path), !files.fileExists(atPath: folder.path) else { return }
+        try? files.createDirectory(at: folder.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try? files.moveItem(at: old, to: folder)
+        excludeFromBackup(folder.deletingLastPathComponent())
+    }
+
+    /// Documents ▸ Models out of iCloud backups, as Apple asks of what can be
+    /// downloaded again.
+    static func excludeFromBackup(_ url: URL) {
+        var values = URLResourceValues()
+        values.isExcludedFromBackup = true
+        var excluded = url
+        try? excluded.setResourceValues(values)
     }
 
     @ObservationIgnored private var session: URLSession?
@@ -71,6 +101,7 @@ public final class TripoSGWeights: NSObject {
     public override init() {
         super.init()
         Self.removeTripoSR()
+        Self.moveIntoDocuments()
         refresh()
     }
 
@@ -131,13 +162,13 @@ public final class TripoSGWeights: NSObject {
     /// Starts the first file that is not in place yet, or finishes.
     private func next() {
         guard let index = Self.files.indices.first(where: { !Self.isConverted(Self.files[$0], in: Self.folder) }) else {
-            var values = URLResourceValues()
-            values.isExcludedFromBackup = true
-            var excluded = Self.folder
-            try? excluded.setResourceValues(values)
+            Self.excludeFromBackup(Self.folder.deletingLastPathComponent())
             state = .ready
             return
         }
+        // Out of backups from the first file, not only once all are in.
+        try? FileManager.default.createDirectory(at: Self.folder, withIntermediateDirectories: true)
+        Self.excludeFromBackup(Self.folder.deletingLastPathComponent())
         if index != current { resumeData = nil }
         current = index
         doneBytes = Self.files.indices.filter { $0 != index && Self.isConverted(Self.files[$0], in: Self.folder) }
