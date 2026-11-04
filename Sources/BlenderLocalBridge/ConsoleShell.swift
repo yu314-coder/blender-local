@@ -52,6 +52,120 @@ public enum ConsoleShell {
         case python(String)
     }
 
+    /// Which prompt the console is at. It opens at BenchCode's shell, where a
+    /// command word runs the command and anything else runs as Python;
+    /// `python` there opens the Python prompt, where every line is Python, as
+    /// BenchCode's `python` does, and `exit()` comes back (the user, November
+    /// 4: "shell first", like BenchCode's terminal).
+    public enum Mode: Equatable, Sendable {
+        case shell, python
+    }
+
+    /// `python`, `python3` or `py` with nothing after it: BenchCode's way to
+    /// the `>>>` prompt. With arguments (`python file.py`, `python -c …`)
+    /// they are the shell's command.
+    public static func entersPython(_ input: String) -> Bool {
+        ["python", "python3", "py"].contains(input.trimmingCharacters(in: .whitespacesAndNewlines))
+    }
+
+    /// `exit()`, `quit()`, `exit` or `quit` at the Python prompt: back to the
+    /// shell. Python's own would end the interpreter the whole app runs in.
+    public static func leavesPython(_ input: String) -> Bool {
+        ["exit()", "quit()", "exit", "quit"].contains(input.trimmingCharacters(in: .whitespacesAndNewlines))
+    }
+
+    /// What the Python prompt says as it opens: what is there to use, and the
+    /// way back.
+    public static func pythonGreeting(realBlender: Bool) -> String {
+        (realBlender ? "Python with Blender's bpy" : "Python with Blender Local's bpy shim")
+            + ": C is bpy.context, D is bpy.data.\n"
+            + "!ls runs a command; exit() or ⌃D goes back to the shell."
+    }
+
+    /// The shell's folder — ~/Documents/Scripts, beside the Scripting tab's
+    /// scripts, or ~/Documents — which `_blenderkit_shell.init` moves to on
+    /// its first command. Moved to when the terminal opens instead, so its
+    /// first prompt names the folder commands will run in, and Python lines
+    /// typed first run there too. Only from where an app starts, `/`: a
+    /// folder something already moved to is left alone.
+    public static func enterWorkFolder() {
+        let files = FileManager.default
+        guard files.currentDirectoryPath == "/" else { return }
+        let home = NSHomeDirectory()
+        for folder in [home + "/Documents/Scripts", home + "/Documents"] {
+            guard (try? files.createDirectory(atPath: folder, withIntermediateDirectories: true)) != nil,
+                  files.changeCurrentDirectoryPath(folder) else { continue }
+            setenv("PWD", files.currentDirectoryPath, 1)
+            return
+        }
+    }
+
+    /// Where a line goes at `mode`'s prompt: at the Python prompt, Python,
+    /// unless `!` asks for a command.
+    public static func route(_ input: String, mode: Mode) -> Route {
+        guard mode == .python else { return route(input) }
+        let text = input.drop { $0 == " " || $0 == "\t" }
+        if !input.contains("\n"), text.hasPrefix("!") {
+            let command = text.dropFirst().trimmingCharacters(in: .whitespaces)
+            if !command.isEmpty { return .shell(command) }
+        }
+        return .python(input)
+    }
+
+    /// The prompt for `mode`: BenchCode's, modelled on zsh's — `user@host`
+    /// in bold, the folder with the home as `~`, a bold `%` — or Python's
+    /// `>>>`. With its escape sequences; the record keeps it so, and Copy
+    /// takes them out.
+    public static func prompt(mode: Mode, user: String, host: String, cwd: String, home: String) -> String {
+        switch mode {
+        case .python:
+            return "\u{1b}[1m>>>\u{1b}[0m "
+        case .shell:
+            return "\u{1b}[1m\(user)@\(host)\u{1b}[0m \(displayPath(cwd, home: home)) \u{1b}[1m%\u{1b}[0m "
+        }
+    }
+
+    /// The prompt for `mode` on this device, in the folder the shell is in.
+    public static func prompt(mode: Mode) -> String {
+        prompt(mode: mode, user: user, host: host,
+               cwd: FileManager.default.currentDirectoryPath, home: NSHomeDirectory())
+    }
+
+    /// `cwd` with the home folder written `~`, as BenchCode's prompt writes it.
+    public static func displayPath(_ cwd: String, home: String) -> String {
+        let home = home.hasSuffix("/") && home.count > 1 ? String(home.dropLast()) : home
+        if cwd == home { return "~" }
+        if cwd.hasPrefix(home + "/") { return "~" + cwd.dropFirst(home.count) }
+        // The home reached through a symlink, as /private/var is /var.
+        let realCwd = (cwd as NSString).resolvingSymlinksInPath
+        let realHome = (home as NSString).resolvingSymlinksInPath
+        if realCwd == realHome { return "~" }
+        if realCwd.hasPrefix(realHome + "/") { return "~" + realCwd.dropFirst(realHome.count) }
+        return cwd
+    }
+
+    /// The user in the prompt, as BenchCode finds it: `USER`, `LOGNAME`, else
+    /// the app's own name, since iOS gives an app no login.
+    public static let user: String = {
+        let env = ProcessInfo.processInfo.environment
+        return [env["USER"], env["LOGNAME"]].compactMap { $0 }.first { !$0.isEmpty } ?? "blender"
+    }()
+
+    /// The host, as BenchCode names it: the kind of device, since iOS calls
+    /// every device "localhost".
+    public static let host: String = {
+        if ProcessInfo.processInfo.isiOSAppOnMac { return "Mac" }
+        var info = utsname()
+        uname(&info)
+        let machine = withUnsafeBytes(of: &info.machine) { raw in
+            String(decoding: raw.prefix { $0 != 0 }, as: UTF8.self)
+        }
+        let model = ProcessInfo.processInfo.environment["SIMULATOR_MODEL_IDENTIFIER"] ?? machine
+        if model.hasPrefix("iPad") { return "iPad" }
+        if model.hasPrefix("iPhone") { return "iPhone" }
+        return "Mac"
+    }()
+
     /// Where a line typed at the prompt goes.
     ///
     /// A command word first, as in BenchCode, unless what follows it makes the

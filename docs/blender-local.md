@@ -1,5 +1,51 @@
 # Blender Local — the app
 
+## November 4, evening: a terminal like BenchCode's, and enum menus Blender agrees with
+
+**The Data API's enum menus.** The user, on build 50: Parent Type set to
+Vertex with no parent, and to Lattice under a mesh, ended in "bpy_struct:
+item.attr = val: enum "VERTEX" not found in ('OBJECT')". The menu listed the
+enum's static items, every parent type there is; Blender's item function
+narrows them to what this object can take. `_blenderkit_sync._enum_items`
+asks it item by item through `UILayout.enum_item_name`, which changes nothing
+(measured in 5.2.1: Object alone with no parent; Object, Vertex and 3
+Vertices under a mesh; Lattice under a lattice), keeps the value it holds, and
+falls back to the static list when it cannot say. `set_property` refuses an
+item Blender would not take in words — "Parent Type cannot be Lattice here:
+Blender offers Object, Vertex, 3 Vertices" — before Blender is asked.
+`tests/dataapi/blender` checks both.
+
+**The terminal.** The user asked for the Scripting tab's console to be
+BenchCode's terminal, "shell first", and much easier to use. It was a Python
+prompt with the shell's commands in it; it is BenchCode's shell now, with
+Python behind it:
+
+- **BenchCode's prompt**, modelled on zsh's: `user@host ~/Documents/Scripts %`,
+  the folder following `cd` (`ConsoleShell.prompt`). The terminal opens in the
+  folder the shell runs commands in (`enterWorkFolder`), so the first prompt
+  names it.
+- **`python`** (or `python3`, `py`) with nothing after it opens the `>>>`
+  prompt, where every line is Python and `!ls` still runs a command; `exit()`,
+  `quit()` or ⌃D on an empty line come back (`ConsoleShell.Mode`). At the
+  shell prompt a line that is not a command still runs as Python, as before,
+  and a command runs as typed: `echo a:` no longer waits for a block.
+- **The banner** says what to type first: help, python, ls and cd, Tab and ↑.
+- **`help`** lists every command with what it does, from the first sentence of
+  its docs, Python and Blender first, aliases beside their commands.
+- **Commands**, on the terminal's strip, types a command and runs it: Blender
+  one-liners (the objects' names, the active object, a cube), files (ls -la,
+  tree, cd ~/Documents), the device (top, df -h, uptime) and help — with `!`
+  in front of a shell command at the Python prompt.
+- **The strip** is a finger's height: 44 points (22 before), its buttons 40 ×
+  44, titled Terminal with the prompt it is at, shell or Python.
+
+Checked in the app through `-console64` (keys typed one write at a time, as a
+keyboard sends them, and the terminal's text read back): pwd, `echo a:`,
+python, `[o.name for o in D.objects]` → `['Ball']`, `!pwd`, ⌃D → "Back to the
+shell.", `cd ..` → `~/Documents %`. `tests/terminal` holds the prompts, the
+doors between them, a long prompt's wrapping and ⌃D; `tests/shell` that help
+still names every command.
+
 ## November 4, later: Blender's Object menu, and a Mesh menu without gaps
 
 The user asked to keep improving the two modes the app offers. Object Mode's

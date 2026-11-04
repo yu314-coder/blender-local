@@ -164,7 +164,9 @@ extension ConsoleLineEditor {
             return
         }
         let lines = block + [text]
-        switch PythonConsoleInput.verdict(lines) {
+        // A command runs as typed: `echo a:` is a line, not a block opening.
+        let verdict = block.isEmpty && isCommand(text) ? .complete : PythonConsoleInput.verdict(lines)
+        switch verdict {
         case .complete:
             var source = lines
             // The blank line that closed a block is how it was typed, not
@@ -188,9 +190,10 @@ extension ConsoleLineEditor {
     }
 
     /// ⌃D deletes forward, and on an empty line ends a block the way a blank
-    /// Return does. It never closes the console: there is nothing to exit to.
+    /// Return does. On an empty prompt it is the host's (`onEmptyEndOfInput`):
+    /// the Python prompt goes back to the shell, and the shell stays.
     func endOfInput() {
-        if !line.isEmpty { deleteForward() } else if !block.isEmpty { returnKey() }
+        if !line.isEmpty { deleteForward() } else if !block.isEmpty { returnKey() } else { onEmptyEndOfInput() }
     }
 
     /// ⌃C with nothing running: abandon what was typed, leaving it on screen.

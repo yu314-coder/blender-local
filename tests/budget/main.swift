@@ -290,6 +290,7 @@ let growthFreePrefixes: [(String, String)] = [
     ("curve.delete", "deletes"),
     ("object.delete", "deletes"), ("mesh.mark_", "marks edges"), ("mesh.normals", "turns normals"),
     ("mesh.flip_normals", "turns normals"), ("mesh.average_normals", "turns normals"),
+    ("mesh.faces_shade_", "draws faces smooth or flat (Mesh ▸ Shading)"),
     ("mesh.point_normals", "turns normals"), ("mesh.smooth_normals", "turns normals"),
     ("mesh.set_normals", "turns normals"), ("view3d.", "the view, the cursor or the selection"),
     ("uv.", "UVs"), ("anim.", "keyframes"), ("file.", "file paths"), ("wm.", "files"),

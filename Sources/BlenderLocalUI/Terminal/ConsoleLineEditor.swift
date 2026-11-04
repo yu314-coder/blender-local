@@ -40,7 +40,8 @@ final class ConsoleLineEditor {
 
     // MARK: - Prompts
 
-    /// Bold, as BenchCode's shell prompt is.
+    /// Python's prompt, bold as BenchCode's prompts are: the record's `>>>`
+    /// lines are drawn with it, and the editor starts with it.
     static let ps1 = "\u{1b}[1m>>>\u{1b}[0m "
     /// Dim, as BenchCode's continuation prompt is.
     static let ps2 = "\u{1b}[2m...\u{1b}[0m "
@@ -80,6 +81,16 @@ final class ConsoleLineEditor {
     var onForward: ([UInt8]) -> Void = { _ in }
     /// ⌃D on an empty line while a command runs: end of its input.
     var onEndOfInput: () -> Void = {}
+    /// The prompt drawn before the first line: BenchCode's shell prompt or
+    /// Python's `>>>`, which the host sets (`setPrompt`).
+    private(set) var prompt = ConsoleLineEditor.ps1
+    /// Whether Return should run the line as typed rather than ask Python
+    /// whether it is complete: a shell command at the shell prompt, where
+    /// `echo a:` is not the start of a block.
+    var isCommand: (String) -> Bool = { _ in false }
+    /// ⌃D on an empty prompt with nothing running: the Python prompt's way
+    /// back to the shell.
+    var onEmptyEndOfInput: () -> Void = {}
     /// Completions for a shell line: where the word starts and whole
     /// replacements for it, or nil when the line is Python's to complete.
     var shellCompletions: (_ line: String, _ caret: Int) -> (start: Int, options: [String])? = { _, _ in nil }
@@ -114,6 +125,15 @@ final class ConsoleLineEditor {
     var input: String { (block + [String(line)]).joined(separator: "\n") }
 
     // MARK: - What the host calls
+
+    /// A new prompt: after `cd`, or going between the shell and Python.
+    func setPrompt(_ new: String) {
+        guard new != prompt else { return }
+        let wasShown = isShown
+        erase()
+        prompt = new
+        if wasShown { draw() }
+    }
 
     /// Puts the prompt on the screen if it is not there already.
     func show() {
@@ -188,10 +208,11 @@ final class ConsoleLineEditor {
             return (lines, 0, 0)
         }
         var lines = block.enumerated().map { k, text in
-            DisplayLine(prompt: k == 0 ? Self.ps1 : Self.ps2, promptCells: Self.promptCells, text: Array(text))
+            DisplayLine(prompt: k == 0 ? prompt : Self.ps2,
+                        promptCells: k == 0 ? Self.cells(prompt) : Self.promptCells, text: Array(text))
         }
-        lines.append(DisplayLine(prompt: block.isEmpty ? Self.ps1 : Self.ps2,
-                                 promptCells: Self.promptCells, text: line))
+        lines.append(DisplayLine(prompt: block.isEmpty ? prompt : Self.ps2,
+                                 promptCells: block.isEmpty ? Self.cells(prompt) : Self.promptCells, text: line))
         return (lines, lines.count - 1, cursor)
     }
 

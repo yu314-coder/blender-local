@@ -1323,7 +1323,7 @@ def _help(sh: _Shell, argv: List[str]):
     # Group builtins by category for a nicer overview.
     categories = [
         ("Filesystem",
-         ["ls", "ll", "la", "cat", "head", "tail", "less", "more", "pwd", "cd",
+         ["ls", "cat", "head", "tail", "less", "more", "pwd", "cd",
           "mkdir", "rmdir", "rm", "touch", "cp", "mv", "mktemp", "find", "tree",
           "grep", "stat", "file", "wc", "diff", "xxd", "hexdump", "basename",
           "dirname", "realpath", "which"]),
@@ -1338,7 +1338,7 @@ def _help(sh: _Shell, argv: List[str]):
          ["top", "htop", "ps", "kill", "watch", "uptime", "uname", "whoami",
           "hostname", "id", "nproc"]),
         ("Terminal",
-         ["clear", "cls", "date", "sleep", "time", "env", "export", "history",
+         ["clear", "date", "sleep", "time", "env", "export", "history",
           "man", "help"]),
         ("Python",
          ["python", "python3", "py"]),
@@ -1346,46 +1346,72 @@ def _help(sh: _Shell, argv: List[str]):
          ["exit", "quit"]),
     ]
 
-    print(f"{BOLD}Blender Local shell{RESET} — "
-          f"{DIM}type `help <command>` for details on a specific command{RESET}\n")
+    # Each command on a line of its own with what it does — the first line of
+    # its docs after the dash — rather than a grid of bare names: the names
+    # are what someone new to a terminal does not know (the user, November
+    # 4: "make it much easy to use the terminal"). Python first, since it is
+    # what this terminal is for.
+    width = max(40, int(os.environ.get("COLUMNS", "80") or 80))
+    alias_of: Dict[str, List[str]] = {}
+    for a, t in sorted(sh.aliases.items()):
+        alias_of.setdefault(t.split(" ", 1)[0], []).append(a)
 
-    col_w = 16
-    per_row = 4
+    def summary(name: str) -> str:
+        # The docs' first paragraph after the usage's dash, to its first full
+        # stop: a sentence that wraps in the docs is still one sentence here.
+        para = []
+        for line in (BUILTINS[name].__doc__ or "").strip().splitlines():
+            if not line.strip():
+                break
+            para.append(line.strip())
+        text = " ".join(para)
+        text = text.split("—", 1)[1].strip() if "—" in text else text
+        return text.split(". ", 1)[0].rstrip(".").strip()
+
+    def row(name: str, says: str) -> None:
+        label = name + (" (" + ", ".join(alias_of[name]) + ")" if name in alias_of else "")
+        room = width - 2 - 16 - 1
+        if len(says) > room:
+            says = says[:max(room - 1, 0)].rstrip() + "…"
+        print(f"  {GRN}{label:<16}{RESET} {says}")
+
+    print(f"{BOLD}Blender Local terminal{RESET} — {DIM}`help <command>` shows one in full{RESET}")
+    print(f"{DIM}The Commands button above types the common ones for you.{RESET}\n")
+    print(f"{BOLD}{CYN}Python and Blender{RESET}")
+    print(f"  Anything that is not a command runs as Python, with bpy ready:")
+    for code, says in (("C.object", "the active object"),
+                       ("[o.name for o in D.objects]", "every object's name"),
+                       ("bpy.ops.mesh.primitive_cube_add()", "a cube at the 3D cursor")):
+        print(f"    {CYN}{code:<34}{RESET} {says}")
+    row("python", "the >>> prompt: every line is Python; exit() returns")
+    row("python3", "the same as python")
+    print()
+
+    shown = {"python", "python3", "py"}
     for cat_name, cmds in categories:
-        avail = [c for c in cmds if c in BUILTINS]
+        avail = [c for c in cmds if c in BUILTINS and c not in shown]
         if not avail:
             continue
         print(f"{BOLD}{CYN}{cat_name}{RESET}")
-        # Print commands in rows of 4, aligned.
-        for i in range(0, len(avail), per_row):
-            chunk = avail[i:i + per_row]
-            print("  " + "".join(f"{GRN}{c:<{col_w}}{RESET}" for c in chunk))
+        for c in avail:
+            row(c, summary(c))
+            shown.add(c)
         print()
 
-    # Mention builtins we haven't categorized above so `help` stays honest
-    # as commands get added.
+    # Builtins not in a category above, so `help` stays honest as commands
+    # get added.
     known = {c for _, cs in categories for c in cs}
     rest = [c for c in sorted(BUILTINS) if c not in known]
     if rest:
         print(f"{BOLD}{CYN}Other{RESET}")
-        for i in range(0, len(rest), per_row):
-            chunk = rest[i:i + per_row]
-            print("  " + "".join(f"{GRN}{c:<{col_w}}{RESET}" for c in chunk))
+        for c in rest:
+            row(c, summary(c))
         print()
 
-    print(f"{BOLD}Python{RESET}")
-    print("  Anything that isn't a command runs as Python in this console. Examples:\n")
-    print(f"    {CYN}2 + 2{RESET}                  → evaluate Python expression")
-    print(f"    {CYN}bpy.data.objects[:]{RESET}    → look at the scene")
-    print(f"    {CYN}for i in range(3): print(i){RESET} → Python statement")
+    print(f"{BOLD}Aliases{RESET}  " + "   ".join(f"{CYN}{a}{RESET} → {t}" for a, t in sorted(sh.aliases.items())))
     print()
-    print(f"{BOLD}Aliases{RESET}")
-    if sh.aliases:
-        for a, t in sorted(sh.aliases.items()):
-            print(f"  {CYN}{a:<8}{RESET} → {t}")
-    print()
-    print(f"{DIM}Line editing: ↑/↓ history, ←/→ cursor, Ctrl-A/E home/end,{RESET}")
-    print(f"{DIM}              Ctrl-U/K/W delete, Ctrl-C cancel, Ctrl-L clear.{RESET}")
+    print(f"{DIM}Tab completes a command, a file or a Python name; ↑/↓ walk the history;{RESET}")
+    print(f"{DIM}Ctrl-C cancels, Ctrl-L clears, Ctrl-A/E go to the start/end of the line.{RESET}")
     return 0
 
 

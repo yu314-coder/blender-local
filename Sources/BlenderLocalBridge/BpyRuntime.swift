@@ -379,6 +379,9 @@ public final class BpySession {
     /// Tools tab.
     public var infoLog: [String] = []
     public var history: [String] = []
+    /// The console's prompt: BenchCode's shell, or the Python prompt `python`
+    /// opens (`ConsoleShell.Mode`). The shell after every launch.
+    public private(set) var consoleMode: ConsoleShell.Mode = .shell
     /// What the last Run Script did. The Text Editor shows this as a banner:
     /// pressing Run used to change nothing you were looking at, because the
     /// only evidence was a few lines in a console pane on the far side of the
@@ -622,12 +625,28 @@ public final class BpySession {
             return
         }
         history.append(input)
+        // Echoed after the prompt it was typed at, as BenchCode's terminal
+        // leaves it in the scrollback.
+        let prompt = ConsoleShell.prompt(mode: consoleMode)
         for (index, l) in input.split(separator: "\n", omittingEmptySubsequences: false).enumerated() {
-            console.append(BpyLine(.input, "\(index == 0 ? ">>>" : "...") \(l)"))
+            console.append(BpyLine(.input, index == 0 ? prompt + l : "... \(l)"))
+        }
+        // The two prompts' doors, handled here: nothing runs.
+        if consoleMode == .shell, ConsoleShell.entersPython(input) {
+            consoleMode = .python
+            console.append(BpyLine(.info, ConsoleShell.pythonGreeting(realBlender: runtime.usesRealBlender)))
+            lastConsoleOutput = console.count..<console.count
+            return
+        }
+        if consoleMode == .python, ConsoleShell.leavesPython(input) {
+            consoleMode = .shell
+            console.append(BpyLine(.info, "Back to the shell."))
+            lastConsoleOutput = console.count..<console.count
+            return
         }
         let source: String
         let changesScene: Bool
-        switch ConsoleShell.route(input) {
+        switch ConsoleShell.route(input, mode: consoleMode) {
         case .shell(let command):
             source = ConsoleShell.source(for: command, columns: columns, rows: rows)
             changesScene = ConsoleShell.touchesScene(command)

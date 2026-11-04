@@ -2049,7 +2049,7 @@ def property_info(prop, owner=None):
     options = []
     if kind == 'ENUM':
         try:
-            options = [{'id': i.identifier, 'name': i.name} for i in prop.enum_items if i.identifier]
+            options = [{'id': i.identifier, 'name': i.name} for i in _enum_items(prop, owner)]
         except Exception:
             pass
     if kind == 'POINTER' and not prop.is_readonly:
@@ -2090,6 +2090,31 @@ def property_info(prop, owner=None):
         info['typeName'] = getattr(target, 'name', '') if target is not None else ''
         info['valueName'] = getattr(pointer_value, 'name', None) if pointer_value is not None else None
     return info
+
+
+def _enum_items(prop, owner):
+    """The items of an enum Blender offers for `owner`: its RNA's own list
+    narrowed by the item function, as Blender's menus draw it. `enum_items`
+    is the full static list, and Parent Type offered Vertex with no parent
+    and Lattice under a mesh, which Blender refuses ("enum "VERTEX" not found
+    in ('OBJECT')" — the user, November 4). `UILayout.enum_item_name` asks
+    the item function for this owner and changes nothing; measured in 5.2.1:
+    Object alone with no parent, Object, Vertex and 3 Vertices under a mesh,
+    and Lattice added under a lattice. The static list when it cannot say."""
+    items = [i for i in prop.enum_items if i.identifier]
+    if owner is None:
+        return items
+    try:
+        offered = [i for i in items
+                   if bpy.types.UILayout.enum_item_name(owner, prop.identifier, i.identifier)]
+    except Exception:
+        return items
+    if not offered:
+        return items
+    current = getattr(owner, prop.identifier, None)
+    held = set(current) if isinstance(current, set) else {current}
+    kept = {i.identifier for i in offered} | held
+    return [i for i in items if i.identifier in kept]
 
 
 def _pointer_collection(prop, owner, value):
@@ -2670,6 +2695,14 @@ def set_property(path, key, value):
         raise ValueError(key + ' is read-only')
     if prop.type == 'ENUM' and prop.is_enum_flag:
         value = set(value)
+    elif prop.type == 'ENUM':
+        # Said in words before Blender says "bpy_struct: item.attr = val:
+        # enum "VERTEX" not found in ('OBJECT')".
+        offered = _enum_items(prop, obj)
+        if value not in {i.identifier for i in offered}:
+            named = {i.identifier: i.name for i in prop.enum_items}
+            raise ValueError("%s cannot be %s here: Blender offers %s" % (
+                prop.name, named.get(value, value), ", ".join(i.name for i in offered)))
     if prop.type == 'POINTER' and value is not None:
         value = resolve(value)
     # Whatever the struct and the property, priced first by the vertex

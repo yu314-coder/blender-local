@@ -6,6 +6,13 @@ import UIKit
 /// The console's screen: SwiftTerm, set up the way BenchCode sets up its
 /// terminal — the same font, colours, gestures and keyboard bar — with the
 /// console's line editor deciding what every key does.
+/// A command for the terminal to type at its prompt and run: the strip's
+/// Commands. A new `id` is a new request.
+struct ConsoleTypeRequest: Equatable {
+    var id: Int
+    var text: String
+}
+
 struct ConsoleTerminalView: UIViewRepresentable {
     var scene: BKScene
     var session: BpySession
@@ -17,6 +24,7 @@ struct ConsoleTerminalView: UIViewRepresentable {
     /// Bumped to put the keyboard in the console: the menu bar's Switch Editor
     /// and Console.
     var focusRequest: Int
+    var typeRequest = ConsoleTypeRequest(id: 0, text: "")
     var fontSize: Int
     /// Columns and rows, for the strip above.
     var onSize: (Int, Int) -> Void = { _, _ in }
@@ -24,6 +32,8 @@ struct ConsoleTerminalView: UIViewRepresentable {
     func makeCoordinator() -> Coordinator { Coordinator(self) }
 
     func makeUIView(context: Context) -> ConsoleTerminal {
+        // Where the shell's commands run, before the first prompt names it.
+        ConsoleShell.enterWorkFolder()
         let terminal = ConsoleTerminal(frame: .zero)
         context.coordinator.attach(terminal)
         return terminal
@@ -41,6 +51,10 @@ struct ConsoleTerminalView: UIViewRepresentable {
             coordinator.lastFocusRequest = focusRequest
             coordinator.focus()
         }
+        if typeRequest.id != coordinator.lastTypeRequest {
+            coordinator.lastTypeRequest = typeRequest.id
+            coordinator.type(typeRequest.text)
+        }
     }
 
     static func dismantleUIView(_ terminal: ConsoleTerminal, coordinator: Coordinator) {
@@ -52,6 +66,8 @@ struct ConsoleTerminalView: UIViewRepresentable {
                              UIPointerInteractionDelegate {
         var parent: ConsoleTerminalView
         var lastFocusRequest: Int
+        /// The last of the strip's Commands typed (`ConsoleTypeRequest`).
+        var lastTypeRequest = 0
         let editor: ConsoleLineEditor
         private var transcript = ConsoleTranscript()
         private weak var terminal: ConsoleTerminal?
@@ -88,7 +104,24 @@ struct ConsoleTerminalView: UIViewRepresentable {
                 return PythonCompletion.candidates(text: text, caret: caret, operators: [], limit: 120,
                                                    introspect: { session.introspect($0) })
             }
-            editor.shellCompletions = { [weak self] line, caret in self?.shellCompletions(line, caret) }
+            editor.shellCompletions = { [weak self] line, caret in
+                // At the Python prompt every word is Python's to complete.
+                guard self?.parent.session.consoleMode == .shell else { return nil }
+                return self?.shellCompletions(line, caret)
+            }
+            // A command at the shell prompt runs as typed (`echo a:`), and so
+            // do the doors between the two prompts.
+            editor.isCommand = { [weak self] text in
+                guard let mode = self?.parent.session.consoleMode else { return false }
+                if case .shell = ConsoleShell.route(text, mode: mode) { return true }
+                return mode == .python && ConsoleShell.leavesPython(text)
+            }
+            // ⌃D on an empty Python prompt is BenchCode's way back to the shell.
+            editor.onEmptyEndOfInput = { [weak self] in
+                guard let self, self.parent.session.consoleMode == .python else { return }
+                self.editor.erase()
+                self.run("exit()")
+            }
             editor.onHistoryChange = { history in
                 #if DEBUG
                 // The lines `-console64` types are a check's, not the user's:
@@ -183,6 +216,17 @@ struct ConsoleTerminalView: UIViewRepresentable {
         private func receive(_ bytes: [UInt8]) {
             flushPendingRepaint()
             editor.receive(bytes)
+        }
+
+        /// Types `text` at the prompt and presses Return, as keys: ⌃C first if
+        /// something is half typed, then the text, then Return, each its own
+        /// write, so the text is not taken for a paste.
+        func type(_ text: String) {
+            guard !parent.session.isRunning else { return }
+            focus()
+            if !editor.input.isEmpty { receive([0x03]) }
+            receive(Array(text.utf8))
+            receive([0x0d])
         }
 
         // MARK: Running what was typed
@@ -289,6 +333,9 @@ struct ConsoleTerminalView: UIViewRepresentable {
             }
             if !session.isRunning {
                 editor.endRun()
+                // BenchCode's prompt, for the folder `cd` left the shell in,
+                // or Python's when `python` opened it.
+                editor.setPrompt(ConsoleShell.prompt(mode: session.consoleMode))
                 editor.show()
             }
         }

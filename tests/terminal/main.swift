@@ -571,6 +571,57 @@ do {
           ConsoleShell.completions(line: "pri", caret: 3, cwd: "/w", home: "/h", list: list) == nil)
 }
 
+print("\n== the shell prompt and the Python prompt (the user, November 4) ==")
+check("python, python3 and py open the Python prompt",
+      ["python", " python3 ", "py"].allSatisfy(ConsoleShell.entersPython))
+check("with arguments they are the shell's command",
+      !ConsoleShell.entersPython("python file.py") && !ConsoleShell.entersPython("python -c 'x'"))
+check("exit(), quit(), exit and quit leave it",
+      ["exit()", "quit()", "exit", " quit "].allSatisfy(ConsoleShell.leavesPython))
+check("at the Python prompt a command word is Python", ConsoleShell.route("ls", mode: .python) == .python("ls"))
+check("and ! still runs a command there", ConsoleShell.route("!ls -la", mode: .python) == .shell("ls -la"))
+check("at the shell prompt the rules are the shell's",
+      ConsoleShell.route("ls", mode: .shell) == .shell("ls") && ConsoleShell.route("x = 1", mode: .shell) == .python("x = 1"))
+check("the home folder is ~", ConsoleShell.displayPath("/h/u", home: "/h/u") == "~")
+check("a folder in it is ~/…", ConsoleShell.displayPath("/h/u/Documents/Scripts", home: "/h/u/") == "~/Documents/Scripts")
+check("a folder outside it is itself", ConsoleShell.displayPath("/tmp/x", home: "/h/u") == "/tmp/x")
+check("a folder named like the home is not inside it", ConsoleShell.displayPath("/h/user2", home: "/h/u") == "/h/user2")
+let shellPrompt = ConsoleShell.prompt(mode: .shell, user: "blender", host: "iPad", cwd: "/h/u/Documents", home: "/h/u")
+check("BenchCode's prompt: user@host, the folder, %",
+      ConsoleTranscript.sanitize(shellPrompt, keepColour: false) == "blender@iPad ~/Documents % ", shellPrompt)
+check("Python's prompt is >>>", ConsoleShell.prompt(mode: .python, user: "u", host: "h", cwd: "/", home: "/h") == ConsoleLineEditor.ps1)
+do {
+    let (e, s, box) = setup(columns: 40)
+    e.setPrompt(shellPrompt)
+    check("the shell prompt is drawn, and the caret after it",
+          s.visible == ["blender@iPad ~/Documents %"] && s.x == 27, "\(s.visible) \(s.x)")
+    e.isCommand = { if case .shell = ConsoleShell.route($0, mode: .shell) { return true }; return false }
+    type(e, "echo a:")
+    ret(e)
+    check("a command runs as typed, not as the start of a block", box.submitted == ["echo a:"], "\(box.submitted)")
+    type(e, "for i in x:")
+    ret(e)
+    check("Python still opens a block at the shell prompt", box.submitted.count == 1 && e.block == ["for i in x:"],
+          "\(box.submitted) \(e.block)")
+    key(e, 0x03)
+    type(e, String(repeating: "a", count: 20))
+    check("a long line wraps after the longer prompt",
+          s.visible.suffix(2) == ["blender@iPad ~/Documents % aaaaaaaaaaaaa", "aaaaaaa"], "\(s.visible)")
+    e.setPrompt(ConsoleLineEditor.ps1)
+    check("the prompt changes in place", s.visible.last?.hasPrefix(">>> aaaa") == true, "\(s.visible)")
+}
+do {
+    let (e, _, _) = setup()
+    var asked = 0
+    e.onEmptyEndOfInput = { asked += 1 }
+    key(e, 0x04)
+    check("⌃D on an empty prompt is the host's", asked == 1)
+    type(e, "x")
+    key(e, 0x01)
+    key(e, 0x04)
+    check("⌃D on a line deletes forward, as before", asked == 1 && e.line.isEmpty, "\(String(e.line))")
+}
+
 print("\n== a command's output on its way to the screen ==")
 do {
     var s = ConsoleRawStream()

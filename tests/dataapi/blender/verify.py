@@ -115,5 +115,33 @@ other = bpy.data.meshes.new("Other")
 ui.set_property("bpy.data.objects['%s']" % cube.name, 'data', "bpy.data.meshes['Other']")
 check("another mesh is still taken", cube.data == other, cube.data)
 
+print("\nan enum's menu: what Blender offers for this object (the user, November 4)")
+# Parent Type's items depend on the parent; the menu listed all six and
+# Blender refused Vertex with no parent, Lattice under a mesh.
+for o in list(bpy.data.objects):
+    bpy.data.objects.remove(o)
+bpy.ops.mesh.primitive_cube_add(); child = bpy.context.object
+bpy.ops.mesh.primitive_uv_sphere_add(); sphere = bpy.context.object
+def menu_of(obj, key):
+    return [o['id'] for o in ui.property_info(obj.bl_rna.properties[key], obj)['options']]
+check("Parent Type with no parent offers Object alone", menu_of(child, 'parent_type') == ['OBJECT'],
+      menu_of(child, 'parent_type'))
+child.parent = sphere
+check("under a mesh: Object, Vertex, 3 Vertices", menu_of(child, 'parent_type') == ['OBJECT', 'VERTEX', 'VERTEX_3'],
+      menu_of(child, 'parent_type'))
+check("a static enum keeps every item (Rotation Mode, 8)", len(menu_of(child, 'rotation_mode')) == 8,
+      menu_of(child, 'rotation_mode'))
+try:
+    ui.set_property("bpy.data.objects['%s']" % child.name, 'parent_type', 'LATTICE')
+    said = None
+except Exception as e:
+    said = e
+check("Lattice under a mesh is refused in words, naming what Blender offers",
+      isinstance(said, ValueError) and 'Parent Type' in str(said) and 'Object, Vertex, 3 Vertices' in str(said),
+      repr(said))
+check("and Parent Type is left as it was", child.parent_type == 'OBJECT', child.parent_type)
+ui.set_property("bpy.data.objects['%s']" % child.name, 'parent_type', 'VERTEX')
+check("an offered one is still set", child.parent_type == 'VERTEX', child.parent_type)
+
 print("\n" + ("ALL PASS" if fail == 0 else f"{fail} FAILED"))
 sys.exit(1 if fail else 0)

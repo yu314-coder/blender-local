@@ -360,22 +360,20 @@ public final class EmbeddedBpyRuntime: BpyRuntime {
         bk_install_pump_request()
     }
 
+    /// The console's first lines: BenchCode's shell, what to type first, and
+    /// that Python runs at its prompt too. Short enough for an iPad held
+    /// upright.
     public var versionBanner: String {
         let warning = stagingWarning.map { "\n\u{26A0} \($0)" } ?? ""
-        if usingRealBlender {
-            return """
-            Python \(version)
-            Blender bpy — the real module, running on device. The viewport
-            mirrors bpy.data after every run.
-            Convenience imports: bpy, mathutils, math · C = bpy.context, D = bpy.data
-            Runs entirely on device; no network required.
-            """
-        }
+        let module = usingRealBlender
+            ? "Blender's bpy"
+            : "bpy shim, Blender Local's own (the real module is arm64-only)"
         return """
-        Python \(version)
-        bpy shim — Blender Local's own, driving the viewport. Not Blender's bpy.
-        The real module is arm64-only, so simulator builds use this.\(warning)
-        Convenience imports: bpy, mathutils, math · C = bpy.context, D = bpy.data
+        Blender Local terminal · Python \(version.split(separator: " ").first.map(String.init) ?? version) · \(module)\(warning)
+          help       every command, by topic
+          python     the >>> prompt, where every line is Python
+          ls, cd     the app's files; Tab completes, ↑ repeats
+        Python runs at this prompt too: C.object, D.objects
         Runs entirely on device; no network required.
         """
     }
