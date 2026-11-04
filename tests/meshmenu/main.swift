@@ -28,6 +28,7 @@ let groups: [(M.Group, [String])] = [
     (.normals, ["Flip", "Recalculate Outside", "Recalculate Inside", "Set from Faces", "Point to Target…",
                 "Smooth Vectors"]),
     (.average, ["Custom Normal", "Face Area", "Corner Angle"]),
+    (.shading, ["Smooth Faces", "Flat Faces"]),
     (.extrude, ["Extrude Faces Along Normals", "Extrude Individual Faces", "Extrude Manifold", "Spin"]),
 ]
 for (group, labels) in groups {

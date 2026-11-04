@@ -38,7 +38,7 @@ func json(_ p: MeshPointer) -> String {
 // history and no mesh backup is taken (`backup: false`); the backup's path is
 // tests/redo/blender's, for every Mesh row.
 for m in LastOperator.Mesh.allCases where LastOperator.Mesh.roundFourRows.contains(m)
-    || [.mergeAtCenter, .recalculateNormals, .recalculateInside].contains(m) {
+    || [.mergeAtCenter, .recalculateNormals, .recalculateInside, .shadeSmoothFaces, .shadeFlatFaces].contains(m) {
     emit("row.\(m.rawValue) PERFORM",
          BpyBridge.performBody(for: LastOperator.mesh(m, spinningAround: nil, pointer: pointers[0]), backup: false))
 }

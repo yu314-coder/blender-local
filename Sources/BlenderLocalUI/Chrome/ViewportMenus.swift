@@ -479,6 +479,7 @@ enum ViewportMenu: String, CaseIterable {
                                  row(.inset), row(.poke)]
         if atLeast(2, counts?.faces) { face.append(row(.bridgeEdgeLoops, "Bridge Faces")) }
         face += [.separator, row(.triangulate), row(.quadify), .separator,
+                 row(.shadeSmoothFaces, "Shade Smooth"), row(.shadeFlatFaces, "Shade Flat"), .separator,
                  row(.unsubdivide), row(.splitSelection, "Split"), separate, row(.dissolveFaces),
                  row(.deleteFaces, "Delete Faces")]
 

@@ -1003,6 +1003,9 @@ public enum Bpy {
     }
 
     public static let deleteSelected = "bpy.ops.object.delete(use_global=False)"
+    /// Object ▸ Delete Global: from every scene that holds the objects, not
+    /// only this one.
+    public static let deleteSelectedGlobally = "bpy.ops.object.delete(use_global=True)"
     public static let duplicate = "bpy.ops.object.duplicate_move()"
     /// Shift+D in a mesh's Edit Mode: the selected elements, as Blender's own
     /// does there, left selected in place for the gizmo to move. Measured in

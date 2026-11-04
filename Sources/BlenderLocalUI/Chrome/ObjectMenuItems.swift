@@ -99,15 +99,36 @@ struct ObjectRelationItems: View {
     var perform: (LastOperator) -> Void
 
     var body: some View {
+        DuplicateLinkedJoinItems(state: state, withKeys: withKeys, perform: perform)
+        Divider()
+        ObjectParentMenu(state: state, perform: perform)
+        ObjectConvertMenu(state: state, perform: perform)
+    }
+}
+
+/// Duplicate Linked and Join, after Duplicate Objects in Blender's Object menu.
+struct DuplicateLinkedJoinItems: View {
+    var state: ObjectRelationState
+    var withKeys = false
+    var perform: (LastOperator) -> Void
+
+    var body: some View {
         Button("Duplicate Linked", systemImage: "link") { perform(.duplicateLinked()) }
             .keyboardShortcut(withKeys ? KeyboardShortcut("d", modifiers: .option) : nil)
             .disabled(!state.canDuplicate)
         Button("Join", systemImage: "arrow.triangle.merge") { perform(.join()) }
             .keyboardShortcut(withKeys ? KeyboardShortcut("j", modifiers: .command) : nil)
             .disabled(!state.canJoin)
-        Divider()
-        // Blender's Ctrl+P menu offers Keep Transform as a row of its own;
-        // its Object ▸ Parent menu then the three ways to clear.
+    }
+}
+
+/// Object ▸ Parent: Blender's Ctrl+P menu offers Keep Transform as a row of
+/// its own; its Object ▸ Parent menu then the three ways to clear.
+struct ObjectParentMenu: View {
+    var state: ObjectRelationState
+    var perform: (LastOperator) -> Void
+
+    var body: some View {
         Menu("Parent") {
             Button("Object") { perform(.parent(keepTransform: false)) }
                 .disabled(!state.canParent)
@@ -123,6 +144,15 @@ struct ObjectRelationItems: View {
             }
         }
         .disabled(!state.available)
+    }
+}
+
+/// Object ▸ Convert.
+struct ObjectConvertMenu: View {
+    var state: ObjectRelationState
+    var perform: (LastOperator) -> Void
+
+    var body: some View {
         Menu("Convert") {
             ForEach(LastOperator.ConvertTarget.allCases, id: \.self) { target in
                 Button(target.label) { perform(.convert(to: target)) }
@@ -152,13 +182,37 @@ struct ObjectMenuMoreItems: View {
     var askNewCollection: (_ parent: Int, _ link: Bool) -> Void
 
     var body: some View {
-        Menu("Transform") {
-            Button("Randomize Transform") { perform(.randomizeTransform()) }
-                .disabled(!state.canDuplicate)
-            Button("Align Objects") { perform(.alignObjects()) }
-                .disabled(!state.canDuplicate)
-        }
-        .disabled(!state.available)
+        Menu("Transform") { RandomizeAlignItems(state: state, perform: perform) }
+            .disabled(!state.available)
+        ObjectMirrorMenu(state: state, perform: perform)
+        ObjectCollectionMenu(state: state, collections: collections, run: run,
+                             askNewCollection: askNewCollection)
+        ObjectRelationsMenu(state: state, perform: perform)
+        ObjectModifiersMenu(state: state, perform: perform)
+        ObjectConstraintsMenu(state: state, perform: perform)
+        LinkTransferDataMenu(state: state, perform: perform)
+    }
+}
+
+/// Object ▸ Transform's last rows: Randomize Transform and Align Objects.
+struct RandomizeAlignItems: View {
+    var state: ObjectRelationState
+    var perform: (LastOperator) -> Void
+
+    var body: some View {
+        Button("Randomize Transform") { perform(.randomizeTransform()) }
+            .disabled(!state.canDuplicate)
+        Button("Align Objects") { perform(.alignObjects()) }
+            .disabled(!state.canDuplicate)
+    }
+}
+
+/// Object ▸ Mirror.
+struct ObjectMirrorMenu: View {
+    var state: ObjectRelationState
+    var perform: (LastOperator) -> Void
+
+    var body: some View {
         Menu("Mirror") {
             // Blender's row waits for an axis key; these are those axes.
             Button {} label: {
@@ -174,6 +228,18 @@ struct ObjectMenuMoreItems: View {
             }
         }
         .disabled(!state.available)
+    }
+}
+
+/// Object ▸ Collection: Move to Collection (M) and Link to Collection
+/// (Shift+M).
+struct ObjectCollectionMenu: View {
+    var state: ObjectRelationState
+    var collections: CollectionTree?
+    var run: (BlenderCommand) -> Void
+    var askNewCollection: (_ parent: Int, _ link: Bool) -> Void
+
+    var body: some View {
         Menu("Collection") {
             if let collections, let root = collections.sceneCollection {
                 Menu("Move to Collection") {
@@ -189,6 +255,15 @@ struct ObjectMenuMoreItems: View {
             }
         }
         .disabled(!state.canDuplicate)
+    }
+}
+
+/// Object ▸ Relations ▸ Make Single User.
+struct ObjectRelationsMenu: View {
+    var state: ObjectRelationState
+    var perform: (LastOperator) -> Void
+
+    var body: some View {
         Menu("Relations") {
             Menu("Make Single User") {
                 ForEach(LastOperator.SingleUser.allCases, id: \.self) { row in
@@ -197,10 +272,28 @@ struct ObjectMenuMoreItems: View {
             }
         }
         .disabled(!state.canDuplicate)
+    }
+}
+
+/// Object ▸ Modifiers.
+struct ObjectModifiersMenu: View {
+    var state: ObjectRelationState
+    var perform: (LastOperator) -> Void
+
+    var body: some View {
         Menu("Modifiers") {
             Button("Copy Modifiers to Selected Objects") { perform(.copyModifiersToSelected()) }
         }
         .disabled(!state.canJoin)
+    }
+}
+
+/// Object ▸ Constraints.
+struct ObjectConstraintsMenu: View {
+    var state: ObjectRelationState
+    var perform: (LastOperator) -> Void
+
+    var body: some View {
         Menu("Constraints") {
             Menu("Add Constraint (with Targets)") {
                 ForEach(ConstraintMenu.groups, id: \.title) { group in
@@ -218,6 +311,15 @@ struct ObjectMenuMoreItems: View {
                 .disabled(!state.canDuplicate)
         }
         .disabled(!state.available)
+    }
+}
+
+/// Object ▸ Link/Transfer Data (Ctrl+L).
+struct LinkTransferDataMenu: View {
+    var state: ObjectRelationState
+    var perform: (LastOperator) -> Void
+
+    var body: some View {
         Menu("Link/Transfer Data") {
             ForEach(Array(LastOperator.makeLinksTypes.enumerated()), id: \.offset) { i, type in
                 // Blender's separators: after Link Fonts to Text, and after

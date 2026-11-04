@@ -2542,6 +2542,10 @@ struct LayoutWorkspace: View {
                         } else {
                             if scene.mode == .object { selectMenu }
                             addMenu
+                            // Blender's Object Mode header: View, Select,
+                            // Add, Object. The Mesh menu after it is the
+                            // app's: its rows run without entering Edit Mode.
+                            if scene.mode == .object { objectMenu }
                             meshMenu
                             // The brushes, in the modes that have them.
                             if scene.mode != .object { sculptMenu }
@@ -3163,6 +3167,84 @@ struct LayoutWorkspace: View {
         } label: { menuLabel("Add", icon: "plus") }
     }
 
+    /// Blender's Object menu (VIEW3D_MT_object, 5.2.1), in its order: the
+    /// transforms, Set Origin, Mirror, Clear, Apply and Snap; Duplicate
+    /// Objects, Duplicate Linked and Join; Copy and Paste Objects; Collection;
+    /// Relations, Parent, Modifiers, Constraints and Link/Transfer Data; the
+    /// shading rows; Convert; Show/Hide; then Delete and Delete Global, where
+    /// Blender keeps them. These rows were in More, mixed with the view's,
+    /// and Delete was its last row (the user, November 3: "hard to del
+    /// things"). Each row is one the app already ran from More, the Mac menu
+    /// bar or a key; a row Blender has and the app cannot run (Bend, Track,
+    /// Quick Effects) is left out, as the key menus leave theirs.
+    private var objectMenu: some View {
+        Menu {
+            Menu("Transform") {
+                Button(ActiveTool.move.label) { choose(.move) }
+                Button(ActiveTool.rotate.label) { choose(.rotate) }
+                Button(ActiveTool.scale.label) { choose(.scale) }
+                if session.usesRealBlender {
+                    Divider()
+                    Button("Shear") { performObjectRow(LastOperator.shearObjects()) }
+                        .disabled(!objectRelations.canDuplicate)
+                }
+                Divider()
+                RandomizeAlignItems(state: objectRelations, perform: performObjectRow)
+            }
+            SetOriginMenu(state: objectTransform, setOrigin: setOrigin)
+            ObjectMirrorMenu(state: objectRelations, perform: performObjectRow)
+            Menu("Clear") {
+                ForEach(ClearTransform.allCases, id: \.self) { what in
+                    Button(what.label) { performObjectRow(LastOperator.clear(what)) }
+                }
+            }
+            .disabled(scene.selection.isEmpty || session.isRunning)
+            ApplyTransformMenu(state: objectTransform, apply: applyTransform)
+            snapActionsMenu
+            Divider()
+            Button("Duplicate Objects", systemImage: "plus.square.on.square") { duplicateSelected() }
+                .disabled(scene.active == nil || session.isRunning)
+            DuplicateLinkedJoinItems(state: objectRelations, perform: performObjectRow)
+            Divider()
+            Button("Copy Objects", systemImage: "doc.on.doc") { bridge?.run(ObjectBufferBpy.copy) }
+                .disabled(scene.selection.isEmpty || session.isRunning)
+            Button("Paste Objects", systemImage: "doc.on.clipboard") { bridge?.run(ObjectBufferBpy.paste) }
+                .disabled(session.isRunning)
+            Divider()
+            ObjectCollectionMenu(state: objectRelations, collections: scene.collections,
+                                 run: { bridge?.run($0) }, askNewCollection: askNewCollection)
+            Divider()
+            ObjectRelationsMenu(state: objectRelations, perform: performObjectRow)
+            ObjectParentMenu(state: objectRelations, perform: performObjectRow)
+            ObjectModifiersMenu(state: objectRelations, perform: performObjectRow)
+            ObjectConstraintsMenu(state: objectRelations, perform: performObjectRow)
+            LinkTransferDataMenu(state: objectRelations, perform: performObjectRow)
+            Divider()
+            ShadingItems(meshInObjectMode: canEdit && !session.isRunning,
+                         hasObject: scene.active != nil && !session.isRunning,
+                         essentialsLibrary: session.essentialsLibrary,
+                         shade: { setShading(smooth: $0) },
+                         perform: { op in if !refusedInSculptMode(op.name) { bridge?.perform(op) } })
+            Divider()
+            ObjectConvertMenu(state: objectRelations, perform: performObjectRow)
+            Divider()
+            ShowHideMenu(editing: false, run: showHide)
+                .disabled(scene.objects.isEmpty || session.isRunning)
+            Divider()
+            // Objects, always: the Delete key and More's row remove the active
+            // ruler instead while the Measure tool has one, as Blender's X does.
+            Button("Delete", systemImage: "trash", role: .destructive) {
+                bridge?.run(Bpy.deleteSelected, undo: UndoStep.delete)
+            }
+            .disabled(scene.selection.isEmpty || session.isRunning)
+            Button("Delete Global", role: .destructive) {
+                bridge?.run(Bpy.deleteSelectedGlobally, undo: UndoStep.delete)
+            }
+            .disabled(scene.selection.isEmpty || session.isRunning)
+        } label: { menuLabel("Object", icon: "cube") }
+        .accessibilityIdentifier("header.object")
+    }
+
     /// Every mesh operator Blender can perform here, in one menu. They are
     /// actions rather than modes — you press Bevel, it bevels, and the panel
     /// that appears is where the width gets chosen. Nothing to switch into
@@ -3185,7 +3267,16 @@ struct LayoutWorkspace: View {
                     if group == .vertex { Divider() }
                     Menu(group.rawValue) { meshRows(group) }
                 }
-                if group == .normals, editing { ShowHideMenu(editing: true, run: showHide) }
+                // Blender's Mesh menu: Transform, Mirror and Snap, then
+                // Duplicate before Extrude. Both were in More only, and More
+                // kept a second copy of the Object menu for them.
+                if group == .transform, editing {
+                    snapActionsMenu
+                    Divider()
+                    Button("Duplicate", systemImage: "plus.square.on.square") { duplicateSelected() }
+                        .disabled(session.isRunning)
+                }
+                if group == .shading, editing { ShowHideMenu(editing: true, run: showHide) }
             }
         } label: { menuLabel("Mesh", icon: "cube.transparent") }
         // Every one of these needs edit mode, which a light does not have.
@@ -3686,51 +3777,19 @@ struct LayoutWorkspace: View {
             Button("Render") { panel = "Render" }
             Button("Operator Search") { showOperations = true }
             Divider()
-            // Blender has these on the Object menu and on the right-click
-            // menu. They were reachable only from a script, and they are the
-            // difference between a subdivided surface that reads as a shape
-            // and one that reads as facets — which is most of what makes a
-            // model built from primitives look unfinished.
-            snapActionsMenu
             // The settings Blender's Tool Settings bar holds (View ▸ Tool
             // Settings): Pivot Point, Options, Snapping, Proportional
             // Editing — with room for the numbers a menu cannot hold.
             Button("Tool Settings") { panel = "Tool Settings" }
-            Divider()
-            ShadingItems(meshInObjectMode: canEdit && !editing && !session.isRunning,
-                         hasObject: scene.active != nil && !session.isRunning,
-                         essentialsLibrary: session.essentialsLibrary,
-                         shade: { setShading(smooth: $0) },
-                         perform: { op in if !refusedInSculptMode(op.name) { bridge?.perform(op) } })
             // Blender keeps it under Object Data ▸ Remesh; it is an operator
             // on the whole object, so it sits with the other ones here.
             Button("QuadriFlow Remesh") { bridge?.perform(LastOperator.quadriflowRemesh()) }
                 .disabled(!canEdit || editing || session.isRunning)
-            // The other two object-level operations Blender keeps on this
-            // menu, above the destructive ones.
-            ObjectTransformItems(state: objectTransform,
-                                 setOrigin: setOrigin, apply: applyTransform)
-            Divider()
-            // Blender's Object menu order: Duplicate Objects, Duplicate
-            // Linked and Join, then Parent and Convert further down.
-            // Blender's Object ▸ Duplicate Objects, or its Mesh ▸ Duplicate
-            // while editing.
-            Button(editing ? "Duplicate" : "Duplicate Objects", systemImage: "plus.square.on.square") {
-                duplicateSelected()
-            }
-                .keyboardShortcut("d", modifiers: .shift)   // Blender's Shift+D
-                .disabled(scene.active == nil || session.isRunning)
-            ObjectRelationItems(state: objectRelations, perform: performObjectRow)
-            ObjectMenuMoreItems(state: objectRelations, collections: scene.collections,
-                                perform: performObjectRow, run: { bridge?.run($0) },
-                                askNewCollection: askNewCollection)
-            Divider()
-            // Blender's Object ▸ Show/Hide, or the Mesh menu's while editing.
-            ShowHideMenu(editing: editing, run: showHide)
-                .disabled(scene.objects.isEmpty || session.isRunning)
-            Button("Delete", role: .destructive) {
-                deleteSelected()
-            }.disabled(scene.active == nil)
+            // In Object Mode the header's Object menu has the rest, and in
+            // Edit Mode the Mesh menu, each in Blender's order; More kept a
+            // second copy of them, mixed with the view's rows. A curve's or
+            // a lattice's points have no such menu here, so they keep these.
+            if editingPoints { moreObjectRows }
         } label: {
             Image(systemName: "ellipsis")
                 .font(.system(size: 15, weight: .medium))
@@ -3738,6 +3797,47 @@ struct LayoutWorkspace: View {
                 .contentShape(Rectangle())
         }
         .accessibilityLabel("More")
+    }
+
+    /// More's object rows, while there is no Object menu in the header.
+    @ViewBuilder private var moreObjectRows: some View {
+        Divider()
+        // Blender has these on the Object menu and on the right-click
+        // menu. They were reachable only from a script, and they are the
+        // difference between a subdivided surface that reads as a shape
+        // and one that reads as facets — which is most of what makes a
+        // model built from primitives look unfinished.
+        snapActionsMenu
+        ShadingItems(meshInObjectMode: canEdit && !editing && !session.isRunning,
+                     hasObject: scene.active != nil && !session.isRunning,
+                     essentialsLibrary: session.essentialsLibrary,
+                     shade: { setShading(smooth: $0) },
+                     perform: { op in if !refusedInSculptMode(op.name) { bridge?.perform(op) } })
+        // The other two object-level operations Blender keeps on this
+        // menu, above the destructive ones.
+        ObjectTransformItems(state: objectTransform,
+                             setOrigin: setOrigin, apply: applyTransform)
+        Divider()
+        // Blender's Object menu order: Duplicate Objects, Duplicate
+        // Linked and Join, then Parent and Convert further down.
+        // Blender's Object ▸ Duplicate Objects, or its Mesh ▸ Duplicate
+        // while editing.
+        Button(editing ? "Duplicate" : "Duplicate Objects", systemImage: "plus.square.on.square") {
+            duplicateSelected()
+        }
+            .keyboardShortcut("d", modifiers: .shift)   // Blender's Shift+D
+            .disabled(scene.active == nil || session.isRunning)
+        ObjectRelationItems(state: objectRelations, perform: performObjectRow)
+        ObjectMenuMoreItems(state: objectRelations, collections: scene.collections,
+                            perform: performObjectRow, run: { bridge?.run($0) },
+                            askNewCollection: askNewCollection)
+        Divider()
+        // Blender's Object ▸ Show/Hide, or the Mesh menu's while editing.
+        ShowHideMenu(editing: editing, run: showHide)
+            .disabled(scene.objects.isEmpty || session.isRunning)
+        Button("Delete", role: .destructive) {
+            deleteSelected()
+        }.disabled(scene.active == nil)
     }
 }
 

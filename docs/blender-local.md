@@ -1,5 +1,47 @@
 # Blender Local — the app
 
+## November 4, later: Blender's Object menu, and a Mesh menu without gaps
+
+The user asked to keep improving the two modes the app offers. Object Mode's
+header read Select, Add, Mesh; Blender's reads Select, Add, Object, and its
+Object menu (VIEW3D_MT_object) is where Delete, Duplicate, Join, Apply,
+Parent, Set Origin and the shading rows live. The app ran every one of those
+rows already, from More, the Mac menu bar or a key, but More held them after
+the view's rows with Delete last, in no order Blender has.
+
+- **Object menu** in Object Mode's header, between Add and Mesh, row for row
+  in 5.2.1's order: Transform (Move, Rotate, Scale, Shear, Randomize
+  Transform, Align Objects), Set Origin, Mirror, Clear, Apply, Snap;
+  Duplicate Objects, Duplicate Linked, Join; Copy Objects, Paste Objects;
+  Collection; Relations, Parent, Modifiers, Constraints, Link/Transfer Data;
+  Shade Smooth, Shade Auto Smooth, Shade Flat, Shade Smooth by Angle;
+  Convert; Show/Hide; Delete and Delete Global (`object.delete(use_global=
+  True)`, measured: gone from a second scene too). Its Delete deletes objects
+  even with the Measure tool's ruler out, as Blender's row does. Rows Blender
+  has that the app cannot run (Bend, Push/Pull and Track for objects, Quick
+  Effects) are left out, as the key menus leave theirs. The Mesh menu stays
+  after it: its rows run without entering Edit Mode. The row groups it is
+  built from are one view per Blender submenu now (`ObjectParentMenu`,
+  `ObjectMirrorMenu`, …), which More and the Mac menu bar still compose as
+  before.
+- **Edit Mode's Mesh menu** gets the rows Blender's has that it lacked:
+  Snap after Transform, Duplicate before Extrude, and Shading ▸ Smooth Faces
+  and Flat Faces (`mesh.faces_shade_smooth` / `faces_shade_flat`, measured
+  without a window) after Normals, with Show/Hide after Shading as in
+  Blender. The right-click menu's Face column has the same two as Shade
+  Smooth and Shade Flat, where Blender's has them. Checked in the app through
+  that menu: Shade Flat left 0 of the Ball's 1,152 faces smooth, Shade Smooth
+  1,152.
+- **More** is the view's menu again: Frame All, Local View, Cameras,
+  Viewport Shading and Overlays, the editors, Render, Operator Search, Tool
+  Settings, QuadriFlow Remesh. The object rows it repeated are in the Object
+  menu or the Mesh menu now; a curve's or a lattice's points, which have
+  neither, keep them there.
+
+`tests/meshmenu/blender` puts both shading rows through Blender against its
+own operators (203 pass); `tests/names` holds the Shading group to
+VIEW3D_MT_edit_mesh_shading.
+
 ## November 4: an object's Data menu offers its own kind only
 
 The user, on build 48: picking a datablock in the Data API's Data menu of a

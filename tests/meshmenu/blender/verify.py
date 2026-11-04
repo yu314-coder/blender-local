@@ -147,7 +147,7 @@ def build(kind, xform=None):
         bmesh.ops.create_grid(bm, x_segments=4, y_segments=4, size=1.0)
     elif kind == 'grid7':
         bmesh.ops.create_grid(bm, x_segments=7, y_segments=7, size=1.0)
-    elif kind == 'sphere':
+    elif kind in ('sphere', 'smoothsphere'):
         bmesh.ops.create_uvsphere(bm, u_segments=12, v_segments=6, radius=1.0)
     elif kind == 'twocubes':
         # A small cube through the face of a big one, the small one apart.
@@ -175,6 +175,10 @@ def build(kind, xform=None):
             bm.verts.remove(v)
     _canonical(bm, o.data)
     bm.free()
+    if kind == 'smoothsphere':
+        # Every face smooth, for Shading ▸ Flat Faces to have something to do.
+        for p in o.data.polygons:
+            p.use_smooth = True
     o.data.update()
     if kind == 'halfgrid':
         md = o.modifiers.new("Mirror", 'MIRROR')
@@ -424,6 +428,11 @@ SAME = [
      lambda: ops.average_normals(average_type='FACE_AREA', weight=90)),
     ("averageCornerAngle", 'sphere', 'ALL', 'VERT', lambda: ops.average_normals(average_type='CORNER_ANGLE')),
     ("smoothNormals", 'sphere', 'ALL', 'VERT', lambda: ops.smooth_normals()),
+    # Mesh ▸ Shading: every face smooth on a flat sphere, every face flat on
+    # a smooth one. One face smooth among flat ones changes nothing Blender
+    # draws: the edges between them stay sharp.
+    ("shadeSmoothFaces", 'sphere', 'ALL', 'FACE', lambda: ops.faces_shade_smooth()),
+    ("shadeFlatFaces", 'smoothsphere', 'ALL', 'FACE', lambda: ops.faces_shade_flat()),
     ("extrudeManifold", 'cube', 'FACE0', 'FACE',
      lambda: ops.extrude_manifold(MESH_OT_extrude_region={"use_dissolve_ortho_edges": True},
                                   TRANSFORM_OT_translate={"value": (0, 0, 0.2), "orient_type": 'NORMAL',

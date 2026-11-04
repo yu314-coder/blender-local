@@ -990,6 +990,11 @@ public extension LastOperator {
         case dissolveVerts, dissolveEdges, dissolveFaces
         case mergeAtCenter, bridgeEdgeLoops, gridFill, fillFace
         case recalculateNormals, flipNormals
+        // Mesh ▸ Shading's first two rows (VIEW3D_MT_edit_mesh_shading):
+        // the selected faces drawn smooth or flat, the face-by-face version
+        // of Object ▸ Shade Smooth and Shade Flat. Measured in 5.2.1
+        // without a window: one face of a cube smooth, the rest left alone.
+        case shadeSmoothFaces, shadeFlatFaces
         case triangulate, quadify
         // The edge tools, each measured working without a window in 5.2.1
         // (docs/blender-local.md, 2026-09-21). In Blender's own menu order,
@@ -1067,6 +1072,8 @@ public extension LastOperator {
             case .fillFace:           return "Make Edge/Face"
             case .recalculateNormals: return "Recalculate Normals"
             case .flipNormals:        return "Flip Normals"
+            case .shadeSmoothFaces:   return "Shade Smooth"
+            case .shadeFlatFaces:     return "Shade Flat"
             case .triangulate:        return "Triangulate Faces"
             case .quadify:            return "Triangles to Quads"
             case .selectEdgeLoops:    return "Multi Select Edge Loops"
@@ -1131,6 +1138,8 @@ public extension LastOperator {
             case .fillFace:           return "New Edge/Face from Vertices"
             case .recalculateNormals: return "Recalculate Outside"
             case .flipNormals:        return "Flip"
+            case .shadeSmoothFaces:   return "Smooth Faces"
+            case .shadeFlatFaces:     return "Flat Faces"
             case .selectEdgeLoops:    return "Edge Loops"
             case .selectEdgeRings:    return "Edge Rings"
             case .connectVertexPath:  return "Connect Vertex Path"
@@ -1176,6 +1185,7 @@ public extension LastOperator {
             switch self {
             case .selectEdgeLoops, .selectEdgeRings, .splitSelection, .edgeSplitEdges,
                  .edgeSplitVertices, .mergeAtCenter, .mergeByDistance, .flipNormals, .recalculateNormals,
+                 .shadeSmoothFaces, .shadeFlatFaces,
                  .mergeAtCursor, .mergeCollapse, .mergeAtFirst, .mergeAtLast,
                  .deleteVertices, .deleteEdges, .deleteFaces, .deleteEdgesFaces, .deleteOnlyFaces,
                  .deleteEdgeLoops, .recalculateInside, .setNormalsFromFaces, .smoothNormals,
@@ -1216,6 +1226,7 @@ public extension LastOperator {
             /// as a submenu.
             case mesh = "Mesh"
             case normals = "Normals"
+            case shading = "Shading"
             /// Normals ▸ Average, a submenu of Normals in Blender
             /// (VIEW3D_MT_edit_mesh_normals_average), drawn inside it after
             /// Point to Target… (`parent`, `after`).
@@ -1248,6 +1259,7 @@ public extension LastOperator {
                 case .normals:     return [.flipNormals, .recalculateNormals, .recalculateInside,
                                            .setNormalsFromFaces, .pointNormals, .smoothNormals]
                 case .average:     return [.averageCustomNormal, .averageFaceArea, .averageCornerAngle]
+                case .shading:     return [.shadeSmoothFaces, .shadeFlatFaces]
                 case .cleanUp:     return [.deleteLoose, .limitedDissolve, .fillHoles]
                 case .delete:      return [.deleteVertices, .deleteEdges, .deleteFaces, .deleteEdgesFaces,
                                            .deleteOnlyFaces, .dissolveVerts, .dissolveEdges, .dissolveFaces,
@@ -1340,6 +1352,8 @@ public extension LastOperator {
             case .fillFace:           return "bpy.ops.mesh.edge_face_add"
             case .recalculateNormals: return "bpy.ops.mesh.normals_make_consistent"
             case .flipNormals:        return "bpy.ops.mesh.flip_normals"
+            case .shadeSmoothFaces:   return "bpy.ops.mesh.faces_shade_smooth"
+            case .shadeFlatFaces:     return "bpy.ops.mesh.faces_shade_flat"
             case .triangulate:        return "bpy.ops.mesh.quads_convert_to_tris"
             case .quadify:            return "bpy.ops.mesh.tris_convert_to_quads"
             // `mesh.loop_multi_select` is what older scripts call; 5.2.1 has
@@ -2025,7 +2039,7 @@ public extension LastOperator {
                     Parameter(key: "shape_threshold", label: "Max Shape Angle", kind: .float,
                               value: 0.698, softMin: 0, softMax: 3.142, step: 0.01)]
             case .dissolveVerts, .dissolveEdges, .dissolveFaces,
-                 .fillFace, .flipNormals, .triangulate:
+                 .fillFace, .flipNormals, .triangulate, .shadeSmoothFaces, .shadeFlatFaces:
                 // Nothing to adjust: they either did the thing or they did not.
                 return []
             case .solidify:
