@@ -82,11 +82,13 @@ struct TopBar: View {
         HStack(spacing: 12) {
             FileMenu(scene: scene, session: session, bridge: bridge, savedFiles: $savedFiles,
                      showPreferences: $showPreferences)
+                .helpAnchor(.fileMenu)
                 .frame(maxWidth: .infinity, alignment: .leading)
             Picker("Workspace", selection: $workspace) {
                 Text("Scripting").tag(Workspace.scripting)
                 Text(Workspace.layout.rawValue).tag(Workspace.layout)
             }.pickerStyle(.segmented).frame(maxWidth: 300)
+                .helpAnchor(.workspaces)
             // Undo, Redo and what the last run did, the same on both tabs.
             //
             // Undo and Redo were two items deep in the 3D View's More menu and
@@ -105,7 +107,28 @@ struct TopBar: View {
                     .padding(.horizontal, 8)
                 RunStatusPill(session: session)
             }
+            .helpAnchor(.history)
             .frame(maxWidth: .infinity, alignment: .trailing)
+            // The help tour (HelpTour.swift): each part of the screen and how
+            // to use it. It opens by itself on the first launch; this brings
+            // it back. In Layout, where the parts it shows are.
+            Button {
+                workspace = .layout
+                HelpTour.shared.start()
+            } label: {
+                Image(systemName: "questionmark.circle")
+                    .font(.system(size: 17, weight: .medium))
+                    .foregroundStyle(BTheme.text)
+                    .frame(width: 44, height: 44)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .hoverEffect(.highlight)
+            .accessibilityLabel("Help")
+            .help("Help: a tour of the screen")
+            .helpAnchor(.help)
+            .fixedSize()
+            .layoutPriority(1)
             // Preferences, where Test All Features and the Self-Test are: the
             // last thing on the bar, its size fixed, so a bar too narrow for
             // everything squeezes the rest before it.

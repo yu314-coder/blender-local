@@ -11,8 +11,10 @@ struct NavigationGizmo: View {
     var camera: ViewportCamera
     var onPick: (ViewportCamera.Viewpoint) -> Void
 
-    private static let radius: CGFloat = 34
-    private static let ball: CGFloat = 9
+    // A finger's balls: 24 points across (Blender draws them for a pointer,
+    // at a third of that), on a ring that keeps them apart.
+    private static let radius: CGFloat = 40
+    private static let ball: CGFloat = 12
 
     /// The six axis ends, with Blender's colours and the view each snaps to.
     private static let axes: [(dir: SIMD3<Float>, label: String,
@@ -63,7 +65,7 @@ struct NavigationGizmo: View {
                         .overlay {
                             if axis.positive {
                                 Text(axis.label)
-                                    .font(.system(size: 9, weight: .bold))
+                                    .font(.system(size: 12, weight: .bold))
                                     .foregroundStyle(.black.opacity(0.75))
                             }
                         }
@@ -120,34 +122,100 @@ struct ViewportInfoText: View {
     }
 }
 
-/// The zoom / pan / camera / projection buttons Blender stacks under the
-/// navigation gizmo.
+/// The buttons Blender stacks under the navigation gizmo — zoom, move, the
+/// camera and the projection (the 3D View's navigation gizmos) — each a
+/// finger's size, with Frame All under them. The magnifier and the hand are
+/// dragged, as Blender's are: up and down on the magnifier zooms, the hand
+/// moves the view with the finger. A tap on the magnifier zooms in a step, on
+/// the camera looks through the scene's camera and back, on the grid switches
+/// perspective and orthographic. They were drawn nowhere since the 3D View
+/// was simplified (2eadf65); on a tablet they are the way to a view that a
+/// keyboard's numpad is on a desktop (Blender's iPad design keeps them,
+/// code.blender.org, "Beyond Mouse & Keyboard").
 struct ViewportNavButtons: View {
     @Binding var camera: ViewportCamera
+    var inCameraView: Bool
+    var hasCamera: Bool
+    var toggleCameraView: () -> Void
+    var frameAll: () -> Void
 
     var body: some View {
-        VStack(spacing: 4) {
-            navButton("plus.magnifyingglass", "Zoom In") { camera.dolly(factor: 0.8) }
-            navButton("minus.magnifyingglass", "Zoom Out") { camera.dolly(factor: 1.25) }
-            navButton(camera.isOrthographic ? "grid" : "perspective",
-                      camera.isOrthographic ? "Orthographic" : "Perspective") {
-                camera.isOrthographic.toggle()
-            }
+        VStack(spacing: 8) {
+            DragNavButton(icon: "plus.magnifyingglass", label: "Zoom",
+                          tap: { camera.dolly(factor: 0.8) },
+                          drag: { d in camera.dolly(factor: Float(exp(Double(d.height) * 0.01))) })
+            DragNavButton(icon: "hand.raised", label: "Move the View", tap: nil,
+                          drag: { d in camera.pan(dx: Float(d.width), dy: Float(d.height)) })
+            navButton(inCameraView ? "video.fill" : "video", "Toggle Camera View",
+                      lit: inCameraView, enabled: hasCamera || inCameraView, action: toggleCameraView)
+            navButton(camera.isOrthographic ? "square.grid.3x3" : "perspective",
+                      camera.isOrthographic ? "Orthographic" : "Perspective",
+                      lit: camera.isOrthographic) { camera.isOrthographic.toggle() }
+            navButton("viewfinder", "Frame All", action: frameAll)
         }
     }
 
-    @ViewBuilder
-    private func navButton(_ icon: String, _ label: String, action: @escaping () -> Void) -> some View {
+    private func navButton(_ icon: String, _ label: String, lit: Bool = false, enabled: Bool = true,
+                           action: @escaping () -> Void) -> some View {
         Button(action: action) {
-            Image(systemName: icon)
-                .font(.system(size: 12))
-                .foregroundStyle(BTheme.text.opacity(0.8))
-                .frame(width: 26, height: 26)
-                .background(BTheme.widget.opacity(0.75))
-                .clipShape(Circle())
+            NavButtonFace(icon: icon, lit: lit)
         }
         .buttonStyle(.plain)
-                .hoverEffect(.highlight)
+        .hoverEffect(.highlight)
+        .disabled(!enabled)
+        .opacity(enabled ? 1 : 0.4)
         .accessibilityLabel(label)
+    }
+}
+
+/// One of the navigation buttons' faces: a 40-point circle.
+private struct NavButtonFace: View {
+    var icon: String
+    var lit = false
+
+    var body: some View {
+        Image(systemName: icon)
+            .font(.system(size: 16, weight: .medium))
+            .foregroundStyle(lit ? Color.white : BTheme.text.opacity(0.9))
+            .frame(width: 40, height: 40)
+            .background(lit ? BTheme.select : BTheme.header.opacity(0.85), in: Circle())
+            .contentShape(Circle())
+    }
+}
+
+/// A navigation button that is dragged, as Blender's zoom and move gizmos
+/// are: each step of the drag goes to `drag` as it happens, and a touch that
+/// did not move is a tap.
+private struct DragNavButton: View {
+    var icon: String
+    var label: String
+    var tap: (() -> Void)?
+    var drag: (CGSize) -> Void
+    @State private var last: CGSize?
+    @State private var moved = false
+
+    var body: some View {
+        NavButtonFace(icon: icon, lit: last != nil && moved)
+            .gesture(
+                DragGesture(minimumDistance: 0, coordinateSpace: .global)
+                    .onChanged { g in
+                        let previous = last ?? .zero
+                        last = g.translation
+                        if !moved, hypot(g.translation.width, g.translation.height) > 4 { moved = true }
+                        guard moved else { return }
+                        drag(CGSize(width: g.translation.width - previous.width,
+                                    height: g.translation.height - previous.height))
+                    }
+                    .onEnded { _ in
+                        if !moved { tap?() }
+                        last = nil
+                        moved = false
+                    }
+            )
+            .hoverEffect(.highlight)
+            .accessibilityElement()
+            .accessibilityLabel(label)
+            .accessibilityAddTraits(.isButton)
+            .accessibilityAction { tap?() }
     }
 }

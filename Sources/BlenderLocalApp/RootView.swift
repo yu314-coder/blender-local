@@ -583,6 +583,50 @@ struct RootView: View {
             }
         }
         .background(BTheme.topbar)
+        // The help tour, over the top bar and the workspace, whose parts it
+        // points at; first launch opens it (HelpTour.opensAtLaunch).
+        .helpTourOverlay()
+        .onAppear {
+            if HelpTour.opensAtLaunch {
+                DispatchQueue.main.asyncAfter(deadline: .now() + 1.2) {
+                    workspace = .layout
+                    HelpTour.shared.start()
+                }
+            }
+            #if DEBUG
+            // `-help-tour <card>`: the tour open at that card, 3 s in, to be
+            // photographed (a card's number counts from 0).
+            let args = ProcessInfo.processInfo.arguments
+            if let i = args.firstIndex(of: "-help-tour"), i + 1 < args.count {
+                if let card = Int(args[i + 1]) {
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 3) {
+                        workspace = .layout
+                        HelpTour.shared.start(at: card)
+                    }
+                } else if args[i + 1] == "walk" {
+                    // `-help-tour walk`: every card in turn, 3 s each, each
+                    // announced, then the tour closed — a run to photograph
+                    // card by card.
+                    func show(_ card: Int) {
+                        HelpTour.shared.start(at: card)
+                        print("[bk] help-tour card \(card)")
+                        fflush(stdout)
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 3) {
+                            if card + 1 < 19 { show(card + 1) } else {
+                                HelpTour.shared.step = nil
+                                print("[bk] help-tour walked")
+                                fflush(stdout)
+                            }
+                        }
+                    }
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 6) {
+                        workspace = .layout
+                        show(0)
+                    }
+                }
+            }
+            #endif
+        }
         .ignoresSafeArea(.keyboard, edges: .bottom)
         #if DEBUG
         .modifier(DebugFrame())

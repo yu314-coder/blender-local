@@ -1,5 +1,75 @@
 # Blender Local — the app
 
+## November 5, later: a help tour, clearer side tabs, and a crash fixed
+
+The user: "make the side tab and other ui be easier to use and a help button
+(first open) show how to use each".
+
+- **The help tour** (`HelpTour.swift`). A **?** in the top bar, beside
+  Preferences, and the first time the app opens it opens by itself. It lights
+  each part of the screen in turn and says, in a card beside it, what the part
+  is and how a finger uses it: the toolbar, Shift/Ctrl/Alt, the mode menu, the
+  header menus, the Transform button, the editors' button, More, the navigation
+  buttons, the Sidebar, the 3D Viewport's gestures, the status row, the
+  Outliner, the Properties editor, the timeline, File, Layout and Scripting,
+  Undo and Redo, and the **?** itself. Next, Back and Skip on the card, a tap
+  anywhere outside it goes on, Return and Escape from a keyboard. A part not on
+  the screen (the editors closed, the toolbar hidden) is left out, never pointed
+  at in the wrong place. The parts mark themselves (`.helpAnchor`), so the
+  light follows them in any window size; the card goes under the part, over it
+  or beside it, wherever it fits. A launch with the app's own test arguments
+  never opens it.
+- **The Properties editor's tabs** down its left side: the open tab is filled
+  and its name white, as the toolbar and the Sidebar light theirs. It was a
+  background one shade off the column's, the others the same icons at 60 %.
+  The tabs are a finger's size (68 × 56), with names at 11 points, and a line
+  between the scene's tab and the object's, where Blender draws one. A tab
+  that needs an object says so when there is none.
+- **Blender's Sidebar arrow** on the 3D Viewport's right edge, under the
+  navigation buttons: the tab a hidden Sidebar leaves, which opens it. The
+  Sidebar was only in More and behind N, a key an iPad on its own does not
+  have.
+- **Toolbar names** a size up, 10 points.
+- **A crash fixed** that Test All Features met once in its Rewind, with the
+  Mac under heavy load: "closure argument was escaped in
+  withoutActuallyEscaping block". While the main thread waits for a script it
+  serves the script's calls (`MainWait`, build 53); it woke the script before
+  letting go of the call it had run, and Swift stops the app when it sees that.
+  It now lets go first. `scripts/run-mainwait-tests.sh` hands 200,000 calls
+  across with the main thread kept busy: the old code fails it every run, the
+  new passes.
+
+## November 5: the 3D View as Blender draws it — navigation, the view's text, keys for a finger
+
+The user: the interface is still hard to use, "go see how real blender be
+like". Side by side with desktop Blender 5.2.1 (opened with factory settings
+and a throwaway home folder) and Blender's own iPad design (code.blender.org,
+"Beyond Mouse & Keyboard", July 2025, and its mockup videos), the 3D View
+lacked what both draw over it:
+
+- **The navigation region**, top right: the axis gizmo — a tap on an axis is
+  that view — and the buttons Blender stacks under it: Zoom (drag up and down,
+  or tap to zoom in a step), Move the View (drag), Toggle Camera View (into the
+  scene's camera and back to the view it left) and Perspective/Orthographic,
+  with Frame All under them. `NavigationGizmo` and `ViewportNavButtons` were
+  written and then drawn nowhere since the 3D View was simplified (2eadf65); on
+  a tablet they are what a numpad is on a desktop, and Blender's iPad mockup
+  keeps them. Balls 24 points, buttons 40, beside the Sidebar when it is open.
+- **The view's text**, top left: "User Perspective", then the frame, the
+  collection and the active object (`ViewportInfoText`).
+- **Shift, Ctrl and Alt** at the foot of the toolbar (`ScreenModifiers`), for a
+  finger with no keyboard, as Blender's iPad design puts them in its wheel.
+  Each stays on, lit, until tapped off, and every gesture in the 3D View reads
+  them as held keys: Shift-tap toggles a selection, Alt-tap selects a loop,
+  Ctrl-tap a shortest path, a Shift-drag extends a box. Object Mode's tap had
+  not read Shift at all, so Shift-click from a trackpad replaced the selection
+  rather than adding to it; it toggles now, as Blender's `view3d.select(toggle=
+  True)` does.
+- **The status row** says what a finger does with the tool in hand, as
+  Blender's status bar says what each mouse button does: Tap Select (Toggle
+  Selection with Shift on), Drag Rotate View or the tool's own, Two fingers
+  Move View, Pinch Zoom; as many as fit, and a drag's readout while it runs.
+
 ## November 4, late: one Transform button, Delete that deletes, Image to 3D in sight, no freezes
 
 The user, on build 52, with a Test All Features report from the iPad (1 Freeze,

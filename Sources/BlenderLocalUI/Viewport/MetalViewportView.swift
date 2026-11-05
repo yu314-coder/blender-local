@@ -293,16 +293,16 @@ struct MetalViewportView: UIViewRepresentable {
                 if let view {
                     let press = CGPoint(x: g.location(in: view).x - g.translation(in: view).x,
                                         y: g.location(in: view).y - g.translation(in: view).y)
-                    if beginRulerDrag(at: press, size: view.bounds.size, modifiers: g.modifierFlags) {
-                        updateRulerDrag(to: g.location(in: view), modifiers: g.modifierFlags)
+                    if beginRulerDrag(at: press, size: view.bounds.size, modifiers: ScreenModifiers.shared.merged(g.modifierFlags)) {
+                        updateRulerDrag(to: g.location(in: view), modifiers: ScreenModifiers.shared.merged(g.modifierFlags))
                         return
                     }
-                    if beginCursorDrag(at: press, size: view.bounds.size, places: false, modifiers: g.modifierFlags) {
-                        updateCursorDrag(to: g.location(in: view), modifiers: g.modifierFlags)
+                    if beginCursorDrag(at: press, size: view.bounds.size, places: false, modifiers: ScreenModifiers.shared.merged(g.modifierFlags)) {
+                        updateCursorDrag(to: g.location(in: view), modifiers: ScreenModifiers.shared.merged(g.modifierFlags))
                         return
                     }
                 }
-                if let view, beginRegion(at: g.location(in: view), modifiers: g.modifierFlags) {
+                if let view, beginRegion(at: g.location(in: view), modifiers: ScreenModifiers.shared.merged(g.modifierFlags)) {
                     return
                 }
                 if let view {
@@ -401,7 +401,7 @@ struct MetalViewportView: UIViewRepresentable {
             guard let view else { return false }
             if cursorDrag != nil {
                 switch g.state {
-                case .changed: updateCursorDrag(to: g.location(in: view), modifiers: g.modifierFlags)
+                case .changed: updateCursorDrag(to: g.location(in: view), modifiers: ScreenModifiers.shared.merged(g.modifierFlags))
                 case .ended: endCursorDrag()
                 case .cancelled, .failed: endCursorDrag(cancelled: true)
                 default: break
@@ -410,7 +410,7 @@ struct MetalViewportView: UIViewRepresentable {
             }
             if rulerDrag != nil {
                 switch g.state {
-                case .changed: updateRulerDrag(to: g.location(in: view), modifiers: g.modifierFlags)
+                case .changed: updateRulerDrag(to: g.location(in: view), modifiers: ScreenModifiers.shared.merged(g.modifierFlags))
                 case .ended, .cancelled, .failed: endRulerDrag()
                 default: break
                 }
@@ -740,7 +740,7 @@ struct MetalViewportView: UIViewRepresentable {
             let t = g.translation(in: g.view)
             g.setTranslation(.zero, in: g.view)
             guard t != .zero else { return }
-            let flags = g.modifierFlags
+            let flags = ScreenModifiers.shared.merged(g.modifierFlags)
             let scene = parent.scene
             if flags.contains(.command) || flags.contains(.control) {
                 // Scrolling up zooms in, matching the scroll wheel everywhere else.
@@ -1188,18 +1188,18 @@ struct MetalViewportView: UIViewRepresentable {
                 if let view {
                     let press = CGPoint(x: g.location(in: view).x - g.translation(in: view).x,
                                         y: g.location(in: view).y - g.translation(in: view).y)
-                    if beginRulerDrag(at: press, size: view.bounds.size, modifiers: g.modifierFlags) {
-                        updateRulerDrag(to: g.location(in: view), modifiers: g.modifierFlags)
+                    if beginRulerDrag(at: press, size: view.bounds.size, modifiers: ScreenModifiers.shared.merged(g.modifierFlags)) {
+                        updateRulerDrag(to: g.location(in: view), modifiers: ScreenModifiers.shared.merged(g.modifierFlags))
                         return
                     }
-                    if beginCursorDrag(at: press, size: view.bounds.size, places: true, modifiers: g.modifierFlags) {
-                        updateCursorDrag(to: g.location(in: view), modifiers: g.modifierFlags)
+                    if beginCursorDrag(at: press, size: view.bounds.size, places: true, modifiers: ScreenModifiers.shared.merged(g.modifierFlags)) {
+                        updateCursorDrag(to: g.location(in: view), modifiers: ScreenModifiers.shared.merged(g.modifierFlags))
                         return
                     }
                 }
                 // The Pencil draws a lasso, a box or a circle stroke as a
                 // finger does: the select tools are drags of their own.
-                if let view, beginRegion(at: g.location(in: view), modifiers: g.modifierFlags) {
+                if let view, beginRegion(at: g.location(in: view), modifiers: ScreenModifiers.shared.merged(g.modifierFlags)) {
                     return
                 }
                 if let view, !beginGizmoIfHit(at: g.location(in: view)) {
@@ -1387,7 +1387,7 @@ struct MetalViewportView: UIViewRepresentable {
             // A tap in the view gives it the keyboard back — after a sheet with
             // a text field, say — so Tab reaches it again.
             (view as? ViewportMTKView)?.takeKeyboard()
-            tap(at: g.location(in: view), modifiers: g.modifierFlags)
+            tap(at: g.location(in: view), modifiers: ScreenModifiers.shared.merged(g.modifierFlags))
         }
 
         /// What a tap at `point` does, by the tool and the mode: the tap
@@ -1475,11 +1475,16 @@ struct MetalViewportView: UIViewRepresentable {
             // while the selection was sent twice, and every tap paid for two
             // full read-backs of the scene. `select` sends it once and reads
             // back only the selection.
+            // Shift+click is Blender's toggle in Object Mode too
+            // (`view3d.select(toggle=True)`): with Shift held, on the keyboard
+            // or the toolbar's (ScreenModifiers), a tap adds the object to the
+            // selection or takes it out. It was read only in Edit Mode.
+            let action: SelectAction = modifiers.contains(.shift) ? .difference : parent.selectAction
             if let bridge = parent.bridge {
-                bridge.select(Self.selectPython(hit, action: parent.selectAction))
+                bridge.select(Self.selectPython(hit, action: action))
             } else {
                 let hitSet: Set<UUID> = hit.map { [$0.id] } ?? []
-                let next = parent.selectAction.apply(parent.scene.selection, hit: hitSet)
+                let next = action.apply(parent.scene.selection, hit: hitSet)
                 parent.scene.selection = next
                 if let hit, next.contains(hit.id) { parent.scene.activeID = hit.id }
                 parent.onSelectionChange(hit)

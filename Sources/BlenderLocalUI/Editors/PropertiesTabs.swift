@@ -79,6 +79,14 @@ enum PropertiesTab: String, CaseIterable, Identifiable {
     }
 }
 
+/// The tabs, down the editor's left side.
+///
+/// Lit as the toolbar and the Sidebar light theirs — filled, in white — so
+/// which one is open reads at a glance: the open tab was a faint background a
+/// shade off the column's, the others the same icons at 60 % (the user,
+/// November 5: "make the side tab … easier to use"). Each a finger's size,
+/// its name under it at a readable size, and a line under the scene tabs
+/// where Blender groups them.
 struct PropertiesTabColumn: View {
     @Binding var selection: PropertiesTab
     var hasActiveObject: Bool
@@ -87,40 +95,49 @@ struct PropertiesTabColumn: View {
 
     var body: some View {
         ScrollView(.vertical, showsIndicators: false) {
-            VStack(spacing: 2) {
+            VStack(spacing: 4) {
                 ForEach(tabs) { tab in
-                    let enabled = !tab.needsActiveObject || hasActiveObject
-                    Button {
-                        if enabled { selection = tab }
-                    } label: {
-                        VStack(spacing: 1) {
-                            Image(systemName: tab.icon)
-                                .font(.system(size: 17))
-                            // Blender's tab names (`SpaceProperties.context`,
-                            // 5.2.1), whole: "Mods" and "Mat" were the app's.
-                            Text(tab.label)
-                                .font(BTheme.Font.ui(10))
-                                .lineLimit(1)
-                                .minimumScaleFactor(0.8)
-                        }
-                        .foregroundStyle(selection == tab ? tab.accent
-                                         : tab.accent.opacity(enabled ? 0.6 : 0.25))
-                        .frame(width: 62, height: 48)
-                        .background(selection == tab ? BTheme.properties : Color.clear)
-                        .clipShape(RoundedRectangle(cornerRadius: 4))
-                        .contentShape(Rectangle())
-                    }
-                    .buttonStyle(.plain)
-                    .hoverEffect(.highlight)
-                    .disabled(!enabled)
-                    .accessibilityLabel(tab.label)
-                    .help(tab.label)
+                    // Blender's order puts the scene's tabs first, then the
+                    // object's; a line between the two, as Blender draws one.
+                    if tab == .object { Rectangle().fill(BTheme.outline).frame(width: 40, height: 1).padding(.vertical, 2) }
+                    tabButton(tab)
                 }
             }
             .padding(.vertical, 6)
-            .padding(.horizontal, 3)
+            .padding(.horizontal, 4)
         }
-        .frame(width: 68)
+        .frame(width: 76)
         .background(BTheme.outliner)
+    }
+
+    private func tabButton(_ tab: PropertiesTab) -> some View {
+        let enabled = !tab.needsActiveObject || hasActiveObject
+        let open = selection == tab
+        return Button {
+            if enabled { selection = tab }
+        } label: {
+            VStack(spacing: 3) {
+                Image(systemName: tab.icon)
+                    .font(.system(size: 18, weight: .medium))
+                    .foregroundStyle(open ? Color.white : tab.accent.opacity(enabled ? 1 : 0.35))
+                // Blender's tab names (`SpaceProperties.context`, 5.2.1),
+                // whole: "Mods" and "Mat" were the app's.
+                Text(tab.label)
+                    .font(BTheme.Font.ui(11, weight: open ? .semibold : .regular))
+                    .foregroundStyle(open ? Color.white : BTheme.text.opacity(enabled ? 0.9 : 0.35))
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.7)
+            }
+            .frame(width: 68, height: 56)
+            .background(open ? BTheme.select : Color.clear,
+                        in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .hoverEffect(.highlight)
+        .disabled(!enabled)
+        .accessibilityLabel(tab.label)
+        .accessibilityAddTraits(open ? .isSelected : [])
+        .help(enabled ? tab.label : "\(tab.label): select an object first")
     }
 }

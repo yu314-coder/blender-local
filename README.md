@@ -54,6 +54,9 @@ stand-in plays Blender's part for UI testing. Device and Mac
 
 ## What it does
 
+**Help**: the ? in the top bar opens a tour that lights each part of the
+screen and says how to use it. It opens by itself the first time.
+
 **Layout** (the 3D Viewport)
 - Add meshes, curves, lattices, empties, cameras, lights and text.
 - Select by tap, Box, Circle or Lasso, or from the Select menu and the Outliner.

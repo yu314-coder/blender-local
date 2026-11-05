@@ -39,7 +39,22 @@ final class MainWait: @unchecked Sendable {
     /// Signalled for each call handed over, and once when the work is done.
     let wake = DispatchSemaphore(value: 0)
     private let queueLock = NSLock()
-    private var queue: [() -> Void] = []
+    private var queue: [Handoff] = []
+
+    /// One call handed over: the work, and the signal that it is done.
+    ///
+    /// The work holds the caller's closure, which `run` may only lend
+    /// (`withoutActuallyEscaping`): by the time the caller is woken, nothing
+    /// on the main thread may still hold it, or Swift stops the app ("closure
+    /// argument was escaped in withoutActuallyEscaping block"). It did, in
+    /// Test All Features' Rewind with the Mac under load: `done` was signalled
+    /// from inside the work while the serving loop still held it. Now the
+    /// loop drops the work first (`perform`) and signals after.
+    private final class Handoff: @unchecked Sendable {
+        var work: (() -> Void)?
+        let done = DispatchSemaphore(value: 0)
+        init(_ work: @escaping () -> Void) { self.work = work }
+    }
 
     /// Begins a wait; nothing is handed over before this.
     static func begin() -> MainWait {
@@ -59,12 +74,12 @@ final class MainWait: @unchecked Sendable {
     func run<T>(_ body: () -> T) -> T {
         withoutActuallyEscaping(body) { body in
             var result: T?
-            let done = DispatchSemaphore(value: 0)
+            let handoff = Handoff { result = body() }
             queueLock.lock()
-            queue.append { result = body(); done.signal() }
+            queue.append(handoff)
             queueLock.unlock()
             wake.signal()
-            done.wait()
+            handoff.done.wait()
             return result!
         }
     }
@@ -76,7 +91,17 @@ final class MainWait: @unchecked Sendable {
             let next = queue.isEmpty ? nil : queue.removeFirst()
             queueLock.unlock()
             guard let next else { return }
-            next()
+            Self.perform(next)
+            next.done.signal()
         }
+    }
+
+    /// Runs the work and lets go of it before returning, so that nothing here
+    /// holds the caller's closure once `done` is signalled.
+    @inline(never)
+    private static func perform(_ handoff: Handoff) {
+        guard let work = handoff.work else { return }
+        handoff.work = nil
+        work()
     }
 }

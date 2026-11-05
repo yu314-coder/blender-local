@@ -55,6 +55,8 @@ struct LayoutWorkspace: View {
     /// Set by Look Through Camera: the frame the render will take, and the
     /// view it was set from. The guide is drawn while the view has not moved.
     @State private var cameraView: (aspect: CGFloat, camera: ViewportCamera, name: String)?
+    /// The view the navigation buttons' camera left, to go back to.
+    @State private var viewBeforeCamera: ViewportCamera?
     @State private var showOperations = false
     /// Blender's pop-up menu open at the pointer — a right-click's context
     /// menu, Shift+A's Add, M's Move to Collection (ViewportMenus.swift).
@@ -313,7 +315,7 @@ struct LayoutWorkspace: View {
             // underneath: an upright iPad's view alone is too short for Edit
             // Mode's twelve buttons.
             HStack(spacing: 0) {
-                if showsToolbar { toolShelf }
+                if showsToolbar { toolShelf.helpAnchor(.toolbar) }
                 GeometryReader { geo in
                     let wide = geo.size.width >= geo.size.height
                     let layout = wide ? AnyLayout(HStackLayout(spacing: 0)) : AnyLayout(VStackLayout(spacing: 0))
@@ -333,6 +335,7 @@ struct LayoutWorkspace: View {
                                               onStrokeEnd: keepStroke,
                                               onSecondaryClick: keysLive ? { openMenu(.context, at: $0) } : nil,
                                               viewKeys: keysLive ? viewKeyCommands : nil)
+                                .helpAnchor(.viewport)
                                 .background(GeometryReader { geo in
                                     Color.clear
                                         .onAppear {
@@ -371,6 +374,11 @@ struct LayoutWorkspace: View {
                             // editing a mesh, the pick bar; the Cursor's and the Measure
                             // tool's settings; then the Statistics overlay's rows.
                             VStack(alignment: .leading, spacing: 0) {
+                                // Blender's view text: User Perspective, then the frame,
+                                // the collection and the active object.
+                                ViewportInfoText(scene: scene, camera: camera)
+                                    .padding(.leading, 14).padding(.top, 10)
+                                    .allowsHitTesting(false)
                                 HStack { cutToolBar; pickBar; cursorToolBar; measureToolBar; Spacer(minLength: 0) }
                                 if options.measure.statistics, editingMesh, let stats = scene.editMeasurements?.statistics {
                                     StatisticsOverlay(statistics: stats)
@@ -455,11 +463,29 @@ struct LayoutWorkspace: View {
                             .padding(.leading, 14)
                             .padding(.bottom, 64)
 
-                            Button { camera.frameAll(scene.objects) } label: {
-                                Image(systemName: "viewfinder").frame(width: 44, height: 44)
-                                    .background(BTheme.header.opacity(0.9)).clipShape(Circle())
-                            }.padding(14).accessibilityLabel("Frame All")
-                            ViewportInfoRow(scene: scene)
+                            // Blender's navigation region, top right of the 3D View:
+                            // the axis gizmo — a tap on an axis is that view — and the
+                            // buttons Blender stacks under it, with Frame All.
+                            VStack(alignment: .trailing, spacing: 14) {
+                                VStack(alignment: .trailing, spacing: 10) {
+                                    NavigationGizmo(camera: camera) { camera.snap(to: $0) }
+                                    ViewportNavButtons(camera: $camera, inCameraView: inCameraView,
+                                                       hasCamera: cameraToLookThrough != nil,
+                                                       toggleCameraView: toggleCameraView,
+                                                       frameAll: { camera.frameAll(scene.objects) })
+                                        .padding(.trailing, 22)
+                                }
+                                .helpAnchor(.navigation)
+                                // Blender's arrow on the view's edge for a
+                                // hidden Sidebar, under the navigation.
+                                if !showsSidebar {
+                                    sidebarEdgeTab.padding(.trailing, -10)
+                                }
+                            }
+                            .padding(.top, 10)
+                            // Beside the Sidebar when it is open, as Blender draws it.
+                            .padding(.trailing, showsSidebar ? BTheme.Metric.sidebarWidth + 18 : 10)
+                            ViewportInfoRow(scene: scene, tool: tool)
 
                             if let report = shownReport {
                                 reportBanner(report)
@@ -474,6 +500,7 @@ struct LayoutWorkspace: View {
                 }
             }
             AnimationDock(scene: scene, session: session, bridge: bridge)
+                .helpAnchor(.timeline)
         }
         .sheet(isPresented: Binding(get: { panel != nil }, set: { if !$0 { panel = nil } })) {
             NavigationStack {
@@ -2489,7 +2516,7 @@ struct LayoutWorkspace: View {
     /// the transform settings go, as they go from Blender's header there.
     private var headerRow: some View {
         HStack(spacing: 4) {
-            modeMenu
+            modeMenu.helpAnchor(.modeMenu)
             GeometryReader { geo in
                 ScrollView(.horizontal, showsIndicators: false) {
                     HStack(spacing: 4) {
@@ -2530,7 +2557,7 @@ struct LayoutWorkspace: View {
                         // proportional editing — in Object and Edit Mode —
                         // then the mirror row in the modes that draw it.
                         if scene.mode == .object || editing {
-                            transformButton
+                            transformButton.helpAnchor(.transform)
                         }
                         if showsSymmetry { symmetryControl }
                     }
@@ -2538,6 +2565,7 @@ struct LayoutWorkspace: View {
                     .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { headerContentWidth = $0 }
                 }
                 .modifier(ScrolledToEnd(atEnd: $headerScrolledToEnd))
+                .helpAnchor(.headerMenus)
                 .overlay(alignment: .trailing) {
                     if headerContentWidth > geo.size.width + 1, !headerScrolledToEnd {
                         ZStack(alignment: .trailing) {
@@ -2554,8 +2582,8 @@ struct LayoutWorkspace: View {
                 }
             }
             Rectangle().fill(BTheme.outline).frame(width: 1, height: 24).padding(.horizontal, 2)
-            editorsToggle
-            moreMenu
+            editorsToggle.helpAnchor(.editorsToggle)
+            moreMenu.helpAnchor(.more)
         }
         .padding(.horizontal, compactHeader ? 4 : 8)
         .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { headerWidth = $0 }
@@ -2686,6 +2714,12 @@ struct LayoutWorkspace: View {
                         .accessibilityLabel(item.label)
                     }
                 }
+                // Shift, Ctrl and Alt for a finger (ScreenModifiers), under
+                // the tools, as Blender's iPad design keeps them in reach.
+                if scene.mode == .object || editing {
+                    Rectangle().fill(BTheme.outline).frame(width: 36, height: 1).padding(.vertical, 4)
+                    ScreenModifierKeys().helpAnchor(.modifierKeys)
+                }
             }
             .padding(.vertical, 6)
             .frame(maxWidth: .infinity)
@@ -2715,9 +2749,9 @@ struct LayoutWorkspace: View {
         VStack(spacing: 3) {
             Image(systemName: icon).font(.system(size: 17, weight: .medium))
             Text(title)
-                .font(.system(size: 9, weight: .medium))
+                .font(.system(size: 10, weight: .medium))
                 .lineLimit(2).multilineTextAlignment(.center)
-                .minimumScaleFactor(0.8)
+                .minimumScaleFactor(0.75)
         }
         .foregroundStyle(active ? Color.white : BTheme.text)
         .frame(width: 56, height: 56)
@@ -2737,6 +2771,7 @@ struct LayoutWorkspace: View {
                 OutlinerView(scene: scene, session: session, bridge: bridge)
                     .toolbar(.hidden, for: .navigationBar)
             }
+            .helpAnchor(.outliner)
             // The Outliner's share of the column, which the line under it
             // drags (`outlinerShare`); beside the Properties editor when the
             // dock is under the view, 320 points wide.
@@ -2764,11 +2799,35 @@ struct LayoutWorkspace: View {
                 propertiesEditor
                     .toolbar(.hidden, for: .navigationBar)
             }
+            .helpAnchor(.properties)
         }
         .background(BTheme.properties)
         .overlay(alignment: wide ? .leading : .top) {
             BEditorDivider(wide ? .vertical : .horizontal)
         }
+    }
+
+    /// Blender's region arrow: the small tab on the 3D View's right edge that
+    /// a hidden Sidebar leaves, which opens it. The Sidebar was only in More
+    /// and behind N, a key an iPad without a keyboard does not have.
+    private var sidebarEdgeTab: some View {
+        let shape = UnevenRoundedRectangle(topLeadingRadius: 10, bottomLeadingRadius: 10, style: .continuous)
+        return Button { showsSidebar = true } label: {
+            Image(systemName: "chevron.left")
+                .font(.system(size: 13, weight: .bold))
+                .foregroundStyle(BTheme.text)
+                .frame(width: 24, height: 60)
+                .background(BTheme.header.opacity(0.92), in: shape)
+                .overlay(shape.strokeBorder(BTheme.outline, lineWidth: 1))
+                // A finger's width, though the tab is drawn narrow.
+                .frame(width: 44, height: 60, alignment: .trailing)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .hoverEffect(.highlight)
+        .accessibilityLabel("Sidebar")
+        .help("Sidebar (N)")
+        .helpAnchor(.sidebarTab)
     }
 
     /// Shows or hides the Outliner and the Properties editor.
@@ -3433,6 +3492,27 @@ struct LayoutWorkspace: View {
     /// `view3d.camera_to_view` aims `scene.camera` (its poll fails without
     /// one). It aimed the selected camera ahead of it (round 4's review).
     private var cameraToAlign: BKObject? { scene.sceneCamera }
+
+    /// The view is the camera's, as Active Camera left it and nothing has
+    /// moved it since.
+    private var inCameraView: Bool {
+        guard let cameraView else { return false }
+        return camera.stillAt(cameraView.camera)
+    }
+
+    /// The navigation buttons' camera, Blender's View Camera (Numpad 0): into
+    /// the scene's camera, and from it back to the view it was entered from.
+    private func toggleCameraView() {
+        if inCameraView {
+            cameraView = nil
+            if let back = viewBeforeCamera { camera = back }
+            viewBeforeCamera = nil
+        } else {
+            let before = camera
+            lookThroughCamera()
+            if inCameraView { viewBeforeCamera = before }
+        }
+    }
 
     private func lookThroughCamera(_ chosen: BKObject? = nil) {
         guard let object = chosen ?? cameraToLookThrough,
@@ -4937,18 +5017,80 @@ extension LayoutWorkspace {
 /// way is doing ("Orbit  40°, 25°"). A view of its own so that a drag, which
 /// changes the readout every step, redraws this row and not the whole 3D View
 /// (`MetalViewportView.Coordinator.moveCamera`).
+/// The 3D View's status row: what a finger does here with the tool in hand,
+/// as Blender's status bar says what each mouse button does — a tap, a drag,
+/// two fingers, a pinch — in Blender's words, and while a drag runs, its
+/// readout. On a touchscreen the gestures are what nothing on the screen
+/// shows (Blender's iPad design adds "a helper overlay with curated
+/// shortcuts" for the same reason). The active object's name it showed is in
+/// the view's own text now (`ViewportInfoText`).
 private struct ViewportInfoRow: View {
     var scene: BKScene
+    var tool: ActiveTool
+    var keys = ScreenModifiers.shared
 
     var body: some View {
         VStack {
             Spacer()
-            HStack {
-                Text(scene.active?.name ?? "Tap an object to select it")
-                    .font(.system(size: 13, weight: .medium))
-                Spacer()
-                if let readout = scene.dragReadout { Text(readout).font(.system(size: 12, design: .monospaced)) }
-            }.padding(14).background(BTheme.header.opacity(0.9))
-        }.allowsHitTesting(false)
+            HStack(spacing: 18) {
+                if let readout = scene.dragReadout {
+                    Text(readout).font(.system(size: 13, design: .monospaced))
+                } else {
+                    // As many as fit, the most useful first: a narrow view
+                    // (an iPad held upright, the editors open) drops the last.
+                    let all = hints
+                    ViewThatFits(in: .horizontal) {
+                        ForEach((1...all.count).reversed(), id: \.self) { count in
+                            hintRow(Array(all.prefix(count)))
+                        }
+                    }
+                }
+                Spacer(minLength: 0)
+            }
+            .padding(.horizontal, 14)
+            .frame(height: 44)
+            .background(BTheme.header.opacity(0.9))
+            .helpAnchor(.statusRow)
+        }
+        .allowsHitTesting(false)
+    }
+
+    struct Hint { var gesture: String; var action: String }
+
+    private func hintRow(_ hints: [Hint]) -> some View {
+        HStack(spacing: 18) {
+            ForEach(hints, id: \.gesture) { hint in
+                HStack(spacing: 6) {
+                    Text(hint.gesture)
+                        .font(.system(size: 11, weight: .semibold))
+                        .foregroundStyle(BTheme.textDim)
+                        .padding(.horizontal, 6).padding(.vertical, 2)
+                        .overlay(RoundedRectangle(cornerRadius: 4).stroke(BTheme.textDim.opacity(0.6), lineWidth: 1))
+                    Text(hint.action).font(.system(size: 12))
+                }
+                .lineLimit(1)
+                .fixedSize()
+            }
+        }
+    }
+
+    /// The gestures and what they do, by the tool (MetalViewportView's
+    /// `handleTap`, `handleOrbit`, `handlePan`, `handlePinch`).
+    var hints: [Hint] {
+        let select = keys.shift ? "Toggle Selection" : "Select"
+        var hints: [Hint]
+        switch tool {
+        case .boxSelect:    hints = [Hint(gesture: "Tap", action: select), Hint(gesture: "Drag", action: "Box Select")]
+        case .circleSelect: hints = [Hint(gesture: "Tap", action: select), Hint(gesture: "Drag", action: "Circle Select")]
+        case .lassoSelect:  hints = [Hint(gesture: "Tap", action: select), Hint(gesture: "Drag", action: "Lasso Select")]
+        case .move, .rotate, .scale, .transform:
+            hints = [Hint(gesture: "Tap", action: select),
+                     Hint(gesture: "Drag the selection", action: tool.label),
+                     Hint(gesture: "Drag elsewhere", action: "Rotate View")]
+        case .cursor:  hints = [Hint(gesture: "Tap", action: "Set 3D Cursor"), Hint(gesture: "Drag", action: "Rotate View")]
+        case .measure: hints = [Hint(gesture: "Drag", action: "Measure")]
+        default:       hints = [Hint(gesture: "Tap", action: select), Hint(gesture: "Drag", action: "Rotate View")]
+        }
+        return hints + [Hint(gesture: "Two fingers", action: "Move View"), Hint(gesture: "Pinch", action: "Zoom")]
     }
 }
