@@ -45,7 +45,9 @@ struct HelpStep {
                      + "and Sculpt Mode shapes it with brushes. With a keyboard, Tab switches between Object and Edit Mode."),
         HelpStep(spot: .headerMenus, icon: "menubar.rectangle", title: "Header menus",
                  text: "Blender's menus for the mode: Select, Add, Object and Mesh in Object Mode. "
-                     + "Add puts a new object at the 3D cursor. When the row is too long, swipe it sideways."),
+                     + "Add puts a new object at the 3D cursor. Object ▸ Transform ▸ Move, Rotate and Scale "
+                     + "follow your finger anywhere in the view until you tap; the bar over the view locks X, Y or Z. "
+                     + "When the row is too long, swipe it sideways."),
         HelpStep(spot: .transform, icon: "move.3d", title: "Transform settings",
                  text: "The orientation, the pivot point, snapping and proportional editing, in one button. "
                      + "What is turned on shows in orange."),
@@ -61,7 +63,9 @@ struct HelpStep {
                      + "and the view's in View. Its × closes it again."),
         HelpStep(spot: .viewport, icon: "cube", title: "3D Viewport",
                  text: "Tap to select. Drag to rotate the view, or to use the tool in hand. "
-                     + "Two fingers move the view and a pinch zooms. With a trackpad or mouse, a right-click opens the context menu."),
+                     + "Two fingers move the view and a pinch zooms. With a trackpad or mouse, a right-click opens the context menu. "
+                     + "With a keyboard, G, R and S move, rotate and scale the selection: X, Y or Z locks an axis, "
+                     + "a number sets the amount, Return confirms and Esc cancels."),
         HelpStep(spot: .statusRow, icon: "hand.tap", title: "What a touch does",
                  text: "This row says what a tap and a drag will do with the tool in hand, "
                      + "and shows the numbers while you drag."),

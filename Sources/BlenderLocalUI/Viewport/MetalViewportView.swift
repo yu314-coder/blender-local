@@ -184,6 +184,7 @@ struct MetalViewportView: UIViewRepresentable {
         context.coordinator.cutLaunchIfRequested()
         context.coordinator.measureLaunchIfRequested()
         context.coordinator.selectPickLaunchIfRequested()
+        context.coordinator.modalLaunchIfRequested()
         context.coordinator.sculptLaunchStrokeIfRequested()
         context.coordinator.vwPaintLaunchStrokeIfRequested()
         context.coordinator.standInDabLaunchIfRequested()
@@ -205,6 +206,12 @@ struct MetalViewportView: UIViewRepresentable {
         context.coordinator.renderer?.shading = shading
         context.coordinator.renderer?.options = options
         context.coordinator.renderer?.gizmoMode = Self.gizmoMode(for: tool, scene: scene)
+        // G, R or S whose selection changed under it is cancelled — after
+        // this update, as cancelling changes what the interface shows.
+        if context.coordinator.modal != nil {
+            let coordinator = context.coordinator
+            DispatchQueue.main.async { coordinator.modalGuard() }
+        }
     }
 
     final class Coordinator: NSObject, UIGestureRecognizerDelegate, UIPencilInteractionDelegate,
@@ -217,17 +224,17 @@ struct MetalViewportView: UIViewRepresentable {
         /// A Box, Circle or Lasso drag in progress: which tool, the points it
         /// has passed through, and the operation the keyboard asked for as it
         /// began.
-        private var regionGesture: RegionGesture?
+        var regionGesture: RegionGesture?
         private var lastPencilPan: CGPoint = .zero
         private var pinchStartDistance: Float = 0
         /// Non-nil for the length of a gizmo drag. While it is set, the drag
         /// belongs to the gizmo and neither the camera nor the free transform
         /// gets a look at it.
-        private var gizmo: TransformGizmo.Session?
-        private var gizmoResult: TransformGizmo.Result?
+        var gizmo: TransformGizmo.Session?
+        var gizmoResult: TransformGizmo.Result?
         /// The drag moves something a constraint decides, and Blender
         /// previews it (`BpyBridge.beginConstrainedDrag`).
-        private var constrainedDrag = false
+        var constrainedDrag = false
         /// What a move has snapped to, drawn over the view. A layer rather
         /// than the renderer's pass, so every workspace's 3D View has it.
         private var snapMarker: CAShapeLayer?
@@ -253,6 +260,13 @@ struct MetalViewportView: UIViewRepresentable {
         var cursorDrag: CursorDrag?
         /// A drag with the Measure tool (CursorMeasureInput.swift).
         var rulerDrag: RulerDrag?
+        /// Blender's G, R or S under way: the pointer, the keys and what was
+        /// typed steer `gizmo` until it is confirmed or cancelled
+        /// (ModalTransform.swift).
+        var modal: ModalDrive?
+        /// The constraint's axis lines and the line to the pointer Blender
+        /// draws while G, R or S runs.
+        var modalLayer: CAShapeLayer?
 
         init(_ parent: MetalViewportView) {
             self.parent = parent
@@ -282,6 +296,8 @@ struct MetalViewportView: UIViewRepresentable {
         @objc func handleOrbit(_ g: UIPanGestureRecognizer) {
             let p = g.translation(in: g.view)
             defer { lastPan = p }
+            // G, R or S: a finger's drag anywhere steers it.
+            if modalDrag(g) { return }
             if handleTexturePaint(g, pressure: 1) { return }
             if handleBlenderSculpt(g, pressure: 1) { return }
 
@@ -729,6 +745,7 @@ struct MetalViewportView: UIViewRepresentable {
             // to Blender with each chunk), so the view holds still under it,
             // as Blender's does while a brush is down.
             if sculptInput.isStroking { return }
+            if modal != nil { return }
             guard g.state == .changed || g.state == .began else {
                 if g.state == .ended || g.state == .cancelled {
                     endScrollReadout?()
@@ -1009,6 +1026,19 @@ struct MetalViewportView: UIViewRepresentable {
             // the object after it. A headless bpy cannot snap for us — its
             // exec path takes `value` as final (TransformSnap).
             let (result, target) = TransformGizmo.snapping(raw, session: session, at: point)
+            var readout = TransformGizmo.readout(result, session: session)
+            // A finger covers the very point it is snapping near, and with it
+            // the marker; the readout is not under it.
+            if let target { readout += "  snap \(target.kind.label)" }
+            presentGizmo(result, target: target, readout: readout)
+        }
+
+        /// Shows a drag's result: painted onto the view, or previewed by
+        /// Blender for a curve's or a lattice's points and a constrained
+        /// object; kept for the commit; and read out. The gizmo's drag and
+        /// G, R and S (ModalTransform.swift) both come through here.
+        func presentGizmo(_ result: TransformGizmo.Result, target: GeometrySnap.Hit?, readout: String) {
+            guard let session = gizmo else { return }
             if session.points != nil {
                 // Blender previews a curve's or a lattice's points itself, by
                 // the call the release commits; a value already shown is not
@@ -1029,15 +1059,11 @@ struct MetalViewportView: UIViewRepresentable {
             }
             gizmoResult = result
             showSnapMarker(target, projection: session.projection)
-            var readout = TransformGizmo.readout(result, session: session)
-            // A finger covers the very point it is snapping near, and with it
-            // the marker; the readout is not under it.
-            if let target { readout += "  snap \(target.kind.label)" }
             parent.scene.transformReadout = readout
         }
 
         /// Draws Blender's symbol for the snap target, or clears it.
-        private func showSnapMarker(_ target: GeometrySnap.Hit?, projection: TransformGizmo.Projection?) {
+        func showSnapMarker(_ target: GeometrySnap.Hit?, projection: TransformGizmo.Projection?) {
             guard let view else { return }
             let path = CGMutablePath()
             if let target, let projection, let centre = projection.project(target.location) {
@@ -1064,7 +1090,7 @@ struct MetalViewportView: UIViewRepresentable {
         }
 
         /// The readout at the moment of grabbing, before any movement.
-        private func session_startReadout(for handle: TransformGizmo.Handle,
+        func session_startReadout(for handle: TransformGizmo.Handle,
                                           mode: TransformGizmo.Mode) -> String {
             let verb = switch mode {
             case .translate: "Move"
@@ -1083,7 +1109,7 @@ struct MetalViewportView: UIViewRepresentable {
         /// Has Blender remember a curve's or a lattice's points before the
         /// drag that has just begun moves them. False when it refused — the
         /// banner says why — and the drag is dropped.
-        private func beginPointDragIfAny() -> Bool {
+        func beginPointDragIfAny() -> Bool {
             beginConstrainedDragIfAny()
             guard let session = gizmo, let points = session.points else { return true }
             guard let bridge = parent.bridge,
@@ -1112,7 +1138,7 @@ struct MetalViewportView: UIViewRepresentable {
 
         /// Ends a constrained drag's preview, Blender's channels put back,
         /// before its commit or with none.
-        private func endConstrainedDrag() {
+        func endConstrainedDrag() {
             guard constrainedDrag else { return }
             constrainedDrag = false
             parent.bridge?.endConstrainedDrag()
@@ -1120,7 +1146,7 @@ struct MetalViewportView: UIViewRepresentable {
 
         /// A point drag whose frame Blender refused: everything back as it
         /// was, and the gesture ends without a commit.
-        private func abandonPointDrag() {
+        func abandonPointDrag() {
             parent.bridge?.cancelPointDrag()
             gizmo = nil
             gizmoResult = nil
@@ -1137,7 +1163,7 @@ struct MetalViewportView: UIViewRepresentable {
         /// back to where the gesture started and the whole transform is applied
         /// once, through bpy, which is also exactly what Blender's Info log
         /// shows — one operator per gesture rather than one per frame.
-        private func endGizmo() {
+        func endGizmo() {
             // Blender's channels back as the drag found them, before the
             // commit runs once as its step (or with no commit at all).
             endConstrainedDrag()
@@ -1178,6 +1204,7 @@ struct MetalViewportView: UIViewRepresentable {
 
         @objc func handlePencilDrag(_ g: PencilPanGestureRecognizer) {
             let p = g.translation(in: g.view)
+            if modalDrag(g) { return }
             if handleTexturePaint(g, pressure: g.pressure) { return }
             if handleBlenderSculpt(g, pressure: g.pressure) { return }
 
@@ -1242,6 +1269,11 @@ struct MetalViewportView: UIViewRepresentable {
             default:               lastPointer = nil
             }
             ViewportPointer.location = lastPointer
+            // G, R or S follows the pointer, as Blender's do the mouse.
+            if modal != nil {
+                modalHover(at: lastPointer, modifiers: g.modifierFlags)
+                return
+            }
             // Loop Cut previews the ring under the pointer, and the Knife the
             // segment its next point would add, as Blender's do as the mouse
             // moves.
@@ -1285,6 +1317,9 @@ struct MetalViewportView: UIViewRepresentable {
 
         @objc func handlePan(_ g: UIPanGestureRecognizer) {
             if sculptInput.isStroking { return }
+            // G, R and S measure the pointer in the view they began in, so
+            // the view holds still under them.
+            if modal != nil { return }
             let p = g.translation(in: g.view)
             defer { lastPan = p }
             guard g.state == .changed else {
@@ -1298,6 +1333,7 @@ struct MetalViewportView: UIViewRepresentable {
 
         @objc func handlePinch(_ g: UIPinchGestureRecognizer) {
             if sculptInput.isStroking { return }
+            if modal != nil { return }
             switch g.state {
             case .began:
                 pinchStartDistance = currentCamera.distance
@@ -1376,6 +1412,11 @@ struct MetalViewportView: UIViewRepresentable {
         /// drawn by the workspace. Nil — no system menu — every time.
         func contextMenuInteraction(_ interaction: UIContextMenuInteraction,
                                     configurationForMenuAtLocation location: CGPoint) -> UIContextMenuConfiguration? {
+            // Blender's right-click during G, R or S cancels it.
+            if modal != nil {
+                if touchWatcher?.fingerOrPencilDown != true { DispatchQueue.main.async { self.modalCancel() } }
+                return nil
+            }
             guard touchWatcher?.fingerOrPencilDown != true, let open = parent.onSecondaryClick else { return nil }
             (view as? ViewportMTKView)?.takeKeyboard()
             DispatchQueue.main.async { open(location) }
@@ -1387,6 +1428,11 @@ struct MetalViewportView: UIViewRepresentable {
             // A tap in the view gives it the keyboard back — after a sheet with
             // a text field, say — so Tab reaches it again.
             (view as? ViewportMTKView)?.takeKeyboard()
+            // A click or a tap confirms G, R or S, as Blender's left click.
+            if modal != nil {
+                modalConfirm()
+                return
+            }
             tap(at: g.location(in: view), modifiers: ScreenModifiers.shared.merged(g.modifierFlags))
         }
 
@@ -1539,13 +1585,51 @@ final class ViewportMTKView: MTKView {
     /// Blender gives every Ctrl key on a Mac (ViewportKeymap.swift).
     var viewKeys: ViewKeyCommands?
 
-    override var canBecomeFirstResponder: Bool { onTab != nil }
+    /// The 3D View whose G, R or S is running: while it is, every key goes
+    /// to it first (ModalTransform.swift), as Blender's modal keymap takes
+    /// the keyboard — X is an axis then, not Delete, and Tab the next value.
+    weak var modal: MetalViewportView.Coordinator?
+
+    override var canBecomeFirstResponder: Bool { onTab != nil || modal != nil }
 
     override var keyCommands: [UIKeyCommand]? {
+        if modal != nil { return Self.modalCommands }
         guard onTab != nil else { return nil }
         let tab = UIKeyCommand(input: "\t", modifierFlags: [], action: #selector(tabPressed))
         tab.wantsPriorityOverSystemBehavior = true
         return [tab] + (viewKeys == nil ? [] : Self.chordCommands)
+    }
+
+    /// Blender's transform modal map (blender_default.py, `km_transform_modal_map`,
+    /// 5.2.1), the part a keyboard here has: Return, Space and Enter confirm,
+    /// Escape cancels, X Y Z and Shift with them constrain, G R S switch, and
+    /// NumInput's digits, point, minus, Backspace and Tab. Undo is swallowed:
+    /// Blender has no undo while a transform runs.
+    private static let modalCommands: [UIKeyCommand] = {
+        var keys: [(String, UIKeyModifierFlags, String)] = [
+            ("\r", [], "confirm"), (" ", [], "confirm"), (UIKeyCommand.inputEscape, [], "cancel"),
+            ("\t", [], "tab"), (UIKeyCommand.inputDelete, [], "backspace"),
+            (".", [], "."), ("-", [], "-"),
+            ("g", [], "g"), ("r", [], "r"), ("s", [], "s"),
+            ("z", .command, "swallow"), ("z", [.command, .shift], "swallow"),
+            ("z", .control, "swallow"), ("z", [.control, .shift], "swallow"),
+        ]
+        for (i, letter) in ["x", "y", "z"].enumerated() {
+            keys.append((letter, [], "axis\(i)"))
+            keys.append((letter, .shift, "plane\(i)"))
+        }
+        for digit in 0...9 { keys.append(("\(digit)", [], "\(digit)")) }
+        return keys.map { input, flags, token in
+            let command = UIKeyCommand(title: "", action: #selector(modalKeyPressed(_:)), input: input,
+                                       modifierFlags: flags, propertyList: token)
+            command.wantsPriorityOverSystemBehavior = true
+            return command
+        }
+    }()
+
+    @objc private func modalKeyPressed(_ sender: UIKeyCommand) {
+        guard let token = sender.propertyList as? String else { return }
+        modal?.modalKey(token)
     }
 
     /// Built once: the chords are the keymap's, which do not change.
@@ -1567,6 +1651,7 @@ final class ViewportMTKView: MTKView {
     /// A chord with nothing to do now is not taken, so UIKit passes the key
     /// on (to the menu bar's own row on it, if there is one).
     override func canPerformAction(_ action: Selector, withSender sender: Any?) -> Bool {
+        if action == #selector(modalKeyPressed(_:)) { return modal != nil }
         if action == #selector(chordPressed(_:)) {
             guard let chord = (sender as? UIKeyCommand)?.propertyList as? String, let viewKeys else { return false }
             return viewKeys.canPress(chord)
@@ -1576,11 +1661,17 @@ final class ViewportMTKView: MTKView {
 
     override func didMoveToWindow() {
         super.didMoveToWindow()
-        if window != nil { takeKeyboard() }
+        if window != nil {
+            takeKeyboard()
+        } else {
+            // The view went (another workspace took the screen): G, R or S
+            // puts everything back, as Blender's does when its area closes.
+            modal?.modalCancel()
+        }
     }
 
     func takeKeyboard() {
-        guard onTab != nil, window != nil, !isFirstResponder else { return }
+        guard onTab != nil || modal != nil, window != nil, !isFirstResponder else { return }
         becomeFirstResponder()
     }
 }

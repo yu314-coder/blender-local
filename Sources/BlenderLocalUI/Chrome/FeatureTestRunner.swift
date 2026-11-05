@@ -856,6 +856,31 @@ final class FeatureTestRunner {
                 return "\(op.name) of \(verts(s)), committed as one step"
             })
 
+        case "transform.move_g", "transform.rotate_r", "transform.scale_s":
+            // Blender's G, R and S as the keys drive them (ModalTransform.swift):
+            // begun, held to an axis, a number typed, confirmed.
+            let s = try onSphere()
+            await settle()
+            let (c, _) = try viewport()
+            let (mode, axis, typed): (TransformGizmo.Mode, Int, String) =
+                entry.key == "transform.move_g" ? (.translate, 0, "1")
+                : entry.key == "transform.rotate_r" ? (.rotate, 2, "30") : (.scale, 0, "1.25")
+            let generation = bridge.adjustableGeneration
+            return await command {
+                guard c.beginModalTransform(mode) else {
+                    throw Failure(detail: "\(mode.modalMode.label) began nothing on \(s.name)")
+                }
+                c.modalAxis(axis, plane: false)
+                for character in typed { c.modalKey(String(character)) }
+                c.modalConfirm()
+                guard bridge.adjustableGeneration != generation, let op = bridge.adjustable else {
+                    throw Failure(detail: "the confirm left no redo panel: "
+                                  + (bridge.lastOutcome?.error ?? "no outcome"))
+                }
+                return "\(op.name) \(typed) \(mode == .rotate ? "around" : "along") \(["X", "Y", "Z"][axis]) "
+                    + "of \(verts(s)), committed as one step"
+            }
+
         case "edit.undo", "edit.redo":
             try objectMode()
             let undoing = entry.key == "edit.undo"

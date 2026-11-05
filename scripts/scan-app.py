@@ -23,7 +23,7 @@ HOOKS = ["-workspace", "-eval64", "-stub", "-add", "-adjust", "-mesh", "-caret",
          "-cut-ops", "-cut-view", "-cut-wait", "-select-pick", "-select-pick-view", "-select-pick-wait",
          "-transform-ops", "-relations-ops", "-textimage-ops", "-measure-ops", "-measure-overlays",
          "-data-api", "-self-test", "-feature-test", "-feature-test-cycles", "-feature-test-only", "-frame-timing", "-menu-ops", "-menu-dump", "-data-api-browse", "-data-api-shot",
-         "-ui-audit", "-ui-frame", "-help-tour"]
+         "-ui-audit", "-ui-frame", "-help-tour", "-modal-ops", "-modal-wait"]
 app, mode = pathlib.Path(sys.argv[1]), sys.argv[2]
 root = pathlib.Path(__file__).resolve().parent.parent / "Sources"
 lit = re.compile(r'"([^"\\]{16,})"')

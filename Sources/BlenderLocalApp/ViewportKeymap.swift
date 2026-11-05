@@ -59,6 +59,10 @@ struct ViewportKey {
         ViewportKey(chord: "f9", title: "Adjust Last Operation", menu: .view, hidden: true, when: navigable) {
             $0.adjustLastOperation()
         },
+        // Blender's F12 (the Screen keymap's `render.render`): the Render
+        // panel, rendering at once.
+        ViewportKey(chord: "f12", title: "Render Image", menu: .view, hidden: true,
+                    when: { $0.render != nil && !$0.isRunning }) { $0.render?() },
         ViewportKey(chord: "ctrl+z", title: "Undo", menu: .view, hidden: true, when: { $0.canUndo && !$0.isRunning }) {
             $0.undo()
         },
@@ -243,6 +247,7 @@ struct ViewportKey {
         case "f2": input = UIKeyCommand.f2
         case "f3": input = UIKeyCommand.f3
         case "f9": input = UIKeyCommand.f9
+        case "f12": input = UIKeyCommand.f12
         case "space": input = " "
         case "tab": input = "\t"
         case "comma": input = ","

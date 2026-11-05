@@ -1,5 +1,68 @@
 # Blender Local — the app
 
+## November 5, evening: Blender's G, R and S, and F12
+
+The user: "Continue the blender local". The keys Blender users reach for
+first were still missing: G, R and S picked the Move, Rotate and Scale
+tools, where in Blender they are the transform itself (`transform.translate`,
+`rotate` and `resize` from the keymap), and F12 did nothing.
+
+- **G, R and S** (`ModalTransform.swift`, `ModalTransformInput.swift`). The
+  selection moves, turns or scales as the pointer moves, from where it was
+  when the key went down, until a click, Return or Space confirms and Escape
+  or a right-click puts everything back. Blender's transform modal map
+  (`km_transform_modal_map`, 5.2.1):
+  - X, Y or Z locks an axis, Shift with one the plane across it. Pressed
+    again it cycles as `transform_event_xyz_constraint` does: the scene's
+    Transform Orientation, then the other one (Local when the scene's is
+    Global, else Global), then none; another letter starts over at the
+    scene's. The locked axis is drawn through the pivot in its colour, as
+    Blender draws it, and a turn or a scale has Blender's dashed line to the
+    pointer.
+  - Typed numbers (NumInput): digits, a point, minus to negate, Backspace,
+    Tab to the next value. Move takes metres (X, Y, Z with no lock), Rotate
+    degrees (about the view with no lock), Scale a factor, one value for every
+    axis until Tab. With everything deleted the pointer decides again.
+  - Shift held moves it a tenth as far (PRECISION). G, R or S during another
+    puts the selection back and starts that one, as `restoreTransObjects`
+    does. Undo is swallowed while one runs; the view does not orbit under it.
+  - It is the gizmo's drag underneath (`TransformGizmo.Session`, now
+    `retargeted` for a lock): the same preview, snapping, proportional
+    editing, mirror and rollback, and the same commit, one operator the redo
+    panel adjusts. While it runs every key goes to the 3D Viewport first, so X
+    is an axis there and not Delete, Tab the next value and not Edit Mode.
+  - Without a pointer (a finger on an iPad): Object ▸ Transform and Mesh ▸
+    Transform start it with Blender's Move, Rotate and Scale rows (they picked
+    the tools before); a drag anywhere steers it and a tap confirms. A bar
+    over the view has X, Y and Z (the plane with the on-screen Shift on, as
+    Shift+X), Cancel and Confirm, and the status row lists the keys.
+- **F12** opens the Render panel and renders at once, as Blender's F12 does —
+  except Cycles' first render on a device, which compiles its kernels for
+  minutes and keeps the panel's warning first.
+- **Not done:** Ctrl+0 to Ctrl+5 (Subdivision Set). The app follows
+  Blender's "Emulate Numpad", where the number row is the numpad, and there
+  Ctrl+1, 3 and 7 are the Back, Left and Bottom views, as in Blender with that
+  preference on. Also not done: Ctrl held to invert snapping during G (the
+  session takes the snap settings as it begins), trackball (R R), and Edit
+  Mode's G G (Vertex/Edge Slide).
+- **Checked:** `scripts/run-modal-tests.sh` (32 checks of the lock cycle and
+  the typed numbers). In the real app on this Mac with Blender's module,
+  through the DEBUG hook `-modal-ops` (G R S, `hover:x,y`, `drag:dx,dy`,
+  `key:<token>`, `bar:…`, `tab`, `dump`): G X 2 committed
+  `transform.translate(value=(2, 0, 0))`, R Z 90 `rotate(value=1.5708,
+  orient_axis='Z')`, S 2, typed 1 Tab 2 Tab 3, X X 1 along Local
+  (`orient_type='LOCAL'`, the cube turned 90° moved +1 in global Y), G then R
+  45 about the view with the move undone, cancels putting everything back, and
+  in Edit Mode G Z 1 and S 0.5 on the vertices. Real key presses sent to the
+  app's process alone (G X 2 Return, G Y Esc, R Z 9 0 Return, G Tab Esc) gave
+  the same, with nothing deleted by the X and no Edit Mode from the Tab; F12
+  opened the Render panel and rendered. A selection changed under a running
+  Move (the Outliner, say) cancels it and commits nothing, as checked through
+  the hook's `clearsel`.
+- **Test All Features** has three entries for them — Move (G): X, 1,
+  Confirm; Rotate (R): Z, 30, Confirm; Scale (S): X, 1.25, Confirm — each
+  committed as one step on the 64,226-vertex sphere (0.15–0.17 s here).
+
 ## November 5, later: a help tour, clearer side tabs, and a crash fixed
 
 The user: "make the side tab and other ui be easier to use and a help button

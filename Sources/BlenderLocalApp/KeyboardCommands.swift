@@ -190,6 +190,9 @@ struct ViewportKeyActions {
     var repeatLast: () -> Void = {}
     /// F3, Blender's Search: the Operator Search.
     var searchOperators: () -> Void = {}
+    /// F12, Blender's Render Image: the Render panel, rendering at once; nil
+    /// where the 3D View has no Render panel.
+    var render: (() -> Void)? = nil
     /// The brush panel a right-click opens in Sculpt Mode, Vertex Paint and
     /// Weight Paint (BrushContextPanel.swift); nil in the other modes.
     var brushPanel: (() -> AnyView)? = nil
@@ -435,6 +438,19 @@ struct BlenderCommands: Commands {
 
     @ViewBuilder private var objectCommands: some View {
         if let v = view3D {
+            // Blender's G, R and S (Object ▸ Transform, Mesh ▸ Transform):
+            // the transform itself, following the pointer, with X, Y, Z and
+            // typed numbers (ModalTransform.swift). They used to pick the
+            // toolbar's tools, which have no keys of their own in Blender.
+            Section("Transform") {
+                Button("Move") { ModalTransformState.begin(.translate) }
+                    .keyboardShortcut("g", modifiers: [])
+                Button("Rotate") { ModalTransformState.begin(.rotate) }
+                    .keyboardShortcut("r", modifiers: [])
+                Button("Scale") { ModalTransformState.begin(.scale) }
+                    .keyboardShortcut("s", modifiers: [])
+            }
+            .disabled(v.isRunning || !(v.mode == .object || v.editing))
             // The toolbar's tools, by Blender's toolbar names (5.2.1,
             // tests/names/reference). W cycles the select tools in Blender;
             // here it is Tweak.
@@ -450,11 +466,8 @@ struct BlenderCommands: Commands {
                     .keyboardShortcut("c", modifiers: [])
                 Button(ActiveTool.lassoSelect.label) { v.setTool(.lassoSelect) }
                 Button(ActiveTool.move.label) { v.setTool(.move) }
-                    .keyboardShortcut("g", modifiers: [])
                 Button(ActiveTool.rotate.label) { v.setTool(.rotate) }
-                    .keyboardShortcut("r", modifiers: [])
                 Button(ActiveTool.scale.label) { v.setTool(.scale) }
-                    .keyboardShortcut("s", modifiers: [])
                 // Blender's Cursor and Measure, which have no key of their own.
                 Button(ActiveTool.cursor.label) { v.setTool(.cursor) }
                 Button(ActiveTool.measure.label) { v.setTool(.measure) }

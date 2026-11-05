@@ -35,6 +35,9 @@ struct LayoutWorkspace: View {
     @State private var askingPattern = false
     @State private var pattern = "*"
     @State private var panel: String?
+    /// F12 opened the Render panel: it renders as it opens, as Blender's
+    /// F12 does. Cleared when the panel closes.
+    @State private var renderOnOpen = false
     /// Blender's Sidebar (View ▸ Sidebar, N): Item, Tool and View down the
     /// right edge of the 3D View. It existed (SidebarN) and nothing showed it,
     /// so Edit Mode had nowhere to type a vertex's position (round 3's
@@ -486,6 +489,12 @@ struct LayoutWorkspace: View {
                             // Beside the Sidebar when it is open, as Blender draws it.
                             .padding(.trailing, showsSidebar ? BTheme.Metric.sidebarWidth + 18 : 10)
                             ViewportInfoRow(scene: scene, tool: tool)
+                            // G, R or S running: X, Y, Z, Cancel and Confirm
+                            // for a finger, above the status row.
+                            VStack {
+                                Spacer()
+                                ModalTransformBar().padding(.bottom, 52)
+                            }
 
                             if let report = shownReport {
                                 reportBanner(report)
@@ -502,7 +511,8 @@ struct LayoutWorkspace: View {
             AnimationDock(scene: scene, session: session, bridge: bridge)
                 .helpAnchor(.timeline)
         }
-        .sheet(isPresented: Binding(get: { panel != nil }, set: { if !$0 { panel = nil } })) {
+        .sheet(isPresented: Binding(get: { panel != nil }, set: { if !$0 { panel = nil } }),
+               onDismiss: { renderOnOpen = false }) {
             NavigationStack {
                 Group {
                     switch panel {
@@ -510,7 +520,8 @@ struct LayoutWorkspace: View {
                         TransformToolsPanel(scene: scene, bridge: bridge,
                                             increment: $options.snapIncrement)
                     case "Animation": TimelineView(scene: scene, session: session)
-                    case "Render": RenderingWorkspace(scene: scene, session: session, bridge: bridge, camera: $camera)
+                    case "Render": RenderingWorkspace(scene: scene, session: session, bridge: bridge, camera: $camera,
+                                                      startsRendering: renderOnOpen)
                     case "Image to 3D Model":
                         ImageToModelSheet(scene: scene, session: session, bridge: bridge) { panel = nil }
                     default: EmptyView()
@@ -2080,6 +2091,10 @@ struct LayoutWorkspace: View {
             canRepeatLast: { bridge?.repeatable != nil },
             repeatLast: { if let op = bridge?.repeatable { bridge?.perform(op) } },
             searchOperators: { showOperations = true },
+            render: {
+                renderOnOpen = true
+                show("Render")
+            },
             brushPanel: session.usesRealBlender && [.sculpt, .vertexPaint, .weightPaint].contains(scene.mode)
                 ? { AnyView(BrushContextPanel(scene: scene, session: session, bridge: bridge)) } : nil)
     }
@@ -3220,9 +3235,10 @@ struct LayoutWorkspace: View {
     private var objectMenu: some View {
         Menu {
             Menu("Transform") {
-                Button(ActiveTool.move.label) { choose(.move) }
-                Button(ActiveTool.rotate.label) { choose(.rotate) }
-                Button(ActiveTool.scale.label) { choose(.scale) }
+                // Blender's rows are its G, R and S: the transform follows
+                // a drag anywhere in the view, a tap confirms, and the bar
+                // over the view has X, Y, Z, Cancel and Confirm.
+                modalTransformRows
                 if session.usesRealBlender {
                     Divider()
                     Button("Shear") { performObjectRow(LastOperator.shearObjects()) }
@@ -3323,11 +3339,30 @@ struct LayoutWorkspace: View {
         .disabled(!canEdit)
     }
 
+    /// Move, Rotate and Scale as Blender's Transform menus have them: G, R
+    /// and S (ModalTransform.swift).
+    @ViewBuilder private var modalTransformRows: some View {
+        Button("Move", systemImage: ActiveTool.move.icon) {
+            ModalTransformState.begin(.translate)
+        }
+        Button("Rotate", systemImage: ActiveTool.rotate.icon) {
+            ModalTransformState.begin(.rotate)
+        }
+        Button("Scale", systemImage: ActiveTool.scale.icon) {
+            ModalTransformState.begin(.scale)
+        }
+    }
+
     /// One of the Mesh menu's groups, its rows in Blender's order.
     @ViewBuilder private func meshRows(_ group: LastOperator.Mesh.Group) -> AnyView {
         // Type-erased: Normals draws Average inside it, a recursion an opaque
         // `some View` cannot name.
         AnyView(ForEach(group.rows, id: \.self) { op in
+            // Blender's Mesh ▸ Transform starts with Move, Rotate and Scale.
+            if group == .transform, op == group.rows.first, editing {
+                modalTransformRows
+                Divider()
+            }
             // Blender's Vertex menu: Extrude to Cursor or Add before Bevel
             // Vertices, and Rip Vertices, Rip Vertices and Fill before Rip
             // Vertices and Extend (MeshMenuTools).
@@ -5028,12 +5063,25 @@ private struct ViewportInfoRow: View {
     var scene: BKScene
     var tool: ActiveTool
     var keys = ScreenModifiers.shared
+    var modal = ModalTransformState.shared
 
     var body: some View {
         VStack {
             Spacer()
             HStack(spacing: 18) {
-                if let readout = scene.dragReadout {
+                if let shown = modal.shown {
+                    // G, R or S: its header, then its keys, as Blender's
+                    // status bar lists the modal map's.
+                    if let readout = scene.dragReadout {
+                        Text(readout).font(.system(size: 13, design: .monospaced)).lineLimit(1).fixedSize()
+                    }
+                    let all = modalHints(shown)
+                    ViewThatFits(in: .horizontal) {
+                        ForEach((0...all.count).reversed(), id: \.self) { count in
+                            hintRow(Array(all.prefix(count)))
+                        }
+                    }
+                } else if let readout = scene.dragReadout {
                     Text(readout).font(.system(size: 13, design: .monospaced))
                 } else {
                     // As many as fit, the most useful first: a narrow view
@@ -5072,6 +5120,17 @@ private struct ViewportInfoRow: View {
                 .fixedSize()
             }
         }
+    }
+
+    /// While G, R or S runs: Blender's modal map, a finger's gestures first.
+    func modalHints(_ shown: ModalTransformState.Shown) -> [Hint] {
+        [Hint(gesture: "Drag", action: shown.mode.label),
+         Hint(gesture: "Tap", action: "Confirm"),
+         Hint(gesture: "Esc", action: "Cancel"),
+         Hint(gesture: "X Y Z", action: "Axis"),
+         Hint(gesture: "Shift X Y Z", action: "Plane"),
+         Hint(gesture: "0–9", action: "Value"),
+         Hint(gesture: "Shift", action: "Precision")]
     }
 
     /// The gestures and what they do, by the tool (MetalViewportView's

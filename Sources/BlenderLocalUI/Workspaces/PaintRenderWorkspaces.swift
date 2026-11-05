@@ -13,6 +13,10 @@ struct RenderingWorkspace: View {
     var session: BpySession
     var bridge: BpyBridge?
     @Binding var camera: ViewportCamera
+    /// Opened by F12: renders as it opens, as Blender's F12 does — except
+    /// for Cycles' first render on this device, which compiles its kernels
+    /// for minutes and is not begun without the panel's warning first.
+    var startsRendering = false
 
     @State private var engine = RenderRequest.Engine.cycles
     @State private var quality = RenderRequest.Quality.good
@@ -67,7 +71,11 @@ struct RenderingWorkspace: View {
             progress = read.text
             progressFraction = read.fraction
         }
-        .onAppear { if !session.usesRealBlender { fromView = true } }
+        .onAppear {
+            if !session.usesRealBlender { fromView = true }
+            let firstCycles = session.usesRealBlender && engine == .cycles && !kernelsBuilt
+            if startsRendering, !rendering, !firstCycles { render() }
+        }
     }
 
     private var emptyMessage: String {

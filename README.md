@@ -62,6 +62,13 @@ screen and says how to use it. It opens by itself the first time.
 - Select by tap, Box, Circle or Lasso, or from the Select menu and the Outliner.
 - Move, Rotate and Scale with a gizmo, with snapping, proportional editing,
   pivots and the 3D cursor.
+- Blender's G, R and S: the selection follows the pointer (or a finger's drag)
+  until a click confirms it. X, Y and Z lock an axis, Shift with one locks the
+  plane across it, and pressing the letter again switches to the other
+  orientation. Typed numbers set the exact amount, and Escape or a right-click
+  cancels. Object ▸ Transform starts the same thing from a menu, with X, Y, Z,
+  Cancel and Confirm on screen.
+- F12 renders, as in Blender.
 - The Object menu: Duplicate Objects, Duplicate Linked, Join, Parent,
   Convert, Set Origin, Apply, shading, QuadriFlow Remesh, and more.
 - Operator Search, which runs any of Blender's mesh, object, UV, sculpt,

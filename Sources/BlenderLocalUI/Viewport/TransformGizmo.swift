@@ -395,6 +395,21 @@ struct TransformGizmo {
         /// Only in object mode: an edit-mode drag has no per-island origin to
         /// use, so it keeps the gizmo's own pivot.
         var usesIndividualOrigins: Bool { pivot == .individualOrigins && edit == nil && points == nil }
+
+        /// The same drag held another way: G's X, Y and Z change the handle
+        /// and the axes under a drag already running, and the first pointer
+        /// to arrive moves where it started. What the drag found — the
+        /// selection's places, its neighbours, the snap targets — stays as
+        /// it was taken, as Blender keeps its TransData across them.
+        func retargeted(handle: Handle? = nil, gizmo: TransformGizmo? = nil, frame: Frame? = nil,
+                        start: CGPoint? = nil) -> Session {
+            Session(gizmo: gizmo ?? self.gizmo, handle: handle ?? self.handle, start: start ?? self.start,
+                    projection: projection, eye: eye, snapshot: snapshot, neighbours: neighbours,
+                    followers: followers, carriedOnly: carriedOnly, edit: edit, points: points,
+                    proportional: proportional, pivot: pivot, snap: snap, snapSource: snapSource,
+                    geometry: geometry, autoMerge: autoMerge, originsOnly: originsOnly,
+                    proportionalDefaults: proportionalDefaults, frame: frame ?? self.frame)
+        }
     }
 
     /// Blender's orientation for one drag.
