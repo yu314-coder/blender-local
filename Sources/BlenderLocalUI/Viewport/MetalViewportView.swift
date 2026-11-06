@@ -345,7 +345,7 @@ struct MetalViewportView: UIViewRepresentable {
             // A gizmo drag owns the gesture until the finger lifts: neither the
             // camera nor the unconstrained transform gets a look at it.
             if gizmo != nil {
-                if let view, g.state == .changed { updateGizmo(to: g.location(in: view)) }
+                if let view, g.state == .changed { updateGizmo(to: g.location(in: view), modifiers: g.modifierFlags) }
                 if g.state == .ended || g.state == .cancelled || g.state == .failed { endGizmo() }
                 return
             }
@@ -1016,7 +1016,12 @@ struct MetalViewportView: UIViewRepresentable {
             return true
         }
 
-        private func updateGizmo(to point: CGPoint) {
+        private func updateGizmo(to point: CGPoint, modifiers: UIKeyModifierFlags = []) {
+            // Ctrl held inverts the magnet for as long as it is held, as in
+            // Blender's transform (SNAP_INV_ON / SNAP_INV_OFF); the on-screen
+            // Ctrl counts as held.
+            let ctrl = ScreenModifiers.shared.merged(modifiers).contains(.control)
+            if let session = gizmo, session.snapInverted != ctrl { gizmo = session.invertingSnap(ctrl) }
             guard let session = gizmo,
                   let raw = TransformGizmo.resolve(session, at: point) else { return }
             // Blender's magnet, from the scene's settings as the drag began.
@@ -1240,7 +1245,7 @@ struct MetalViewportView: UIViewRepresentable {
                 return
             }
             if gizmo != nil {
-                if let view, g.state == .changed { updateGizmo(to: g.location(in: view)) }
+                if let view, g.state == .changed { updateGizmo(to: g.location(in: view), modifiers: g.modifierFlags) }
                 if g.state == .ended || g.state == .cancelled || g.state == .failed { endGizmo() }
                 return
             }
@@ -1626,6 +1631,30 @@ final class ViewportMTKView: MTKView {
             return command
         }
     }()
+
+    /// Ctrl's own press and release while G, R or S runs: the magnet the
+    /// other way round while it is held (SNAP_INV_ON / SNAP_INV_OFF), even
+    /// with the pointer still. A modifier alone arrives as a press, not as a
+    /// key command.
+    override func pressesBegan(_ presses: Set<UIPress>, with event: UIPressesEvent?) {
+        if let modal, presses.contains(where: { Self.isControl($0) }) { modal.modalControl(true) }
+        super.pressesBegan(presses, with: event)
+    }
+
+    override func pressesEnded(_ presses: Set<UIPress>, with event: UIPressesEvent?) {
+        if let modal, presses.contains(where: { Self.isControl($0) }) { modal.modalControl(false) }
+        super.pressesEnded(presses, with: event)
+    }
+
+    override func pressesCancelled(_ presses: Set<UIPress>, with event: UIPressesEvent?) {
+        if let modal, presses.contains(where: { Self.isControl($0) }) { modal.modalControl(false) }
+        super.pressesCancelled(presses, with: event)
+    }
+
+    private static func isControl(_ press: UIPress) -> Bool {
+        guard let code = press.key?.keyCode else { return false }
+        return code == .keyboardLeftControl || code == .keyboardRightControl
+    }
 
     @objc private func modalKeyPressed(_ sender: UIKeyCommand) {
         guard let token = sender.propertyList as? String else { return }

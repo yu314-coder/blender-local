@@ -66,8 +66,10 @@ screen and says how to use it. It opens by itself the first time.
   until a click confirms it. X, Y and Z lock an axis, Shift with one locks the
   plane across it, and pressing the letter again switches to the other
   orientation. Typed numbers set the exact amount, and Escape or a right-click
-  cancels. Object ▸ Transform starts the same thing from a menu, with X, Y, Z,
-  Cancel and Confirm on screen.
+  cancels. Holding Ctrl inverts snapping, R pressed again turns the rotation
+  into Trackball, and in Edit Mode G pressed again is Edge Slide (Vertex Slide
+  for a lone vertex). Object ▸ Transform starts the same thing from a menu,
+  with X, Y, Z, Cancel and Confirm on screen.
 - F12 renders, as in Blender.
 - The Object menu: Duplicate Objects, Duplicate Linked, Join, Parent,
   Convert, Set Origin, Apply, shading, QuadriFlow Remesh, and more.

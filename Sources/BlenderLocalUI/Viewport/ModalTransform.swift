@@ -40,6 +40,11 @@ struct ModalDrive {
     var lastHover: CGPoint?
     /// A finger's drag: its translation last time.
     var dragLast: CGPoint = .zero
+    /// Ctrl held: the magnet the other way round (SNAP_INV_ON), until it is
+    /// let go (SNAP_INV_OFF). The on-screen Ctrl counts as held.
+    var snapInverted = false
+    /// G G in Edit Mode: Edge Slide or Vertex Slide (ModalSlide.swift).
+    var slide: SlideDrive?
 }
 
 extension TransformGizmo.Mode {
@@ -83,7 +88,7 @@ extension MetalViewportView.Coordinator {
     /// The drag begun from `start` (nil: the pointer's place, or a stand-in
     /// until one arrives).
     private func startModal(_ mode: TransformGizmo.Mode, input: ModalTransformInput, start: CGPoint?,
-                            pointer: CGPoint?, lastHover: CGPoint?) -> Bool {
+                            pointer: CGPoint?, lastHover: CGPoint?, snapInverted: Bool = false) -> Bool {
         guard let view, view.window != nil, view.bounds.width > 0, view.bounds.height > 0,
               gizmo == nil, regionGesture == nil, cursorDrag == nil, rulerDrag == nil,
               liveCamera == nil, !sculptInput.isStroking,
@@ -111,7 +116,9 @@ extension MetalViewportView.Coordinator {
         // why) and there is nothing to steer.
         guard beginPointDragIfAny(), let base = gizmo else { return false }
         modal = ModalDrive(input: input, base: base, start: from, pointer: pointer ?? from,
-                           startPending: start == nil && here == nil, lastHover: lastHover ?? here)
+                           startPending: start == nil && here == nil, lastHover: lastHover ?? here,
+                           snapInverted: snapInverted || ScreenModifiers.shared.control)
+        gizmo = base.invertingSnap(modal?.snapInverted ?? false)
         renderer?.gizmoHighlight = nil
         parent.scene.hoveredID = nil
         parent.scene.clearViewportDrag()
@@ -157,8 +164,13 @@ extension MetalViewportView.Coordinator {
             modalUpdate(presenting: drive.input.isTyping)
             return
         }
+        let held = ScreenModifiers.shared.merged(modifiers)
+        if held.contains(.control) != drive.snapInverted {
+            drive.snapInverted = held.contains(.control)
+            gizmo = gizmo?.invertingSnap(drive.snapInverted)
+        }
         if let last = drive.lastHover {
-            let k: CGFloat = ScreenModifiers.shared.merged(modifiers).contains(.shift) ? 0.1 : 1
+            let k: CGFloat = held.contains(.shift) ? 0.1 : 1
             drive.pointer.x += (point.x - last.x) * k
             drive.pointer.y += (point.y - last.y) * k
         }
@@ -176,7 +188,12 @@ extension MetalViewportView.Coordinator {
         switch g.state {
         case .began, .changed:
             if g.state == .began { drive.dragLast = .zero }
-            let k: CGFloat = ScreenModifiers.shared.merged(g.modifierFlags).contains(.shift) ? 0.1 : 1
+            let held = ScreenModifiers.shared.merged(g.modifierFlags)
+            if held.contains(.control) != drive.snapInverted {
+                drive.snapInverted = held.contains(.control)
+                gizmo = gizmo?.invertingSnap(drive.snapInverted)
+            }
+            let k: CGFloat = held.contains(.shift) ? 0.1 : 1
             drive.pointer.x += (t.x - drive.dragLast.x) * k
             drive.pointer.y += (t.y - drive.dragLast.y) * k
             drive.dragLast = t
@@ -197,8 +214,22 @@ extension MetalViewportView.Coordinator {
         case "confirm":   modalConfirm()
         case "cancel":    modalCancel()
         case "swallow":   break
-        case "g":         modalSwitch(.translate)
-        case "r":         modalSwitch(.rotate)
+        case "g":
+            // G again during Move in a mesh's Edit Mode slides, and during a
+            // slide goes back to Move (TFM_MODAL_TRANSLATE in transform.cc).
+            switch modal?.input.mode {
+            case .translate? where parent.scene.mode == .edit: modalSlide()
+            case .edgeSlide?, .vertexSlide?:                   modalLeaveSlide()
+            default:                                           modalSwitch(.translate)
+            }
+        case "r":
+            // R again turns Rotate into Trackball and Trackball back into
+            // Rotate (TFM_MODAL_ROTATE in transform.cc).
+            switch modal?.input.mode {
+            case .rotate?:    modalTrackball(true)
+            case .trackball?: modalTrackball(false)
+            default:          modalSwitch(.rotate)
+            }
         case "s":         modalSwitch(.scale)
         case "tab":
             modal?.input.nextValue()
@@ -218,9 +249,21 @@ extension MetalViewportView.Coordinator {
         }
     }
 
+    /// Ctrl pressed or let go on a keyboard, with or without the pointer
+    /// moving: the magnet turns the other way round while it is held.
+    func modalControl(_ down: Bool) {
+        guard var drive = modal else { return }
+        let held = down || ScreenModifiers.shared.control
+        guard held != drive.snapInverted else { return }
+        drive.snapInverted = held
+        modal = drive
+        gizmo = gizmo?.invertingSnap(held)
+        modalUpdate(presenting: !drive.startPending || drive.input.isTyping)
+    }
+
     /// X, Y or Z, or Shift with one.
     func modalAxis(_ axis: Int, plane: Bool) {
-        guard modal != nil else { return }
+        guard modal?.input.mode.takesConstraint == true else { return }
         modal?.input.press(axis: axis, plane: plane)
         retargetModal()
         modalUpdate(presenting: true)
@@ -231,6 +274,7 @@ extension MetalViewportView.Coordinator {
     private func retargetModal() {
         guard let drive = modal else { return }
         let base = drive.base
+        defer { gizmo = gizmo?.invertingSnap(drive.snapInverted) }
         switch drive.input.constraint {
         case .none:
             gizmo = base
@@ -264,16 +308,59 @@ extension MetalViewportView.Coordinator {
         }
     }
 
+    /// Rotate to Trackball or back: the same turn's session, unconstrained,
+    /// measured from the same start (Blender restores the selection and
+    /// starts the other mode, keeping where the pointer began).
+    private func modalTrackball(_ on: Bool) {
+        guard var drive = modal else { return }
+        let shown = gizmoResult != nil
+        drive.input.switchMode(on ? .trackball : .rotate)
+        modal = drive
+        gizmo = drive.base.invertingSnap(drive.snapInverted)
+        modalUpdate(presenting: shown || !drive.startPending || drive.input.isTyping)
+    }
+
+    /// Trackball's two angles from the pointer, as Blender's INPUT_TRACKBALL
+    /// reads them (transform_input.cc): 0.01 radians for each pixel the
+    /// pointer has travelled, up and down about the view's horizontal axis
+    /// and across about its vertical one.
+    private func trackballAngles(_ drive: ModalDrive) -> SIMD2<Float> {
+        let pixels = Float(view?.contentScaleFactor ?? 2)
+        return SIMD2(Float(drive.pointer.y - drive.start.y), Float(drive.pointer.x - drive.start.x))
+            * 0.01 * pixels
+    }
+
+    /// Trackball's turn: about the view's horizontal axis by the first angle
+    /// and its vertical by the second (`applyTrackball`: the two matrices
+    /// multiplied, horizontal first). One turn about one axis in the end, so
+    /// it is previewed and committed as a turn about that axis.
+    static func trackballResult(_ angles: SIMD2<Float>, session: TransformGizmo.Session) -> TransformGizmo.Result {
+        let view = session.frame.viewAxes
+        let q = simd_quatf(angle: angles.x, axis: simd_normalize(view.columns.0))
+            * simd_quatf(angle: angles.y, axis: simd_normalize(view.columns.1))
+        let angle = q.angle
+        guard angle > 1e-7, angle.isFinite else {
+            return .rotate(axis: simd_normalize(view.columns.2), angle: 0, axisIndex: nil)
+        }
+        return .rotate(axis: simd_normalize(q.axis), angle: angle, axisIndex: nil)
+    }
+
+    /// Blender's header for it: the two angles in degrees.
+    static func trackballReadout(_ angles: SIMD2<Float>) -> String {
+        String(format: "Trackball: %.2f° %.2f°", angles.x * 180 / .pi, angles.y * 180 / .pi)
+    }
+
     /// G, R or S during another: everything back, and the new one from the
     /// same start.
     private func modalSwitch(_ mode: TransformGizmo.Mode) {
-        guard let drive = modal, drive.base.gizmo.mode != mode else { return }
+        guard let drive = modal, drive.base.gizmo.mode != mode || drive.input.mode != mode.modalMode else { return }
         discardModalSession()
         modal = nil
         var input = drive.input
         input.switchMode(mode.modalMode)
         let started = startModal(mode, input: input, start: drive.startPending ? nil : drive.start,
-                                 pointer: drive.startPending ? nil : drive.pointer, lastHover: drive.lastHover)
+                                 pointer: drive.startPending ? nil : drive.pointer, lastHover: drive.lastHover,
+                                 snapInverted: drive.snapInverted)
         if !started { finishModal() }
     }
 
@@ -283,10 +370,20 @@ extension MetalViewportView.Coordinator {
     /// shows only the header: nothing has moved yet, and a confirm then
     /// commits nothing.
     func modalUpdate(presenting: Bool) {
+        if modal?.slide != nil {
+            slideUpdate()
+            return
+        }
         guard let drive = modal, let session = gizmo else { return }
         if presenting, let values = drive.input.values {
             presentGizmo(Self.typedResult(values, input: drive.input, session: session),
                          target: nil, readout: Self.typedReadout(drive.input, session: session))
+        } else if presenting, drive.input.mode == .trackball {
+            // Increment snapping rounds each angle to Blender's 5°.
+            var angles = trackballAngles(drive)
+            if let snap = session.activeSnap { angles = SIMD2(snap.angle(angles.x), snap.angle(angles.y)) }
+            presentGizmo(Self.trackballResult(angles, session: session), target: nil,
+                         readout: Self.trackballReadout(angles))
         } else if presenting, let raw = TransformGizmo.resolve(session, at: drive.pointer) {
             let (result, target) = TransformGizmo.snapping(raw, session: session, at: drive.pointer)
             var readout = TransformGizmo.readout(result, session: session)
@@ -297,7 +394,10 @@ extension MetalViewportView.Coordinator {
         }
         drawModalOverlay()
         ModalTransformState.shared.show(.init(mode: drive.input.mode, constraint: drive.input.constraint,
-                                              typing: drive.input.isTyping), owner: self)
+                                              typing: drive.input.isTyping,
+                                              canSlide: drive.input.mode == .translate && drive.base.edit != nil
+                                                  && parent.bridge?.usesRealBlender == true),
+                                        owner: self)
     }
 
     /// What typed numbers amount to: metres along the constraint's axes (X,
@@ -328,6 +428,13 @@ extension MetalViewportView.Coordinator {
             var f = SIMD3<Float>(repeating: 1)
             for (k, axis) in free.enumerated() where k < values.count { f[axis] = Float(values[k]) }
             return .scale(f)
+        case .trackball:
+            let a = SIMD2(Float(values[0]), Float(values.count > 1 ? values[1] : 0)) * .pi / 180
+            return trackballResult(a, session: session)
+        case .edgeSlide, .vertexSlide:
+            // The slides are not a turn, a move or a scale of the session
+            // (ModalSlide.swift shows them).
+            return .translate(.zero)
         }
     }
 
@@ -349,12 +456,15 @@ extension MetalViewportView.Coordinator {
         }
         let lead: String
         switch input.mode {
-        case .translate: lead = "D:"
-        case .rotate:    lead = "Rot:"
-        case .scale:     lead = "S:"
+        case .translate:   lead = "D:"
+        case .rotate:      lead = "Rot:"
+        case .scale:       lead = "S:"
+        case .trackball:   lead = "Trackball:"
+        case .edgeSlide:   lead = "Edge Slide:"
+        case .vertexSlide: lead = "Vertex Slide:"
         }
         let values = shown.isEmpty ? input.mode.label : "\(lead) " + shown.joined(separator: " | ")
-            + (input.mode == .rotate ? "°" : "")
+            + (input.mode == .rotate || input.mode == .trackball ? "°" : "")
         return held.isEmpty ? values : "\(values)  \(held)"
     }
 
@@ -454,6 +564,11 @@ extension MetalViewportView.Coordinator {
                                       "The selection changed while \(drive.input.mode.label) ran, so nothing was changed.")
             return
         }
+        if drive.slide != nil {
+            slideConfirm()
+            finishModal()
+            return
+        }
         endGizmo()
         finishModal()
     }
@@ -529,6 +644,8 @@ final class ModalTransformState {
         var mode: ModalTransformInput.Mode
         var constraint: ModalTransformInput.Constraint
         var typing: Bool
+        /// A Move in a mesh's Edit Mode, which G turns into Edge Slide.
+        var canSlide = false
     }
 
     private(set) var shown: Shown?
@@ -549,6 +666,10 @@ final class ModalTransformState {
     func axis(_ i: Int) { owner?.modalAxis(i, plane: ScreenModifiers.shared.shift) }
     func confirm() { owner?.modalConfirm() }
     func cancel() { owner?.modalCancel() }
+    /// The bar's Trackball and Rotate: R pressed again.
+    func toggleTrackball() { owner?.modalKey("r") }
+    /// The bar's Edge Slide and Move: G pressed again.
+    func toggleSlide() { owner?.modalKey("g") }
 
     /// G, R or S from a key or a menu row (Object ▸ Transform, Mesh ▸
     /// Transform): in the 3D View that has the keyboard.
@@ -584,7 +705,25 @@ struct ModalTransformBar: View {
                     .font(BTheme.Font.ui(13, weight: .semibold))
                     .padding(.horizontal, 6)
             }
-            ForEach(0..<3, id: \.self) { i in axisButton(i, shown: shown) }
+            if shown.mode.takesConstraint {
+                ForEach(0..<3, id: \.self) { i in axisButton(i, shown: shown) }
+            }
+            // R again and G again, for a finger with no keyboard: Blender's
+            // names for what they turn it into.
+            switch shown.mode {
+            case .rotate:
+                barButton("Trackball", icon: "rotate.3d", worded: worded) { state.toggleTrackball() }
+            case .trackball:
+                barButton("Rotate", icon: "arrow.clockwise", worded: worded) { state.toggleTrackball() }
+            case .translate where shown.canSlide:
+                barButton("Edge Slide", icon: "arrow.left.and.right.square", worded: worded) { state.toggleSlide() }
+            case .edgeSlide, .vertexSlide:
+                barButton("Move", icon: "arrow.up.and.down.and.arrow.left.and.right", worded: worded) {
+                    state.toggleSlide()
+                }
+            default:
+                EmptyView()
+            }
             Divider().frame(height: 26)
             barButton("Cancel", icon: "xmark", worded: worded) { state.cancel() }
             barButton("Confirm", icon: "checkmark", worded: worded, prominent: true) { state.confirm() }
@@ -639,6 +778,7 @@ struct ModalTransformBar: View {
 
 #if DEBUG
 extension MetalViewportView.Coordinator {
+    /// `ctrl:down` / `ctrl:up` press and let go of Ctrl.
     /// `-modal-ops "g|hover:400,300|key:axis0|key:2|key:confirm|dump"`: G, R
     /// and S driven through the calls the keys, the pointer and a finger
     /// make — `beginModalTransform`, `modalHover`, a drag's pointer step,
@@ -697,6 +837,9 @@ extension MetalViewportView.Coordinator {
                 modalUpdate(presenting: true)
             }
         case "key": modalKey(rest)
+        case "ctrl":
+            // Ctrl's press and release from a keyboard (SNAP_INV_ON / OFF).
+            modalControl(rest == "down")
         case "bar":
             switch rest {
             case "confirm": ModalTransformState.shared.confirm()
@@ -724,6 +867,13 @@ extension MetalViewportView.Coordinator {
         if let drive = modal {
             line += " running=\(drive.input.mode.label) constraint=\(drive.input.constraint)"
             line += " typing=\(drive.input.isTyping) pending=\(drive.startPending)"
+            line += " snapInverted=\(drive.snapInverted)"
+            let view = drive.base.frame.viewAxes
+            line += " right=\(f(view.columns.0)) up=\(f(view.columns.1))"
+            if let slide = drive.slide {
+                line += String(format: " slide=%@ factor=%.4f ends=%d", "\(slide.kind)", slide.factor, slide.ends.count)
+                if let d = slide.direction { line += " direction=\(f(d))" }
+            }
         } else {
             line += " running=none"
         }

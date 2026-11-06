@@ -92,6 +92,42 @@ do {
     check("G during R: nothing typed, no constraint", m.mode == .translate && !m.isTyping && m.constraint == .none)
 }
 do {
+    // R R: Trackball, which takes no constraint (T_NO_CONSTRAINT) and two
+    // angles in degrees, Tab between them.
+    var m = M(mode: .rotate)
+    m.switchMode(.trackball)
+    check("Trackball is Blender's name", m.mode.label == "Trackball")
+    m.press(axis: 0, plane: false)
+    check("X does nothing in Trackball", m.constraint == .none)
+    m.type("3"); m.type("0")
+    check("Trackball 30: two values, the second 0", m.valueCount == 2 && m.values == [30, 0],
+          "\(String(describing: m.values))")
+    m.nextValue(); m.type("-"); m.type("1"); m.type("5")
+    check("Tab, -15", m.values == [30, -15], "\(String(describing: m.values))")
+    m.nextValue()
+    check("Tab again: back to the first", m.component == 0)
+    m.switchMode(.rotate)
+    check("R again: Rotate, nothing typed", m.mode == .rotate && !m.isTyping)
+}
+do {
+    // G G: the slides take one factor and no constraint.
+    for mode in [M.Mode.edgeSlide, .vertexSlide] {
+        var m = M(mode: .translate)
+        m.press(axis: 2, plane: false)
+        m.switchMode(mode)
+        check("\(mode.label): no constraint left from the Move", m.constraint == .none)
+        m.press(axis: 1, plane: true)
+        check("\(mode.label): Shift+Y does nothing", m.constraint == .none)
+        m.type("."); m.type("2"); m.type("5")
+        check("\(mode.label): one factor, 0.25", m.valueCount == 1 && m.values == [0.25])
+        m.nextValue()
+        check("\(mode.label): Tab stays on it", m.component == 0)
+    }
+    check("Blender's names", M.Mode.edgeSlide.label == "Edge Slide" && M.Mode.vertexSlide.label == "Vertex Slide")
+    check("the three that take X, Y and Z", [M.Mode.translate, .rotate, .scale].allSatisfy(\.takesConstraint)
+          && ![M.Mode.trackball, .edgeSlide, .vertexSlide].contains(where: \.takesConstraint))
+}
+do {
     check(".5 is a half", M.number(".5") == 0.5)
     check("-.25", M.number("-.25") == -0.25)
     check("'-' alone is minus nothing", M.number("-") == 0)

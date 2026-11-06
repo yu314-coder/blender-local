@@ -5124,13 +5124,26 @@ private struct ViewportInfoRow: View {
 
     /// While G, R or S runs: Blender's modal map, a finger's gestures first.
     func modalHints(_ shown: ModalTransformState.Shown) -> [Hint] {
-        [Hint(gesture: "Drag", action: shown.mode.label),
-         Hint(gesture: "Tap", action: "Confirm"),
-         Hint(gesture: "Esc", action: "Cancel"),
-         Hint(gesture: "X Y Z", action: "Axis"),
-         Hint(gesture: "Shift X Y Z", action: "Plane"),
-         Hint(gesture: "0–9", action: "Value"),
-         Hint(gesture: "Shift", action: "Precision")]
+        var hints = [Hint(gesture: "Drag", action: shown.mode.label),
+                     Hint(gesture: "Tap", action: "Confirm"),
+                     Hint(gesture: "Esc", action: "Cancel")]
+        if shown.mode.takesConstraint {
+            hints += [Hint(gesture: "X Y Z", action: "Axis"), Hint(gesture: "Shift X Y Z", action: "Plane")]
+        }
+        // Blender's modal map: R again for Trackball and back, G again in
+        // Edit Mode for Edge Slide and back.
+        switch shown.mode {
+        case .rotate:    hints.append(Hint(gesture: "R", action: "Trackball"))
+        case .trackball: hints.append(Hint(gesture: "R", action: "Rotate"))
+        case .translate where shown.canSlide: hints.append(Hint(gesture: "G", action: "Edge Slide"))
+        case .edgeSlide, .vertexSlide: hints.append(Hint(gesture: "G", action: "Move"))
+        default: break
+        }
+        hints += [Hint(gesture: "0–9", action: "Value"), Hint(gesture: "Shift", action: "Precision")]
+        if shown.mode.takesConstraint || shown.mode == .trackball {
+            hints.append(Hint(gesture: "Ctrl", action: "Snap Invert"))
+        }
+        return hints
     }
 
     /// The gestures and what they do, by the tool (MetalViewportView's

@@ -509,6 +509,9 @@ let bmeshAllowed: [(file: String, function: String, why: String)] = [
      + "scratch scene, to check that the gate prices it at the leave of Edit Mode without reading freed memory"),
     ("_blenderkit_selftest.py", "_bmesh_modifiers", "the same, under Subdivision, Remesh, Bevel, Array and "
      + "Geometry Nodes"),
+    ("_blenderkit_slide.py", "_run_and_put_back", "G G's probe puts every vertex the slide moved back exactly "
+     + "where it was (Edge Slide or Vertex Slide run with their undo off, read, and undone): no element "
+     + "changes and none moves"),
 ]
 func bmeshEdits(_ allow: [(file: String, function: String, why: String)], replacing: [String: String] = [:]) -> [String] {
     var found: [String] = []

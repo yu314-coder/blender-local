@@ -390,6 +390,32 @@ struct TransformGizmo {
         /// The orientation the drag is measured in, frozen with it: what the
         /// commit says, and what the preview turns its numbers back into.
         let frame: Frame
+        /// Ctrl held: snapping the other way round from the scene's magnet
+        /// (Blender's SNAP_INV_ON and SNAP_INV_OFF in the transform modal
+        /// map, Ctrl's press and release). The other snapping is worked out
+        /// the first time Ctrl asks for it (`SnapInversion`).
+        var snapInversion: SnapInversion? = nil
+        var snapInverted = false
+
+        /// The magnet's snapping in effect now: the scene's, or with Ctrl
+        /// held the other.
+        var activeSnap: TransformSnap? {
+            guard snapInverted, let snapInversion else { return snap }
+            return snapInversion.inverted.snap
+        }
+
+        /// Snapping to vertices, edges and faces in effect now.
+        var activeGeometry: GeometrySnapping? {
+            guard snapInverted, let snapInversion else { return geometry }
+            return snapInversion.inverted.geometry
+        }
+
+        /// The same drag with Ctrl held or let go.
+        func invertingSnap(_ on: Bool) -> Session {
+            var s = self
+            s.snapInverted = on
+            return s
+        }
 
         /// Individual Origins, which no single `center_override` can express.
         /// Only in object mode: an edit-mode drag has no per-island origin to
@@ -408,7 +434,29 @@ struct TransformGizmo {
                     followers: followers, carriedOnly: carriedOnly, edit: edit, points: points,
                     proportional: proportional, pivot: pivot, snap: snap, snapSource: snapSource,
                     geometry: geometry, autoMerge: autoMerge, originsOnly: originsOnly,
-                    proportionalDefaults: proportionalDefaults, frame: frame ?? self.frame)
+                    proportionalDefaults: proportionalDefaults, frame: frame ?? self.frame,
+                    snapInversion: snapInversion, snapInverted: snapInverted)
+        }
+    }
+
+    /// The snapping a drag would have with the magnet the other way round,
+    /// for Ctrl held during it. Worked out once, the first time it is asked
+    /// for, from what the drag took when it began: whatever moves is already
+    /// left out of the targets, so the preview's moved geometry is never
+    /// something to snap onto.
+    final class SnapInversion {
+        private let build: () -> (snap: TransformSnap?, geometry: GeometrySnapping?)
+        private var built: (snap: TransformSnap?, geometry: GeometrySnapping?)?
+
+        init(_ build: @escaping () -> (snap: TransformSnap?, geometry: GeometrySnapping?)) {
+            self.build = build
+        }
+
+        var inverted: (snap: TransformSnap?, geometry: GeometrySnapping?) {
+            if let built { return built }
+            let b = build()
+            built = b
+            return b
         }
     }
 
@@ -620,77 +668,86 @@ struct TransformGizmo {
         }
 
         let projection = Projection(camera: camera, size: size)
-        var geometry: GeometrySnapping?
-        if gizmo.mode == .translate, tools.useSnap, !tools.elements.isDisjoint(with: GeometrySnap.honoured) {
-            // Everything that moves is left out. In object mode that is the
-            // selection and whatever moves with it — children, constraint
-            // followers, objects whose modifiers read it (ObjectRelations) —
-            // and with proportional editing everything it may pull along.
-            // While editing it is every vertex with a share of the drag, and
-            // the hidden; other objects stay in reach, selected or not, since
-            // Blender's NOT_SELECTED applies in object mode only, unless
-            // Target Selection leaves out the edited object or the rest.
-            var excludedObjects: Set<UUID>
-            if let points {
-                // The edited curve or lattice moves under the drag, and so
-                // does whatever follows it; the rest of the scene is in reach,
-                // unless Target Selection leaves it out.
-                excludedObjects = scene.dependents(of: [points.object.id]).union([points.object.id])
-                if !tools.snapNonEdited {
-                    excludedObjects.formUnion(scene.objects.lazy.filter { $0 !== points.object }.map(\.id))
-                }
-            } else if let edit {
-                excludedObjects = tools.snapSelf ? [] : [edit.object.id]
-                if !tools.snapNonEdited {
-                    excludedObjects.formUnion(scene.objects.lazy.filter { $0 !== edit.object }.map(\.id))
-                }
-            } else if originsOnly {
-                // Moving origins, Blender snaps onto anything, the selection's
-                // own geometry included (SCE_SNAP_TARGET_ALL for
-                // CTX_OBMODE_XFORM_OBDATA in 5.3's
-                // snap_target_select_from_spacetype_and_tool_settings: "allow
-                // snapping onto our own geometry", #69132). Read, not measured:
-                // a headless Blender has no 3D View to snap in.
-                excludedObjects = []
-            } else {
-                excludedObjects = scene.selection.union(
-                    scene.movedByObjectDrag(selection: moving, proportional: proportional != nil))
-                // A child Affect Only Parents keeps in place is locked there
-                // and loses BA_SNAP_FIX_DEPS_FIASCO (transform_convert_object.cc
-                // in 5.3), so it stays a target — unless something else it
-                // depends on moves it.
-                if !stayed.isEmpty {
-                    let movingNames = Set(scene.objects.lazy.filter { excludedObjects.contains($0.id) }.map(\.name))
-                    for object in scene.objects where stayed.contains(object.id) {
-                        let others = object.dependencies.subtracting(object.parentName.map { [$0] } ?? [])
-                        if others.isDisjoint(with: movingNames) { excludedObjects.remove(object.id) }
+        // The magnet as the scene has it, and turned the other way for Ctrl
+        // held during the drag (built only if Ctrl asks).
+        func snapping(useSnap: Bool) -> (snap: TransformSnap?, geometry: GeometrySnapping?) {
+            var tools = tools
+            tools.useSnap = useSnap
+            var geometry: GeometrySnapping?
+            if gizmo.mode == .translate, tools.useSnap, !tools.elements.isDisjoint(with: GeometrySnap.honoured) {
+                // Everything that moves is left out. In object mode that is the
+                // selection and whatever moves with it — children, constraint
+                // followers, objects whose modifiers read it (ObjectRelations) —
+                // and with proportional editing everything it may pull along.
+                // While editing it is every vertex with a share of the drag, and
+                // the hidden; other objects stay in reach, selected or not, since
+                // Blender's NOT_SELECTED applies in object mode only, unless
+                // Target Selection leaves out the edited object or the rest.
+                var excludedObjects: Set<UUID>
+                if let points {
+                    // The edited curve or lattice moves under the drag, and so
+                    // does whatever follows it; the rest of the scene is in reach,
+                    // unless Target Selection leaves it out.
+                    excludedObjects = scene.dependents(of: [points.object.id]).union([points.object.id])
+                    if !tools.snapNonEdited {
+                        excludedObjects.formUnion(scene.objects.lazy.filter { $0 !== points.object }.map(\.id))
+                    }
+                } else if let edit {
+                    excludedObjects = tools.snapSelf ? [] : [edit.object.id]
+                    if !tools.snapNonEdited {
+                        excludedObjects.formUnion(scene.objects.lazy.filter { $0 !== edit.object }.map(\.id))
+                    }
+                } else if originsOnly {
+                    // Moving origins, Blender snaps onto anything, the selection's
+                    // own geometry included (SCE_SNAP_TARGET_ALL for
+                    // CTX_OBMODE_XFORM_OBDATA in 5.3's
+                    // snap_target_select_from_spacetype_and_tool_settings: "allow
+                    // snapping onto our own geometry", #69132). Read, not measured:
+                    // a headless Blender has no 3D View to snap in.
+                    excludedObjects = []
+                } else {
+                    excludedObjects = scene.selection.union(
+                        scene.movedByObjectDrag(selection: moving, proportional: proportional != nil))
+                    // A child Affect Only Parents keeps in place is locked there
+                    // and loses BA_SNAP_FIX_DEPS_FIASCO (transform_convert_object.cc
+                    // in 5.3), so it stays a target — unless something else it
+                    // depends on moves it.
+                    if !stayed.isEmpty {
+                        let movingNames = Set(scene.objects.lazy.filter { excludedObjects.contains($0.id) }.map(\.name))
+                        for object in scene.objects where stayed.contains(object.id) {
+                            let others = object.dependencies.subtracting(object.parentName.map { [$0] } ?? [])
+                            if others.isDisjoint(with: movingNames) { excludedObjects.remove(object.id) }
+                        }
                     }
                 }
+                // A symmetry follower moves with the drag as well, so it is no
+                // more a place to land than the vertices that move it.
+                let edited = edit.map { e in
+                    GeometrySnap.Edited(object: e.object,
+                                        excluded: Set(e.factors.indices.filter { e.factors[$0] > 0 })
+                                            .union(e.hidden).union(e.symmetry?.followerSet ?? []))
+                }
+                let view = GeometrySnap.View(viewProjection: projection.matrix,
+                                             size: SIMD2(Float(size.width), Float(size.height)))
+                let found = GeometrySnap.Targets(objects: scene.objects, view: view, elements: tools.elements,
+                                                 excludedObjects: excludedObjects, edited: edited,
+                                                 occlusion: !(options.xray || wireframe))
+                // Closest tries each object's bound box corners — its origin
+                // when only origins move (`snap_source_closest_fn` skips the box
+                // for CTX_OBMODE_XFORM_OBDATA).
+                let withPoints = tools.target == .closest
+                    ? (edit == nil && points == nil
+                        ? (originsOnly ? targets.map(\.location) : targets.flatMap(GeometrySnap.boxCorners))
+                        : sources)
+                    : [snapSource]
+                if !found.isEmpty, !withPoints.isEmpty {
+                    geometry = GeometrySnapping(targets: found, sources: withPoints)
+                }
             }
-            // A symmetry follower moves with the drag as well, so it is no
-            // more a place to land than the vertices that move it.
-            let edited = edit.map { e in
-                GeometrySnap.Edited(object: e.object,
-                                    excluded: Set(e.factors.indices.filter { e.factors[$0] > 0 })
-                                        .union(e.hidden).union(e.symmetry?.followerSet ?? []))
-            }
-            let view = GeometrySnap.View(viewProjection: projection.matrix,
-                                         size: SIMD2(Float(size.width), Float(size.height)))
-            let found = GeometrySnap.Targets(objects: scene.objects, view: view, elements: tools.elements,
-                                             excludedObjects: excludedObjects, edited: edited,
-                                             occlusion: !(options.xray || wireframe))
-            // Closest tries each object's bound box corners — its origin
-            // when only origins move (`snap_source_closest_fn` skips the box
-            // for CTX_OBMODE_XFORM_OBDATA).
-            let withPoints = tools.target == .closest
-                ? (edit == nil && points == nil
-                    ? (originsOnly ? targets.map(\.location) : targets.flatMap(GeometrySnap.boxCorners))
-                    : sources)
-                : [snapSource]
-            if !found.isEmpty, !withPoints.isEmpty {
-                geometry = GeometrySnapping(targets: found, sources: withPoints)
-            }
+            return (TransformSnap(tools: tools, step: options.snapIncrement), geometry)
         }
+        let current = snapping(useSnap: tools.useSnap)
+        let inversion = SnapInversion { snapping(useSnap: !tools.useSnap) }
 
         return Session(gizmo: gizmo, handle: handle, start: point,
                        projection: projection,
@@ -703,9 +760,9 @@ struct TransformGizmo {
                        points: points,
                        proportional: proportional,
                        pivot: tools.pivot,
-                       snap: TransformSnap(tools: tools, step: options.snapIncrement),
+                       snap: current.snap,
                        snapSource: snapSource,
-                       geometry: geometry,
+                       geometry: current.geometry,
                        autoMerge: editing && points == nil && tools.autoMerge ? tools.mergeThreshold : nil,
                        originsOnly: originsOnly,
                        proportionalDefaults: ProportionalEdit(
@@ -714,7 +771,8 @@ struct TransformGizmo {
                        frame: Frame(orientation: scene.orientation.type,
                                     axes: OrientationBpy.printed(simd_float3x3(gizmo.axes[0], gizmo.axes[1],
                                                                                gizmo.axes[2])),
-                                    viewAxes: OrientationBpy.printed(viewAxes(camera))))
+                                    viewAxes: OrientationBpy.printed(viewAxes(camera))),
+                       snapInversion: inversion)
     }
 
     /// What a drag to `point` amounts to. Reported in gizmo space, which is
@@ -858,7 +916,7 @@ struct TransformGizmo {
     static func snapping(_ result: Result, session: Session,
                          at point: CGPoint) -> (result: Result, target: GeometrySnap.Hit?) {
         let g = session.gizmo
-        if case .translate = result, let geometry = session.geometry,
+        if case .translate = result, let geometry = session.activeGeometry,
            let hit = geometry.targets.find(SIMD2(Float(point.x), Float(point.y))),
            let source = GeometrySnap.closest(geometry.sources, to: hit.location) {
             let constraint: GeometrySnap.Constraint
@@ -869,7 +927,7 @@ struct TransformGizmo {
             }
             return (.translate(GeometrySnap.move(source, to: hit, constraint: constraint)), hit)
         }
-        guard let snap = session.snap else { return (result, nil) }
+        guard let snap = session.activeSnap else { return (result, nil) }
         switch result {
         case .translate(let delta):
             let constraint: TransformSnap.Constraint
@@ -902,7 +960,7 @@ struct TransformGizmo {
     /// A move that may snap to geometry is written to six places: rounded to
     /// four, a snapped vertex could stop up to 5e-5 per axis beside its
     /// target, and a snap is meant to make the two coincide.
-    static func places(_ session: Session) -> Int { session.geometry == nil ? 4 : 6 }
+    static func places(_ session: Session) -> Int { session.activeGeometry == nil ? 4 : 6 }
 
     /// A result as the commit spells it. The preview runs these numbers
     /// rather than the unrounded drag, so the two agree to the digit: a scale

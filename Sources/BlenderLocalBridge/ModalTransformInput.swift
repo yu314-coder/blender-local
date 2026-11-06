@@ -26,13 +26,34 @@ import Foundation
 public struct ModalTransformInput: Equatable, Sendable {
     public enum Mode: Equatable, Sendable {
         case translate, rotate, scale
+        /// R pressed again during Rotate (TFM_TRACKBALL): the selection turns
+        /// about the view's horizontal and vertical axes, and R once more goes
+        /// back to Rotate.
+        case trackball
+        /// G pressed again during Move in Edit Mode (TFM_EDGE_SLIDE): the
+        /// selected edges slide along the faces beside them. Where they
+        /// cannot, a single vertex slides along one of its edges
+        /// (TFM_VERT_SLIDE).
+        case edgeSlide, vertexSlide
 
         /// Blender's operator names, which its header shows.
         public var label: String {
             switch self {
-            case .translate: return "Move"
-            case .rotate:    return "Rotate"
-            case .scale:     return "Scale"
+            case .translate:   return "Move"
+            case .rotate:      return "Rotate"
+            case .scale:       return "Scale"
+            case .trackball:   return "Trackball"
+            case .edgeSlide:   return "Edge Slide"
+            case .vertexSlide: return "Vertex Slide"
+            }
+        }
+
+        /// X, Y and Z hold nothing here: Trackball and the slides set
+        /// T_NO_CONSTRAINT.
+        public var takesConstraint: Bool {
+            switch self {
+            case .translate, .rotate, .scale: return true
+            case .trackball, .edgeSlide, .vertexSlide: return false
             }
         }
     }
@@ -89,7 +110,7 @@ public struct ModalTransformInput: Equatable, Sendable {
 
     /// X, Y or Z (`axis` 0, 1, 2), with Shift for the plane across it.
     public mutating func press(axis: Int, plane: Bool) {
-        guard (0..<3).contains(axis) else { return }
+        guard (0..<3).contains(axis), mode.takesConstraint else { return }
         // orient_curr: 0 none (O_DEFAULT), 1 the scene's, 2 the other.
         let current: Int
         switch constraint.space {
@@ -127,8 +148,11 @@ public struct ModalTransformInput: Equatable, Sendable {
     /// How many values can be typed: one for a turn and for one axis, two
     /// for a plane, three for a move or a scale with no constraint.
     public var valueCount: Int {
-        if mode == .rotate { return 1 }
-        return constraint.freeAxes.count
+        switch mode {
+        case .rotate, .edgeSlide, .vertexSlide: return 1
+        case .trackball: return 2
+        case .translate, .scale: return constraint.freeAxes.count
+        }
     }
 
     public var isTyping: Bool { typed != nil }

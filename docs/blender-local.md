@@ -1,5 +1,87 @@
 # Blender Local — the app
 
+## November 7: Ctrl inverts snapping, R R is Trackball, G G is Edge Slide
+
+The user: "pls continue improve the blender local". The three parts of
+Blender's G, R and S November 5 left out, each from Blender's transform modal
+map (`km_transform_modal_map`) and transform.cc, 5.2.1:
+
+- **Ctrl held inverts the magnet** (SNAP_INV_ON on Ctrl's press, SNAP_INV_OFF
+  on its release — Blender's "Snap Invert"): with the magnet off, Ctrl snaps
+  as the scene's snap settings say; with it on, Ctrl lets go. During G, R and
+  S, Trackball, and a drag of the gizmo. It is read from the pointer's and the
+  drag's modifier flags (the on-screen Ctrl counts as held) and from Ctrl's own
+  press and release, so a key alone snaps with the pointer still
+  (`ViewportMTKView.pressesBegan`). The drag keeps the other snapping beside
+  its own (`TransformGizmo.SnapInversion`), worked out the first time Ctrl asks
+  for it from what the drag took when it began: whatever moves is already left
+  out of the snap targets, so the preview's moved geometry is never one. In
+  the real app: G X to 2.2640 with the magnet off, Ctrl down 2.2500 (the
+  increment), up 2.2640 again, confirmed with Ctrl held
+  `translate(value=(2.25, 0, 0))`.
+- **R again during Rotate is Trackball** (TFM_TRACKBALL), and R once more
+  Rotate. Blender's INPUT_TRACKBALL: 0.01 radians for each pixel the pointer
+  has travelled, up and down about the view's horizontal axis, across about
+  its vertical one, the two turns multiplied horizontal first
+  (`applyTrackball`); X, Y and Z do nothing (T_NO_CONSTRAINT); two angles can
+  be typed in degrees, Tab between them; Increment snapping rounds each to 5°.
+  The turn is one turn about one axis in the end, so it is previewed and
+  committed as a Rotate about that axis in the View orientation (the path a
+  turn about the view already took). Blender's own `transform.trackball` was
+  not usable: its axes are the 3D View's perspective matrix, which a headless
+  Blender recomputes only when it draws, and `RegionView3D.update()` to force
+  it crashed desktop 5.2.1 in background mode (`GPU_matrix_frustum_set`, no GPU
+  context) — so the redo panel says Rotate, with its angle and axis, where
+  Blender's says Trackball. In the real app: R R 30 Tab 45 on a cube left it
+  at (25.63°, 15.08°, 48.78°) after the commit; R(view right, 30°)·R(view up,
+  45°) worked out from the view's axes gives (25.632°, 15.084°, 48.783°).
+  A pointer moved 30 points across and 20 up read -22.92° 34.38° (2 pixels a
+  point).
+- **G again during Move in a mesh's Edit Mode is Edge Slide** (TFM_EDGE_SLIDE),
+  and where Blender cannot edge-slide the selection, Vertex Slide; G once more
+  goes back to Move. Both are previewed by the app (ModalSlide.swift) from
+  what `_blenderkit_slide` reads out of Blender when the slide begins: both
+  move each vertex in a straight line, linearly in the factor — measured in
+  desktop 5.2.1, the slide at 0.37 was the start mixed with the +1 end by 0.37
+  to 0 error, Vertex Slide's within 1.5e-8 — so Blender is asked once where +1
+  and -1 take every vertex (the operator with its undo off, every vertex put
+  back exactly, `correct_uv` off for the probe) and each frame mixes between.
+  - Edge Slide's factor is Blender's InputCustomRatio between the two ends of
+    the moved vertex nearest the pointer: the pointer moving the whole way
+    from the -1 end to the +1 end on screen is a factor of 2; Clamp keeps it
+    within ±1. It commits as the Edge menu's Edge Slide,
+    `edge_slide(value=…, use_even=False, flipped=False, mirror=True)`, whose
+    redo panel has Even and Flipped.
+  - Vertex Slide picks the edge most nearly the way the pointer has moved
+    since the slide began, as Blender's `calcVertSlideMouseActiveEdges` does,
+    and Blender is asked again only when it swings to another edge. Run
+    without a pointer Blender's `vert_slide` takes an edge of its own (the
+    same one every time) unless given its hidden `direction`, a world vector:
+    each vertex then slides along its edge pointing most nearly that way
+    (measured: each of a vertex's four edges reached by its own direction). So
+    the commit is the Vertex menu's Slide Vertices with
+    `direction=` the chosen edge's, fixed, and the redo panel's Slide
+    Direction row (six axes, which cannot say an edge's direction) left out.
+    A negative factor moves nothing, as Blender's Clamp has it.
+  - In the real app on a cylinder's middle loop: G G .5 Return previewed the
+    loop at z = -0.5 and committed `edge_slide(value=0.5, …)` leaving it there;
+    a pointer-steered slide committed -0.63 where the preview showed 0.6300;
+    Escape put a slide back; G G G went back to Move. On one vertex: a move to
+    the right slid it onto its right-hand neighbour, a move up switched to the
+    vertical edge, and the commit `vert_slide(value=0.3688, mirror=True,
+    direction=(0, 0, 1))` left it where the preview had it.
+- **For a finger** the bar over the 3D Viewport has Trackball during Rotate
+  (Rotate during Trackball) and Edge Slide during an Edit Mode Move (Move
+  during a slide), and shows X, Y and Z only where they do something. The
+  status row adds R, G and Ctrl ("Snap Invert", Blender's name for it).
+- **Test All Features** has Trackball (R R): 30, Tab, 45, Confirm, and Edge
+  Slide (G G): 0.5, Confirm on the loop Loop Cut has just made.
+- **Not done:** Edge Slide's own keys while it runs (E Even, F Flip, Alt or C
+  Clamp — Even and Flipped are in the redo panel after); snapping during a
+  slide; Blender's Trackball with proportional editing turns each element by
+  each angle scaled (here the one combined turn is scaled); an on-screen Ctrl
+  tapped during a drag counts from the pointer's next move.
+
 ## November 5, evening: Blender's G, R and S, and F12
 
 The user: "Continue the blender local". The keys Blender users reach for

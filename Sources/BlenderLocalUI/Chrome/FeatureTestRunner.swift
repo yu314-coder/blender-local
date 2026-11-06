@@ -881,6 +881,49 @@ final class FeatureTestRunner {
                     + "of \(verts(s)), committed as one step"
             }
 
+        case "transform.trackball_rr":
+            // R, then R again for Trackball (ModalTransform.swift), two angles
+            // typed with Tab between them, confirmed.
+            let s = try onSphere()
+            await settle()
+            let (c, _) = try viewport()
+            let generation = bridge.adjustableGeneration
+            return await command {
+                guard c.beginModalTransform(.rotate) else { throw Failure(detail: "Rotate began nothing on \(s.name)") }
+                c.modalKey("r")
+                for character in "30" { c.modalKey(String(character)) }
+                c.modalKey("tab")
+                for character in "45" { c.modalKey(String(character)) }
+                c.modalConfirm()
+                guard bridge.adjustableGeneration != generation, let op = bridge.adjustable else {
+                    throw Failure(detail: "the confirm left no redo panel: "
+                                  + (bridge.lastOutcome?.error ?? "no outcome"))
+                }
+                return "Trackball 30°, 45° of \(verts(s)), committed as one step (\(op.name))"
+            }
+
+        case "transform.edge_slide_gg":
+            // G, then G again (ModalSlide.swift), on the loop Loop Cut made just
+            // before: Blender leaves the new loop selected.
+            let obj = try editing("loopcut", at: SIMD3(0, 6, 0))
+            await settle()
+            let (c, _) = try viewport()
+            let generation = bridge.adjustableGeneration
+            return await command {
+                guard c.beginModalTransform(.translate) else { throw Failure(detail: "Move began nothing on \(obj.name)") }
+                guard c.modalSlide() else {
+                    c.modalCancel()
+                    throw Failure(detail: "G again did not slide the selection on \(obj.name)")
+                }
+                for character in "0.5" { c.modalKey(String(character)) }
+                c.modalConfirm()
+                guard bridge.adjustableGeneration != generation, let op = bridge.adjustable else {
+                    throw Failure(detail: "the confirm left no redo panel: "
+                                  + (bridge.lastOutcome?.error ?? "no outcome"))
+                }
+                return "\(op.name) 0.5 on \(obj.name)'s loop, committed as one step"
+            }
+
         case "edit.undo", "edit.redo":
             try objectMode()
             let undoing = entry.key == "edit.undo"
