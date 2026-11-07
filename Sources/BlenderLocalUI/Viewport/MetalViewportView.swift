@@ -1616,6 +1616,8 @@ final class ViewportMTKView: MTKView {
             ("\t", [], "tab"), (UIKeyCommand.inputDelete, [], "backspace"),
             (".", [], "."), ("-", [], "-"),
             ("g", [], "g"), ("r", [], "r"), ("s", [], "s"),
+            // A slide's own keys (handleEventEdgeSlide): Even, Flipped, Clamp.
+            ("e", [], "even"), ("f", [], "flip"), ("c", [], "clamp"),
             ("z", .command, "swallow"), ("z", [.command, .shift], "swallow"),
             ("z", .control, "swallow"), ("z", [.control, .shift], "swallow"),
         ]
@@ -1637,18 +1639,80 @@ final class ViewportMTKView: MTKView {
     /// with the pointer still. A modifier alone arrives as a press, not as a
     /// key command.
     override func pressesBegan(_ presses: Set<UIPress>, with event: UIPressesEvent?) {
+        #if DEBUG
+        if ProcessInfo.processInfo.arguments.contains("-key-log") {
+            for p in presses {
+                print("[bk] key down \(p.key?.keyCode.rawValue ?? -1) '\(p.key?.characters ?? "")' "
+                      + "flags \(p.key?.modifierFlags.rawValue ?? 0)"); fflush(stdout)
+            }
+        }
+        #endif
         if let modal, presses.contains(where: { Self.isControl($0) }) { modal.modalControl(true) }
-        super.pressesBegan(presses, with: event)
+        // A keyboard's own numpad: Blender's numpad keys (ViewportKey's
+        // `numpad_` chords). UIKit hands a keypad key here first, then to any
+        // key command on the same character — it matches a keypad 1 to the
+        // number row's 1, ignoring the numeric pad flag — so the numpad is
+        // answered here and kept from going further.
+        var rest = presses
+        if modal == nil, let viewKeys {
+            for press in presses {
+                guard let key = press.key, let chord = Self.numpadChord(key), viewKeys.canPress(chord) else { continue }
+                viewKeys.press(chord)
+                rest.remove(press)
+                numpadPresses.insert(ObjectIdentifier(press))
+            }
+        }
+        if !rest.isEmpty { super.pressesBegan(rest, with: event) }
+    }
+
+    /// The presses the numpad answered, whose ends go no further either.
+    private var numpadPresses: Set<ObjectIdentifier> = []
+
+    /// Blender's chord for a keypad key, modifiers in Blender's order:
+    /// "numpad_1", "ctrl+numpad_3", "shift+ctrl+numpad_plus".
+    static func numpadChord(_ key: UIKey) -> String? {
+        guard key.modifierFlags.contains(.numericPad) else { return nil }
+        let name: String
+        switch key.keyCode {
+        case .keypad0: name = "numpad_0"
+        case .keypad1: name = "numpad_1"
+        case .keypad2: name = "numpad_2"
+        case .keypad3: name = "numpad_3"
+        case .keypad4: name = "numpad_4"
+        case .keypad5: name = "numpad_5"
+        case .keypad6: name = "numpad_6"
+        case .keypad7: name = "numpad_7"
+        case .keypad8: name = "numpad_8"
+        case .keypad9: name = "numpad_9"
+        case .keypadPeriod: name = "numpad_period"
+        case .keypadPlus: name = "numpad_plus"
+        case .keypadHyphen: name = "numpad_minus"
+        case .keypadSlash: name = "numpad_slash"
+        default: return nil
+        }
+        var parts: [String] = []
+        let flags = key.modifierFlags
+        if flags.contains(.shift) { parts.append("shift") }
+        if flags.contains(.control) { parts.append("ctrl") }
+        if flags.contains(.alternate) { parts.append("alt") }
+        if flags.contains(.command) { parts.append("cmd") }
+        return (parts + [name]).joined(separator: "+")
     }
 
     override func pressesEnded(_ presses: Set<UIPress>, with event: UIPressesEvent?) {
         if let modal, presses.contains(where: { Self.isControl($0) }) { modal.modalControl(false) }
-        super.pressesEnded(presses, with: event)
+        // A pie opened by a key chooses when the key is let go (PieKeys).
+        for press in presses {
+            if let usage = press.key?.keyCode.rawValue { PieKeys.post(usage) }
+        }
+        let rest = presses.filter { numpadPresses.remove(ObjectIdentifier($0)) == nil }
+        if !rest.isEmpty { super.pressesEnded(rest, with: event) }
     }
 
     override func pressesCancelled(_ presses: Set<UIPress>, with event: UIPressesEvent?) {
         if let modal, presses.contains(where: { Self.isControl($0) }) { modal.modalControl(false) }
-        super.pressesCancelled(presses, with: event)
+        let rest = presses.filter { numpadPresses.remove(ObjectIdentifier($0)) == nil }
+        if !rest.isEmpty { super.pressesCancelled(rest, with: event) }
     }
 
     private static func isControl(_ press: UIPress) -> Bool {

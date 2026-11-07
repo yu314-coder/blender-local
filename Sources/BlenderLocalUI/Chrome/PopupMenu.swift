@@ -36,12 +36,16 @@ struct PopupItem {
     /// Why a row is greyed out, under its title: a menu row on an iPad has no
     /// tooltip to say it in.
     var note: String?
+    /// A drawn icon in place of `icon`'s symbol: the falloff curves in
+    /// Shift+O's pie, as Blender draws its curve icons.
+    var glyph: AnyView?
     var kind: Kind
 
     static func action(_ title: String, icon: String? = nil, key: String? = nil, enabled: Bool = true,
-                       checked: Bool = false, note: String? = nil, _ run: @escaping () -> Void) -> PopupItem {
+                       checked: Bool = false, note: String? = nil, glyph: AnyView? = nil,
+                       _ run: @escaping () -> Void) -> PopupItem {
         PopupItem(title: title, icon: icon, key: key, enabled: enabled, checked: checked, note: note,
-                  kind: .action(run))
+                  glyph: glyph, kind: .action(run))
     }
 
     static func submenu(_ title: String, icon: String? = nil, enabled: Bool = true, note: String? = nil,
@@ -80,11 +84,27 @@ struct PopupMenuModel: Identifiable {
     /// Where it was asked for, in the overlay's coordinates.
     var anchor: CGPoint
     var items: [PopupItem]
+    /// Blender's pie (`wm.call_menu_pie`): the items round the pointer in
+    /// Blender's order — left, right, bottom, top, then the corners — drawn by
+    /// `PieMenuOverlay`. A separator keeps its place empty.
+    var pie = false
+    /// The chord whose key opened it ("z", "shift+s"), which a pie waits to
+    /// see let go; nil when no key did.
+    var openedByKey: String?
 
     /// The rows as text, submenus opened, for the launch hooks to print and
     /// a check to hold against Blender's menus.
     func dump() -> String {
-        var out = [name + (title.map { " \"\($0)\"" } ?? "")]
+        var out = [name + (title.map { " \"\($0)\"" } ?? "") + (pie ? " (pie)" : "")]
+        if pie {
+            for (i, item) in items.prefix(8).enumerated() {
+                guard let place = PieDirection.forItem(i) else { continue }
+                if case .separator = item.kind { continue }
+                out.append("  \(place.digit) \(place): " + (item.checked ? "[x] " : "") + item.title
+                           + (item.enabled ? "" : "  (off)"))
+            }
+            return out.joined(separator: "\n")
+        }
         func walk(_ items: [PopupItem], _ depth: Int) {
             let pad = String(repeating: "  ", count: depth)
             for item in items {

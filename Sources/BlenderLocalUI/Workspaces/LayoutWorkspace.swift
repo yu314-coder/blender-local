@@ -1420,7 +1420,12 @@ struct LayoutWorkspace: View {
         #endif
         .overlay {
             if let popupMenu {
-                PopupMenuOverlay(model: popupMenu) { self.popupMenu = nil }
+                if popupMenu.pie {
+                    PieMenuOverlay(model: popupMenu) { self.popupMenu = nil }
+                        .id(popupMenu.id)
+                } else {
+                    PopupMenuOverlay(model: popupMenu) { self.popupMenu = nil }
+                }
             }
         }
         .coordinateSpace(name: Self.space)
@@ -2012,7 +2017,12 @@ struct LayoutWorkspace: View {
             },
             // Blender adds at the 3D cursor and leaves the view where it is.
             // This used to re-frame the whole scene after every add.
-            add: { kind in if !refusedInSculptMode("Add") { bridge?.perform(LastOperator.add(kind, at: scene.cursor)) } },
+            // While a mesh is edited (Shift+A there), into the mesh.
+            add: { kind in
+                if !refusedInSculptMode("Add") {
+                    bridge?.perform(LastOperator.add(kind, at: scene.cursor, editing: editing && !editingPoints))
+                }
+            },
             objectTransform: objectTransform,
             setOrigin: setOrigin,
             applyTransform: applyTransform,
@@ -2096,7 +2106,22 @@ struct LayoutWorkspace: View {
                 show("Render")
             },
             brushPanel: session.usesRealBlender && [.sculpt, .vertexPaint, .weightPaint].contains(scene.mode)
-                ? { AnyView(BrushContextPanel(scene: scene, session: session, bridge: bridge)) } : nil)
+                ? { AnyView(BrushContextPanel(scene: scene, session: session, bridge: bridge)) } : nil,
+            pivot: { scene.tools.pivot },
+            setPivot: { bridge?.run(ToolsBpy.pivot($0)) },
+            falloff: { scene.tools.falloff },
+            setFalloff: { bridge?.run(ToolsBpy.falloff($0)) },
+            toggleConnected: { bridge?.run(ToolsBpy.connected(!scene.tools.connected)) },
+            toggleTransformOrigins: { bridge?.run(ToolsBpy.affectOnlyOrigins(!scene.tools.affectOnlyOrigins)) },
+            toggleOverlays: { options.showOverlays.toggle() },
+            // Blender's takes any object; the app looks through cameras only.
+            objectAsCamera: scene.active?.blenderType == "CAMERA" && session.usesRealBlender ? {
+                let active = scene.active
+                bridge?.run(ActiveCameraBpy.set)
+                lookThroughCamera(active)
+            } : nil,
+            tool: tool,
+            uv: { op in bridge?.run(Bpy.uv(op), undo: op.label) })
     }
 
     #if DEBUG
@@ -2142,6 +2167,20 @@ struct LayoutWorkspace: View {
             said = "ran \(item.title)"
         case "close":
             popupMenu = nil
+        case "pie-point":
+            // The pointer over an open pie, `dx,dy` from where it was opened.
+            let xy = rest.split(separator: ",").compactMap { Double($0) }
+            guard xy.count == 2, let pie = popupMenu, pie.pie else { said = "no pie open"; break }
+            NotificationCenter.default.post(name: PieKeys.testPointer, object: nil, userInfo: [
+                "point": CGPoint(x: pie.anchor.x + xy[0], y: pie.anchor.y + xy[1])])
+            said = "pointed"
+        case "pie-release":
+            // The key that opened the pie, let go.
+            guard let key = popupMenu?.openedByKey, let usage = PieKeys.usage(ofChordKey: key) else {
+                said = "no pie opened by a key"; break
+            }
+            PieKeys.post(usage)
+            said = "released \(key)"
         case "do":
             // The setup a test needs that is not a Blender key here: A, and
             // the select mode.
@@ -2151,6 +2190,7 @@ struct LayoutWorkspace: View {
             case "edge": setSelectMode(.edge)
             case "face": setSelectMode(.face)
             case "sidebar": showsSidebar.toggle()
+            case "edit": toggleEditing()
             default: said = "no such action"
             }
         case "wait":
@@ -2164,7 +2204,16 @@ struct LayoutWorkspace: View {
         while session.isRunning { try? await Task.sleep(nanoseconds: 100_000_000) }
         print("[bk] menu-ops \(token): \(said); \(scene.mode.label), \(scene.objects.count) objects, "
               + "active \(scene.active?.name ?? "none"), selected \(scene.selection.count), "
-              + "cursor \(scene.cursor), banner \(bridge?.report.map { "\($0.operation): \($0.message)" } ?? "none")")
+              + "cursor \(scene.cursor), banner \(bridge?.report.map { "\($0.operation): \($0.message)" } ?? "none")"
+              + "; shading \(shading.label), pivot \(scene.tools.pivot.label), falloff \(scene.tools.falloff.label), "
+              + "connected \(scene.tools.connected), origins \(scene.tools.affectOnlyOrigins), tool \(tool.label), "
+              + "overlays \(options.showOverlays), select mode \(scene.selectMode), "
+              + String(format: "view az %.1f el %.1f dist %.2f%@", camera.azimuth * 180 / .pi,
+                       camera.elevation * 180 / .pi, camera.distance, camera.isOrthographic ? " ortho" : ""))
+        if let popupMenu, popupMenu.pie {
+            print("[bk] pie anchor \(popupMenu.anchor.x - viewportOrigin.x),\(popupMenu.anchor.y - viewportOrigin.y) "
+                  + "key \(popupMenu.openedByKey ?? "none")")
+        }
         if let popupMenu {
             print("[bk] menu " + popupMenu.dump().replacingOccurrences(of: "\n", with: "\n[bk] menu "))
         }
@@ -2184,7 +2233,9 @@ struct LayoutWorkspace: View {
         let local = point ?? ViewportPointer.location
             ?? CGPoint(x: viewportSize.width / 2, y: viewportSize.height / 2)
         let anchor = CGPoint(x: viewportOrigin.x + local.x, y: viewportOrigin.y + local.y)
-        guard let model = ViewportMenu.model(menu, viewportKeys, at: anchor) else { return }
+        guard var model = ViewportMenu.model(menu, viewportKeys, at: anchor) else { return }
+        // A pie opened by a key waits to see it let go (PieKeys).
+        if model.pie { model.openedByKey = PieKeys.pressing }
         popupMenu = model
         #if DEBUG
         if ProcessInfo.processInfo.arguments.contains("-menu-dump") {
@@ -5044,7 +5095,10 @@ extension LayoutWorkspace {
                               setShading: { shading = $0 },
                               shading: { shading },
                               setXRay: { options.xray = $0 },
-                              tool: { tool })
+                              tool: { tool },
+                              pressKey: { ViewportKey.pressViewKey($0, viewportKeys) },
+                              openMenu: { popupMenu },
+                              closeMenu: { popupMenu = nil })
     }
 }
 
@@ -5136,7 +5190,10 @@ private struct ViewportInfoRow: View {
         case .rotate:    hints.append(Hint(gesture: "R", action: "Trackball"))
         case .trackball: hints.append(Hint(gesture: "R", action: "Rotate"))
         case .translate where shown.canSlide: hints.append(Hint(gesture: "G", action: "Edge Slide"))
-        case .edgeSlide, .vertexSlide: hints.append(Hint(gesture: "G", action: "Move"))
+        case .edgeSlide, .vertexSlide:
+            // Blender's slide status (`edge_slide_status`): Clamp, Even, Flipped.
+            hints += [Hint(gesture: "G", action: "Move"), Hint(gesture: "C", action: "Clamp"),
+                      Hint(gesture: "E", action: "Even"), Hint(gesture: "F", action: "Flipped")]
         default: break
         }
         hints += [Hint(gesture: "0–9", action: "Value"), Hint(gesture: "Shift", action: "Precision")]

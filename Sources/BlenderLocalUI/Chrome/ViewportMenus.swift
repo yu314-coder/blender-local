@@ -8,12 +8,15 @@ import SwiftUI
 /// header menu: these menus only gather them where Blender's do, under
 /// Blender's names (space_view3d.py and the operators' own names, 5.2.1).
 /// A row Blender has and this app cannot run is left out rather than drawn
-/// greyed, as its menu bar does. A pie is drawn as the list of its items.
+/// greyed, as its menu bar does. A pie is drawn round the pointer
+/// (PieMenu.swift), its items in Blender's places.
 enum ViewportMenu: String, CaseIterable {
     case context
     case add, apply, deleteObjects, delete
     case merge, split, separate, extrude, vertex, edge, face, normals
-    case snap, shading, view, mode, orientation
+    case snap, shading, view, mode, orientation, pivot, falloff
+    /// U in a mesh's Edit Mode, and Shift+Space's toolbar.
+    case uvMap, toolbar
     case parent, clearParent, moveToCollection, linkToCollection, makeLinks
     case selectGrouped, selectLinked, selectSimilar
 
@@ -39,6 +42,10 @@ enum ViewportMenu: String, CaseIterable {
         case .view:             return "VIEW3D_MT_view_pie"
         case .mode:             return "VIEW3D_MT_object_mode_pie"
         case .orientation:      return "VIEW3D_MT_orientations_pie"
+        case .pivot:            return "VIEW3D_MT_pivot_pie"
+        case .falloff:          return "VIEW3D_MT_proportional_editing_falloff_pie"
+        case .uvMap:            return "VIEW3D_MT_uv_map"
+        case .toolbar:          return "WM_OT_toolbar"
         case .parent:           return "OBJECT_OT_parent_set"
         case .clearParent:      return "OBJECT_OT_parent_clear"
         case .moveToCollection: return "OBJECT_MT_move_to_collection"
@@ -47,6 +54,14 @@ enum ViewportMenu: String, CaseIterable {
         case .selectGrouped:    return "OBJECT_OT_select_grouped"
         case .selectLinked:     return "OBJECT_OT_select_linked"
         case .selectSimilar:    return "VIEW3D_MT_edit_mesh_select_similar"
+        }
+    }
+
+    /// Blender's pies (`wm.call_menu_pie`), drawn round the pointer.
+    var isPie: Bool {
+        switch self {
+        case .snap, .shading, .view, .mode, .orientation, .pivot, .falloff: return true
+        default: return false
         }
     }
 
@@ -82,9 +97,17 @@ enum ViewportMenu: String, CaseIterable {
                 return nil
             }
         case .add:
-            guard !v.editing, v.mode == .object else { return nil }
-            title = "Add"
-            rows = add(v)
+            if v.editing && v.editingMesh {
+                // Shift+A in a mesh's Edit Mode: `VIEW3D_MT_mesh_add`, the
+                // primitives added into the mesh being edited.
+                name = "VIEW3D_MT_mesh_add"
+                title = "Mesh"
+                rows = PrimitiveKind.allCases.map { kind in .action(kind.displayName, icon: kind.icon) { v.add(kind) } }
+            } else {
+                guard !v.editing, v.mode == .object else { return nil }
+                title = "Add"
+                rows = add(v)
+            }
         case .apply:
             guard !v.editing else { return nil }
             title = "Apply"
@@ -103,7 +126,7 @@ enum ViewportMenu: String, CaseIterable {
             rows = Bpy.SeparateType.allCases.map { type in .action(type.label) { v.separate(type) } }
         case .snap:
             title = "Snap"
-            rows = snap(v)
+            rows = snapPie(v)
         case .shading:
             title = "Shading"
             rows = ViewportShading.allCases.map { s in
@@ -124,6 +147,39 @@ enum ViewportMenu: String, CaseIterable {
             rows = TransformOrientation.allCases.map { o in
                 .action(o.label, icon: o.icon, checked: current == o) { v.setOrientation(o) }
             }
+        case .pivot:
+            // `VIEW3D_MT_pivot_pie`: the five pivots, in the enum's order.
+            // Blender adds Only Locations (`use_transform_pivot_point_align`)
+            // in Object Mode; the app's previews do not follow that setting,
+            // so it is left out rather than offered and then drawn wrong.
+            guard v.mode == .object || v.editing else { return nil }
+            title = "Pivot Point"
+            let current = v.pivot()
+            rows = TransformPivot.allCases.map { p in
+                .action(p.label, icon: p.icon, checked: current == p) { v.setPivot(p) }
+            }
+        case .falloff:
+            // `VIEW3D_MT_proportional_editing_falloff_pie`: the eight curves,
+            // each drawn as Blender's curve icons draw it.
+            guard v.mode == .object || v.editing else { return nil }
+            title = "Proportional Editing Falloff"
+            let current = v.falloff()
+            rows = MeshEditor.ProportionalFalloff.allCases.map { f in
+                .action(f.label, checked: current == f, glyph: AnyView(FalloffGlyph(falloff: f))) { v.setFalloff(f) }
+            }
+        case .uvMap:
+            // U: `VIEW3D_MT_uv_map` — Unwrap's rows (IMAGE_MT_uvs_unwrap),
+            // Mark and Clear Seam, Reset. Project from View needs the 3D
+            // View's own region and is left out.
+            guard v.editing && v.editingMesh else { return nil }
+            title = "UV Mapping"
+            rows = uvMap(v)
+        case .toolbar:
+            // Shift+Space (`wm.toolbar`): the toolbar's tools at the pointer.
+            guard v.mode == .object || v.editing else { return nil }
+            name = "WM_OT_toolbar"
+            title = nil
+            rows = toolbar(v)
         case .parent:
             guard !v.editing else { return nil }
             title = "Set Parent To"
@@ -161,7 +217,52 @@ enum ViewportMenu: String, CaseIterable {
             }]
         }
         guard !rows.isEmpty else { return nil }
-        return PopupMenuModel(name: name, title: title, anchor: point, items: rows)
+        var model = PopupMenuModel(name: name, title: title, anchor: point, items: rows)
+        model.pie = menu.isPie
+        return model
+    }
+
+    /// `VIEW3D_MT_snap_pie`, in its own order — not the Snap menu's: left
+    /// Cursor to Grid, right Selection to Grid, bottom Cursor to Selected,
+    /// top Selection to Cursor, then Keep Offset, to Active, World Origin and
+    /// Cursor to Active in the corners.
+    @MainActor private static func snapPie(_ v: ViewportKeyActions) -> [PopupItem] {
+        let order: [SnapBpy] = [.cursorToGrid, .selectionToGrid, .cursorToSelected, .selectionToCursor,
+                                .selectionToCursorKeepOffset, .selectionToActive, .cursorToWorldOrigin, .cursorToActive]
+        return order.map { item in
+            let enabled = !v.isRunning && (!item.needsActive || v.hasActiveObject)
+                && (!item.movesSelection || v.hasActiveObject || v.editing)
+            return .action(item.label, icon: item.movesSelection ? "cursorarrow.rays" : "scope", enabled: enabled) {
+                v.snap(item)
+            }
+        }
+    }
+
+    /// `VIEW3D_MT_uv_map`.
+    @MainActor private static func uvMap(_ v: ViewportKeyActions) -> [PopupItem] {
+        let busy = v.isRunning
+        func row(_ op: UVOperator) -> PopupItem { .action(op.label, enabled: !busy) { v.uv(op) } }
+        return [row(.unwrapAngleBased), row(.unwrapConformal), row(.unwrapMinimumStretch), .separator,
+                row(.smartProject), row(.lightmapPack), row(.followActiveQuads), .separator,
+                row(.cubeProjection), row(.cylinderProjection), row(.sphereProjection), .separator,
+                .action("Mark Seam", enabled: !busy) { v.mesh(.markSeam) },
+                .action("Clear Seam", enabled: !busy) { v.mesh(.clearSeam) }, .separator,
+                row(.reset)]
+    }
+
+    /// Shift+Space: the toolbar, as the 3D View's toolbar has it in this mode.
+    @MainActor private static func toolbar(_ v: ViewportKeyActions) -> [PopupItem] {
+        var tools: [ActiveTool] = [.select, .boxSelect, .circleSelect, .lassoSelect, .cursor,
+                                   .move, .rotate, .scale, .measure]
+        if v.editing && v.editingMesh { tools += [.loopCut, .knife] }
+        var rows: [PopupItem] = []
+        for tool in tools {
+            if tool == .cursor || tool == .move || tool == .measure || tool == .loopCut { rows.append(.separator) }
+            rows.append(.action(tool.label, icon: tool.icon, enabled: !v.isRunning, checked: v.tool == tool) {
+                v.setTool(tool)
+            })
+        }
+        return rows
     }
 
     // MARK: Object Mode

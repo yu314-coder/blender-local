@@ -22,6 +22,12 @@ struct FeatureTestLayoutDoor {
     var shading: () -> ViewportShading
     var setXRay: (Bool) -> Void
     var tool: () -> ActiveTool
+    /// One of Blender's keys pressed in the 3D View (ViewportKeymap), as a
+    /// keyboard presses it; false when it means nothing there now.
+    var pressKey: (String) -> Bool = { _ in false }
+    /// The menu or pie a key opened, and closing it.
+    var openMenu: () -> PopupMenuModel? = { nil }
+    var closeMenu: () -> Void = {}
 }
 
 enum FeatureTestDoor {
@@ -900,6 +906,63 @@ final class FeatureTestRunner {
                                   + (bridge.lastOutcome?.error ?? "no outcome"))
                 }
                 return "Trackball 30°, 45° of \(verts(s)), committed as one step (\(op.name))"
+            }
+
+        case "view.pie_shading", "view.pie_pivot":
+            // Z's Shading pie and Period's Pivot Point pie (PieMenu.swift):
+            // the key opens the pie round the pointer, and the item in a
+            // place is chosen as its number key chooses it.
+            guard let door = FeatureTestDoor.layout else { throw Failure(detail: "the 3D View is not on screen") }
+            let shading = entry.key == "view.pie_shading"
+            let place: PieDirection = shading ? .west : .east
+            return await command {
+                guard door.pressKey(shading ? "z" : "period"), let pie = door.openMenu(), pie.pie else {
+                    door.closeMenu()
+                    throw Failure(detail: "the key opened no pie")
+                }
+                guard let item = pie.items.indices.contains(place.rawValue) ? pie.items[place.rawValue] : nil,
+                      case .action(let run) = item.kind else {
+                    door.closeMenu()
+                    throw Failure(detail: "the pie has nothing at \(place)")
+                }
+                door.closeMenu()
+                run()
+                if shading {
+                    guard door.shading() == .wireframe else {
+                        throw Failure(detail: "\(item.title) left the shading \(door.shading().label)")
+                    }
+                    door.setShading(.solid)
+                } else {
+                    // The pivot is Blender's, read back after the command.
+                    let pivot = scene.tools.pivot
+                    _ = bridge.run(ToolsBpy.pivot(.medianPoint))
+                    guard pivot == .cursor else { throw Failure(detail: "\(item.title) left the pivot \(pivot.label)") }
+                }
+                return "\(pie.title ?? "pie") ▸ \(item.title) (key \(place.digit))"
+            }
+
+        case "transform.edge_slide_even":
+            // G G, then E: Edge Slide's Even, which Blender is asked for at
+            // each factor (ModalSlide.swift).
+            let obj = try editing("loopcut", at: SIMD3(0, 9, 0))
+            await settle()
+            let (c, _) = try viewport()
+            let generation = bridge.adjustableGeneration
+            return await command {
+                guard c.beginModalTransform(.translate) else { throw Failure(detail: "Move began nothing on \(obj.name)") }
+                guard c.modalSlide() else {
+                    c.modalCancel()
+                    throw Failure(detail: "G again did not slide the selection on \(obj.name)")
+                }
+                for character in "0.5" { c.modalKey(String(character)) }
+                c.modalKey("even")
+                c.modalConfirm()
+                guard bridge.adjustableGeneration != generation, let op = bridge.adjustable else {
+                    throw Failure(detail: "the confirm left no redo panel: "
+                                  + (bridge.lastOutcome?.error ?? "no outcome"))
+                }
+                guard op["use_even"] == 1 else { throw Failure(detail: "\(op.name) committed without Even") }
+                return "\(op.name) 0.5 with Even on \(obj.name)'s loop"
             }
 
         case "transform.edge_slide_gg":

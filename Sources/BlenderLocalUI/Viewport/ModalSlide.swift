@@ -58,14 +58,36 @@ struct SlideDrive {
     var neighbour: Int?
     var direction: SIMD3<Float>?
     var factor: Float = 0
+    /// E, F and C while it slides (`handleEventEdgeSlide`,
+    /// `handleEventVertSlide`): Even, Flipped, and Clamp, which is on until C
+    /// turns it off.
+    var even = false
+    var flipped = false
+    var clamp = true
+    /// Blender's answer at `exactFactor`, where the slide is not a straight
+    /// mix of its ends.
+    var exact: [Int: SIMD3<Float>]?
+    var exactFactor: Float?
 
     var mode: ModalTransformInput.Mode { kind == .edge ? .edgeSlide : .vertexSlide }
 
+    /// Measured in 5.2.1 (`_blenderkit_slide`): Edge Slide with Even, and
+    /// Vertex Slide with Even and Flipped, are not a straight mix of their ±1
+    /// ends, so the preview asks Blender at each factor instead.
+    var asksEachFactor: Bool { kind == .edge ? even : (even && flipped) }
+
+    /// The probe's and the commit's flags, as `_blenderkit_slide` takes them.
+    var flags: String {
+        func py(_ b: Bool) -> String { b ? "True" : "False" }
+        return "mirror=\(py(mirror)), even=\(py(even)), flipped=\(py(flipped)), clamp=\(py(clamp))"
+    }
+
     /// Clamp, Blender's default for both: Edge Slide stays on the faces beside
     /// it (-1 to 1); Vertex Slide stays on its edge, and a negative factor
-    /// moves nothing (measured).
+    /// moves nothing (measured). With Clamp off, the operators' hard range.
     func clamped(_ f: Float) -> Float {
-        kind == .edge ? min(max(f, -1), 1) : min(max(f, 0), 1)
+        guard clamp else { return min(max(f, -10), 10) }
+        return kind == .edge ? min(max(f, -1), 1) : min(max(f, 0), 1)
     }
 }
 
@@ -183,12 +205,14 @@ extension MetalViewportView.Coordinator {
                 let printed = Self.vector(direction)
                 guard let bridge = parent.bridge,
                       let ends = Self.slideEnds(bridge.captureWithSelection(
-                          "import _blenderkit_slide\n_blenderkit_slide.vertex(\(printed), mirror=\(slide.mirror ? "True" : "False"))"),
-                          mesh: slide.mesh)
+                          "import _blenderkit_slide\n_blenderkit_slide.vertex(\(printed), \(slide.flags))"),
+                          mesh: slide.mesh) ?? (slide.asksEachFactor ? [] : nil)
                 else { break }
                 slide.ends = ends
                 slide.neighbour = chosen
                 slide.direction = direction
+                slide.exact = nil
+                slide.exactFactor = nil
             }
             if let s = screen(link.neighbours[chosen]) {
                 let e = CGPoint(x: s.x - v.x, y: s.y - v.y)
@@ -199,26 +223,93 @@ extension MetalViewportView.Coordinator {
         if let typed = drive.input.values { factor = Float(typed[0]) }
         factor = slide.clamped(factor)
         slide.factor = factor
+        if slide.asksEachFactor, slide.exactFactor != factor {
+            slide.exact = askSlide(slide, at: factor)
+            slide.exactFactor = factor
+        }
         drive.slide = slide
         modal = drive
 
         var mesh = slide.mesh
-        for end in slide.ends where end.index < mesh.vertices.count {
-            mesh.vertices[end.index].position = factor >= 0
-                ? simd_mix(end.start, end.plus, SIMD3(repeating: factor))
-                : simd_mix(end.start, end.minus, SIMD3(repeating: -factor))
+        if slide.asksEachFactor {
+            for (i, position) in slide.exact ?? [:] where i < mesh.vertices.count {
+                mesh.vertices[i].position = position
+            }
+        } else {
+            for end in slide.ends where end.index < mesh.vertices.count {
+                mesh.vertices[end.index].position = factor >= 0
+                    ? simd_mix(end.start, end.plus, SIMD3(repeating: factor))
+                    : simd_mix(end.start, end.minus, SIMD3(repeating: -factor))
+            }
         }
         ModifierStack.recomputeNormals(&mesh, welded: true)
         mesh.carryShading(from: slide.mesh)
         slide.object.installTransformed(mesh)
 
         let shown = drive.input.shownValues
-        parent.scene.transformReadout = shown.isEmpty
+        // Blender's status bar names the slide's options beside its keys
+        // (`edge_slide_status`): Clamp, Even, and Flipped once Even is on.
+        var options = ["Clamp " + (slide.clamp ? "On" : "Off"), "Even " + (slide.even ? "On" : "Off")]
+        if slide.even || slide.kind == .vertex { options.append("Flipped " + (slide.flipped ? "On" : "Off")) }
+        parent.scene.transformReadout = (shown.isEmpty
             ? String(format: "%@: %.4f", slide.mode.label, factor)
-            : "\(slide.mode.label): " + shown.joined(separator: " | ")
+            : "\(slide.mode.label): " + shown.joined(separator: " | ")) + "  ·  " + options.joined(separator: ", ")
         modalLayer?.sublayers?.forEach { $0.removeFromSuperlayer() }
-        ModalTransformState.shared.show(.init(mode: slide.mode, constraint: .none,
-                                              typing: drive.input.isTyping), owner: self)
+        ModalTransformState.shared.show(.init(mode: slide.mode, constraint: .none, typing: drive.input.isTyping,
+                                              even: slide.even, flipped: slide.flipped, clamp: slide.clamp),
+                                        owner: self)
+    }
+
+    /// E, F or C during a slide: Even, Flipped or Clamp turned over, the
+    /// ends read again with it, as Blender recalculates its slide points.
+    func slideToggle(_ token: String) {
+        guard var drive = modal, var slide = drive.slide, let bridge = parent.bridge else { return }
+        switch token {
+        case "even":  slide.even.toggle()
+        case "flip":  slide.flipped.toggle()
+        case "clamp": slide.clamp.toggle()
+        default: return
+        }
+        slide.exact = nil
+        slide.exactFactor = nil
+        let call: String?
+        switch slide.kind {
+        case .edge:
+            call = "_blenderkit_slide.edge(\(slide.flags))"
+        case .vertex:
+            call = slide.direction.map { "_blenderkit_slide.vertex(\(Self.vector($0)), \(slide.flags))" }
+        }
+        if let call, let ends = Self.slideEnds(bridge.captureWithSelection("import _blenderkit_slide\n" + call),
+                                               mesh: slide.mesh) {
+            slide.ends = ends
+        }
+        drive.slide = slide
+        modal = drive
+        modalUpdate(presenting: true)
+    }
+
+    /// Where Blender's slide puts every vertex at `factor`, for the slides
+    /// that are not a straight mix of their ends.
+    func askSlide(_ slide: SlideDrive, at factor: Float) -> [Int: SIMD3<Float>]? {
+        guard let bridge = parent.bridge else { return nil }
+        var arguments = "'\(slide.kind == .edge ? "EDGE" : "VERTEX")', \(factor), \(slide.flags)"
+        if slide.kind == .vertex {
+            guard let direction = slide.direction else { return [:] }
+            arguments += ", direction=\(Self.vector(direction))"
+        }
+        let answer = bridge.captureWithSelection("import _blenderkit_slide\n_blenderkit_slide.at(\(arguments))")
+        guard let line = answer?.split(separator: "\n").last(where: { $0.hasPrefix("{") }),
+              let data = line.data(using: .utf8),
+              let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              json["kind"] is String, let count = json["count"] as? Int, count == slide.mesh.vertices.count,
+              let rows = json["v"] as? [[Any]]
+        else { return nil }
+        var out: [Int: SIMD3<Float>] = [:]
+        for row in rows {
+            guard row.count == 4, let i = row[0] as? Int, i >= 0, i < count, let p = Self.point(row[2]) else { return nil }
+            out[i] = p
+        }
+        return out
     }
 
     // MARK: ending
@@ -237,6 +328,22 @@ extension MetalViewportView.Coordinator {
                                        spinningAround: scene.active?.location,
                                        symmetry: scene.active?.symmetry)
             op["value"] = Double(slide.factor)
+            if !slide.clamp, let i = op.parameters.firstIndex(where: { $0.key == "value" }) {
+                // Past ±1 with Clamp off: the field holds what was slid, to
+                // the operator's hard range, rather than settling it at 1.
+                let old = op.parameters[i]
+                op.parameters[i] = LastOperator.Parameter(key: old.key, label: old.label, kind: old.kind,
+                                                          value: Double(slide.factor), softMin: -10, softMax: 10,
+                                                          step: old.step, unit: old.unit)
+                op.fixedArguments.append("use_clamp=False")
+            }
+            if slide.kind == .edge {
+                op["use_even"] = slide.even ? 1 : 0
+                op["flipped"] = slide.flipped ? 1 : 0
+            } else {
+                if slide.even { op.fixedArguments.append("use_even=True") }
+                if slide.flipped { op.fixedArguments.append("flipped=True") }
+            }
             if slide.kind == .vertex, let direction = slide.direction {
                 // The edge the pointer chose, which the panel's six axes
                 // cannot say: kept fixed, so a redo slides along it again.
@@ -310,7 +417,7 @@ extension MetalViewportView.Coordinator {
         return links.isEmpty ? nil : links
     }
 
-    private static func point(_ any: Any) -> SIMD3<Float>? {
+    static func point(_ any: Any) -> SIMD3<Float>? {
         guard let a = any as? [Any], a.count == 3 else { return nil }
         let n = a.compactMap { ($0 as? NSNumber)?.floatValue }
         return n.count == 3 ? SIMD3(n[0], n[1], n[2]) : nil

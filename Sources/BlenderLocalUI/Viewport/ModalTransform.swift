@@ -231,6 +231,9 @@ extension MetalViewportView.Coordinator {
             default:          modalSwitch(.rotate)
             }
         case "s":         modalSwitch(.scale)
+        case "even", "flip", "clamp":
+            // E, F and C mean something only while a slide runs.
+            if modal?.slide != nil { slideToggle(token) }
         case "tab":
             modal?.input.nextValue()
             modalUpdate(presenting: true)
@@ -646,6 +649,10 @@ final class ModalTransformState {
         var typing: Bool
         /// A Move in a mesh's Edit Mode, which G turns into Edge Slide.
         var canSlide = false
+        /// A slide's E, F and C: Even, Flipped, Clamp.
+        var even = false
+        var flipped = false
+        var clamp = true
     }
 
     private(set) var shown: Shown?
@@ -670,6 +677,8 @@ final class ModalTransformState {
     func toggleTrackball() { owner?.modalKey("r") }
     /// The bar's Edge Slide and Move: G pressed again.
     func toggleSlide() { owner?.modalKey("g") }
+    /// The bar's Even, Flipped and Clamp during a slide: E, F and C.
+    func slideOption(_ token: String) { owner?.modalKey(token) }
 
     /// G, R or S from a key or a menu row (Object ▸ Transform, Mesh ▸
     /// Transform): in the 3D View that has the keyboard.
@@ -721,6 +730,13 @@ struct ModalTransformBar: View {
                 barButton("Move", icon: "arrow.up.and.down.and.arrow.left.and.right", worded: worded) {
                     state.toggleSlide()
                 }
+                barButton("Even", icon: "equal.square", worded: worded, lit: shown.even) { state.slideOption("even") }
+                barButton("Flipped", icon: "arrow.left.arrow.right", worded: worded, lit: shown.flipped) {
+                    state.slideOption("flip")
+                }
+                barButton("Clamp", icon: "arrow.right.to.line", worded: worded, lit: shown.clamp) {
+                    state.slideOption("clamp")
+                }
             default:
                 EmptyView()
             }
@@ -758,7 +774,8 @@ struct ModalTransformBar: View {
 
     private typealias Shown = ModalTransformState.Shown
 
-    private func barButton(_ title: String, icon: String, worded: Bool, prominent: Bool = false,
+    /// `lit`: an option that is on, blue as Blender draws a toggle that is.
+    private func barButton(_ title: String, icon: String, worded: Bool, prominent: Bool = false, lit: Bool = false,
                            action: @escaping () -> Void) -> some View {
         Button(action: action) {
             HStack(spacing: 5) {
@@ -767,12 +784,13 @@ struct ModalTransformBar: View {
             }
             .padding(.horizontal, worded ? 10 : 0)
             .frame(minWidth: 40, minHeight: 36)
-            .foregroundStyle(prominent ? Color.white : BTheme.text)
-            .background(prominent ? BTheme.active : BTheme.widget)
+            .foregroundStyle(prominent || lit ? Color.white : BTheme.text)
+            .background(prominent ? BTheme.active : lit ? PopupMenuOverlay.highlight : BTheme.widget)
             .clipShape(RoundedRectangle(cornerRadius: BTheme.Metric.corner))
         }
         .buttonStyle(.plain)
         .accessibilityLabel(title)
+        .accessibilityAddTraits(lit ? .isSelected : [])
     }
 }
 
@@ -854,6 +872,12 @@ extension MetalViewportView.Coordinator {
             parent.onToggleEditing?()
             delay = 2.0
         case "wait": delay = (numbers.first ?? 500) / 1000
+        case "run":
+            // Python (base64) run as a script line is, the mirror following.
+            if let data = Data(base64Encoded: rest), let python = String(data: data, encoding: .utf8) {
+                parent.bridge?.run(python, undo: "Test Setup")
+            }
+            delay = 2.0
         case "dump": modalDump(rest)
         default: print("[bk] modal-ops: unknown \(token)")
         }
@@ -871,7 +895,12 @@ extension MetalViewportView.Coordinator {
             let view = drive.base.frame.viewAxes
             line += " right=\(f(view.columns.0)) up=\(f(view.columns.1))"
             if let slide = drive.slide {
-                line += String(format: " slide=%@ factor=%.4f ends=%d", "\(slide.kind)", slide.factor, slide.ends.count)
+                line += String(format: " slide=%@ factor=%.4f ends=%d even=%d flipped=%d clamp=%d exact=%d",
+                               "\(slide.kind)", slide.factor, slide.ends.count, slide.even ? 1 : 0,
+                               slide.flipped ? 1 : 0, slide.clamp ? 1 : 0, slide.exact?.count ?? -1)
+                if let exact = slide.exact, let first = exact.keys.min(), let p = exact[first] {
+                    line += " exact[\(first)]=\(f(p))"
+                }
                 if let d = slide.direction { line += " direction=\(f(d))" }
             }
         } else {

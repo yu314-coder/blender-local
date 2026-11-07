@@ -6,6 +6,11 @@ import SwiftUI
 /// Blender's names: the 3D Viewport with the Outliner, Properties and
 /// Timeline to hand is Blender's Layout workspace (it was "3D View" here
 /// until round 4, which is the name of no Blender workspace).
+/// Asks the top bar to open Preferences (Ctrl+Comma, Blender's key).
+extension Notification.Name {
+    static let openPreferences = Notification.Name("bk.openPreferences")
+}
+
 enum Workspace: String, CaseIterable, Identifiable {
     case scripting     = "Scripting"
     case layout        = "Layout"
@@ -155,6 +160,8 @@ struct TopBar: View {
         .sheet(isPresented: $showPreferences) {
             PreferencesSheet(scene: scene, session: session, bridge: bridge, workspace: $workspace)
         }
+        // Ctrl+Comma, Blender's key for Preferences.
+        .onReceive(NotificationCenter.default.publisher(for: .openPreferences)) { _ in showPreferences = true }
         #if DEBUG
         // `-self-test` and `-feature-test` open Preferences at launch
         // (`SelfTestLaunch`, `FeatureTestLaunch`).

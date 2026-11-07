@@ -877,7 +877,12 @@ public extension LastOperator {
     /// These are not invented: they were read out of `bpy.ops.mesh.*.get_rna_type()`
     /// in Blender 5.2.1, which is why a cone's radii are `radius1`/`radius2`
     /// rather than the `radius_bottom`/`radius_top` you would guess.
-    static func add(_ kind: PrimitiveKind, at location: SIMD3<Float>) -> LastOperator {
+    /// `editing`: Shift+A in a mesh's Edit Mode (VIEW3D_MT_mesh_add), which
+    /// adds the primitive into the mesh being edited rather than as an
+    /// object. Nothing is created to remove, so only Blender's undo can take
+    /// it back for the redo panel (`throughBlenderUndo`); removing "what it
+    /// made" would remove the edited object.
+    static func add(_ kind: PrimitiveKind, at location: SIMD3<Float>, editing: Bool = false) -> LastOperator {
         let fill = [Parameter.Option("NOTHING", "Nothing"),
                     Parameter.Option("NGON", "N-Gon"),
                     Parameter.Option("TRIFAN", "Triangle Fan")]
@@ -952,7 +957,8 @@ public extension LastOperator {
             parameters: parameters,
             location: SIMD3<Double>(Double(location.x), Double(location.y),
                                     Double(location.z)),
-            restoration: .removeCreated)
+            restoration: editing ? .throughBlenderUndo : .removeCreated,
+            needsEditMode: editing)
     }
 }
 

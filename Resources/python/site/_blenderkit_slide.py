@@ -30,6 +30,16 @@ commit runs the operator as the Edge menu does, with Blender's defaults.
 (LastOperator.mesh, `honoursMeshSymmetry`), so the ends include the mirror
 images the commit will move too.
 
+`even`, `flipped` and `clamp` are the slide's E, F and C keys
+(`handleEventEdgeSlide`, `handleEventVertSlide`): the operators' `use_even`,
+`flipped` and `use_clamp`. Measured in 5.2.1 on a tube of three uneven rings,
+each case at five factors against the mix of its own ±1 ends: Edge Slide
+without Even stays a straight mix (1.3e-7), past ±1 too with Clamp off;
+with Even it does not (0.08 off with Clamp, 0.9 without). Vertex Slide stays
+a mix (1.2e-7) except with Even and Flipped together. Where it is not a mix,
+`at` reports where the slide puts every vertex at one factor, and the app
+asks again whenever the factor changes.
+
 Each function prints one line of JSON, or {"kind": null} when there is nothing
 to slide.
 """
@@ -77,7 +87,14 @@ def _report(kind, start, ends):
     })
 
 
-def edge(mirror=False):
+def _flags(mirror, even, flipped, clamp):
+    extra = {'use_even': bool(even), 'flipped': bool(flipped), 'use_clamp': bool(clamp)}
+    if mirror:
+        extra['mirror'] = True
+    return extra
+
+
+def edge(mirror=False, even=False, flipped=False, clamp=True):
     """Edge Slide's two ends for every vertex it moves, or kind null when
     Blender cannot edge-slide the selection."""
     import bpy
@@ -85,7 +102,7 @@ def edge(mirror=False):
     if ob is None:
         print(json.dumps({'kind': None}))
         return
-    extra = {'mirror': True} if mirror else {}
+    extra = _flags(mirror, even, flipped, clamp)
     plus, start = _run_and_put_back(ob, bpy.ops.transform.edge_slide, value=1.0, **extra)
     if not plus:
         print(json.dumps({'kind': None}))
@@ -109,20 +126,52 @@ def links():
     print(json.dumps({'kind': 'VERTEX' if out else None, 'count': len(bm.verts), 'links': out}))
 
 
-def vertex(direction, mirror=False):
-    """Vertex Slide's end at a factor of 1 for every vertex it moves along the
-    edges pointing most nearly `direction`; the other end is where each
-    vertex is (a negative factor moves nothing)."""
+def vertex(direction, mirror=False, even=False, flipped=False, clamp=True):
+    """Vertex Slide's ends at a factor of 1 and -1 for every vertex it moves
+    along the edges pointing most nearly `direction` (with Clamp on, -1
+    moves nothing and the end is where the vertex is)."""
     import bpy
     ob, bm = _edit_bmesh()
     if ob is None:
         print(json.dumps({'kind': None}))
         return
-    extra = {'mirror': True} if mirror else {}
+    extra = _flags(mirror, even, flipped, clamp)
     plus, start = _run_and_put_back(ob, bpy.ops.transform.vert_slide, value=1.0,
                                     direction=tuple(direction), **extra)
     if not plus:
         print(json.dumps({'kind': None}))
         return
-    ends = {i: (p, tuple(start[i])) for i, p in plus.items()}
+    minus = {}
+    if not clamp:
+        minus, _ = _run_and_put_back(ob, bpy.ops.transform.vert_slide, value=-1.0,
+                                     direction=tuple(direction), **extra)
+        minus = minus or {}
+    ends = {i: (plus.get(i, tuple(start[i])), minus.get(i, tuple(start[i])))
+            for i in set(plus) | set(minus)}
     print(_report('VERTEX', start, ends))
+
+
+def at(kind, value, mirror=False, even=False, flipped=False, clamp=True, direction=None):
+    """Where the slide at `value` puts every vertex it moves, each reported
+    with that place as both ends: for the slides that are not a straight
+    mix of their ends. Kind null when Blender would not slide."""
+    import bpy
+    ob, bm = _edit_bmesh()
+    if ob is None:
+        print(json.dumps({'kind': None}))
+        return
+    extra = _flags(mirror, even, flipped, clamp)
+    if kind == 'VERTEX':
+        if direction is None:
+            print(json.dumps({'kind': None}))
+            return
+        extra['direction'] = tuple(direction)
+        op = bpy.ops.transform.vert_slide
+    else:
+        op = bpy.ops.transform.edge_slide
+    moved, start = _run_and_put_back(ob, op, value=float(value), **extra)
+    if moved is None:
+        print(json.dumps({'kind': None}))
+        return
+    print(json.dumps({'kind': kind, 'count': len(start),
+                      'v': [[i, list(start[i]), list(p), list(p)] for i, p in sorted(moved.items())]}))

@@ -196,6 +196,29 @@ struct ViewportKeyActions {
     /// The brush panel a right-click opens in Sculpt Mode, Vertex Paint and
     /// Weight Paint (BrushContextPanel.swift); nil in the other modes.
     var brushPanel: (() -> AnyView)? = nil
+
+    // MARK: November 7, later: Blender's pies and the rest of its keys
+
+    /// Period's Pivot Point pie and Shift+O's Proportional Editing Falloff
+    /// pie: the settings, asked when the pie opens, and setting them.
+    var pivot: () -> TransformPivot = { .medianPoint }
+    var setPivot: (TransformPivot) -> Void = { _ in }
+    var falloff: () -> MeshEditor.ProportionalFalloff = { .smooth }
+    var setFalloff: (MeshEditor.ProportionalFalloff) -> Void = { _ in }
+    /// Alt+O, Connected Only (`use_proportional_connected`), while editing;
+    /// Ctrl+Period, Transform Origins (`use_transform_data_origin`).
+    var toggleConnected: () -> Void = {}
+    var toggleTransformOrigins: () -> Void = {}
+    /// Shift+Alt+Z: Show Overlays.
+    var toggleOverlays: () -> Void = {}
+    /// Ctrl+Numpad 0 (Ctrl+0 on the number row): Set Active Object as Camera —
+    /// the active object becomes the scene's camera and the view looks
+    /// through it. Nil without an active object.
+    var objectAsCamera: (() -> Void)? = nil
+    /// The toolbar's tool in hand, which Shift+Space's toolbar ticks.
+    var tool: ActiveTool = .select
+    /// U's UV Mapping rows.
+    var uv: (UVOperator) -> Void = { _ in }
 }
 
 private struct AppKeyActionsKey: FocusedValueKey { typealias Value = AppKeyActions }
@@ -266,6 +289,13 @@ struct BlenderCommands: Commands {
         CommandMenu("Object") { objectCommands }
     }
 
+    private func cycleWorkspace(_ step: Int) {
+        guard let app else { return }
+        let tabs = Workspace.visible
+        let at = tabs.firstIndex(of: app.workspace) ?? 0
+        app.showWorkspace(tabs[(at + step + tabs.count) % tabs.count])
+    }
+
     @ViewBuilder private var viewCommands: some View {
         Button("Scripting") { app?.showWorkspace(.scripting) }
             .keyboardShortcut("1")
@@ -273,6 +303,20 @@ struct BlenderCommands: Commands {
         Button(Workspace.layout.rawValue) { app?.showWorkspace(.layout) }
             .keyboardShortcut("2")
             .disabled(app == nil)
+        // Blender's Window ▸ Next Workspace and Previous Workspace
+        // (`screen.workspace_cycle`, Ctrl+Page Down and Page Up), over the
+        // tabs the top bar shows.
+        Button("Next Workspace") { cycleWorkspace(1) }
+            .keyboardShortcut(.pageDown, modifiers: .control)
+            .disabled(app == nil)
+        Button("Previous Workspace") { cycleWorkspace(-1) }
+            .keyboardShortcut(.pageUp, modifiers: .control)
+            .disabled(app == nil)
+        // Blender's Edit ▸ Preferences, on its Ctrl+Comma. Not on Blender's ⌘
+        // twin: on a Mac, ⌘, is the system's own Settings for an iPad app
+        // (Window Size, Touch Alternatives), and it takes the key first.
+        Button("Preferences…") { NotificationCenter.default.post(name: .openPreferences, object: nil) }
+            .keyboardShortcut(",", modifiers: .control)
         // Blender's Edit ▸ Operator Search: every operator, by name.
         Button("Operator Search…") { app?.searchOperators() }
             .keyboardShortcut("p", modifiers: [.command, .shift])
@@ -300,8 +344,10 @@ struct BlenderCommands: Commands {
             // keyboard-trained hand zoomed out when it meant to zoom in.
             Button("Frame All") { v.frameAll() }
                 .keyboardShortcut(.home, modifiers: [])
+            // Blender's numpad period, which the 3D View answers itself
+            // (ViewportKeymap's numpad); the number row's period is the Pivot
+            // Point pie, as in Blender.
             Button("Frame Selected") { v.frameSelected() }
-                .keyboardShortcut(".", modifiers: [])
             // View ▸ Local View ▸ Toggle Local View, Blender's numpad /, and
             // Remove from Local View (VIEW3D_MT_view_local), as rows of their
             // own: a submenu cannot carry a key.
@@ -309,6 +355,7 @@ struct BlenderCommands: Commands {
                 .keyboardShortcut("/", modifiers: [])
                 .disabled(!v.canToggleLocalView)
             Button("Remove from Local View") { v.run(LocalViewBpy.removeFrom) }
+                .keyboardShortcut("/", modifiers: .option)
                 .disabled(!v.inLocalView || v.isRunning)
             // Blender's numpad views, on the number row: Blender's own
             // "emulate numpad" setting maps them the same way. While editing,
@@ -569,7 +616,13 @@ struct BlenderCommands: Commands {
                 Section("Mesh Select Mode") {
                     ForEach(MeshSelectMode.allCases) { mode in
                         Toggle(mode.label, isOn: Binding(get: { v.selectMode == mode },
-                                                        set: { _ in v.setSelectMode(mode) }))
+                                                        set: { _ in
+                                                            #if DEBUG
+                                                            if ProcessInfo.processInfo.arguments.contains("-key-log") {
+                                                                print("[bk] key command select mode \(mode)"); fflush(stdout)
+                                                            }
+                                                            #endif
+                                                            v.setSelectMode(mode) }))
                             .keyboardShortcut(KeyEquivalent(Character(mode.shortcut)), modifiers: [])
                             .disabled(v.isRunning)
                     }

@@ -68,9 +68,17 @@ screen and says how to use it. It opens by itself the first time.
   orientation. Typed numbers set the exact amount, and Escape or a right-click
   cancels. Holding Ctrl inverts snapping, R pressed again turns the rotation
   into Trackball, and in Edit Mode G pressed again is Edge Slide (Vertex Slide
-  for a lone vertex). Object ▸ Transform starts the same thing from a menu,
+  for a lone vertex), with E, F and C for Even, Flipped and Clamp. Object ▸
+  Transform starts the same thing from a menu,
   with X, Y, Z, Cancel and Confirm on screen.
 - F12 renders, as in Blender.
+- Blender's pie menus, drawn round the pointer as Blender draws them: Z
+  Shading, ` View, Shift+S Snap, Period Pivot Point, Comma Orientation,
+  Shift+O Proportional Editing Falloff. Hold the key, point and let go, or
+  press the number key for a place. A keyboard's own numpad works as
+  Blender's does, and Blender's other keys are where Blender has them
+  (Shift+Space Toolbar, Ctrl+= and Ctrl+- Select More and Less, U UV
+  Mapping, and more).
 - The Object menu: Duplicate Objects, Duplicate Linked, Join, Parent,
   Convert, Set Origin, Apply, shading, QuadriFlow Remesh, and more.
 - Operator Search, which runs any of Blender's mesh, object, UV, sculpt,
