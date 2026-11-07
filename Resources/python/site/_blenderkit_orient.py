@@ -678,6 +678,21 @@ def matrix(kind=None):
     return _identity()
 
 
+def active_axes():
+    """Align View to Active (Shift+Numpad 1, 3, 7: `view3d.view_axis` with
+    align_active): the matrix `ED_getTransformOrientationMatrix` gives about
+    the active element — an edited mesh's active element's normal and tangent
+    (`normal_axes` with Active Element), otherwise the active object's axes.
+    Printed as nine numbers, axis X, Y, Z; 'none' with no active object."""
+    ob = bpy.context.view_layer.objects.active
+    if ob is None:
+        print('none')
+        return
+    obedit = _edit_object()
+    m = normal_axes(obedit, 'ACTIVE_ELEMENT') if obedit is not None and obedit.type == 'MESH' else _object_axes(ob)
+    print(' '.join('%.7g' % float(c) for axis in m for c in axis))
+
+
 def redo_matrix(kind):
     """`kind`'s matrix as a transform's `orient_matrix` takes it — its rows
     the axes — worked out now, for a redo panel's choice that has to be

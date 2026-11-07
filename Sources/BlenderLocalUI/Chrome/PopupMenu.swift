@@ -73,6 +73,26 @@ struct PopupItem {
         default: return false
         }
     }
+
+    /// Whether Blender gives the row an accelerator key: its buttons and
+    /// menus, greyed or not (`MenuAccelerators`).
+    var takesAccelerator: Bool {
+        switch kind {
+        case .action, .submenu: return !title.isEmpty
+        default: return false
+        }
+    }
+
+    /// The title with the accelerator `key` underlined where Blender draws it.
+    static func titled(_ title: String, key: Character?) -> Text {
+        guard let key, let range = MenuAccelerators.underline(key, in: title) else { return Text(title) }
+        var text = AttributedString(title)
+        if let lower = AttributedString.Index(range.lowerBound, within: text),
+           let upper = AttributedString.Index(range.upperBound, within: text) {
+            text[lower..<upper].underlineStyle = .single
+        }
+        return Text(text)
+    }
 }
 
 /// One menu open at the pointer: Blender's menu (its `bl_idname`, for the
@@ -92,21 +112,55 @@ struct PopupMenuModel: Identifiable {
     /// see let go; nil when no key did.
     var openedByKey: String?
 
+    /// Whether its rows get Blender's accelerator keys. Blender gives every
+    /// pop-up menu and pie them (BLOCK_NUMSELECT) but a menu that searches
+    /// as letters are typed — Add and Add ▸ Mesh (`SEARCH_ON_KEY_PRESS`,
+    /// space_view3d.py: BLOCK_NO_ACCELERATOR_KEYS) — and the toolbar, whose
+    /// letters are its tools' own keys.
+    var hasAccelerators: Bool {
+        !["VIEW3D_MT_add", "VIEW3D_MT_mesh_add", "WM_OT_toolbar"].contains(name)
+    }
+
+    /// The letter of the key that opened it, which must be let go before it
+    /// chooses a row: Blender's menus answer a press, not the held key's
+    /// repeat.
+    var openerLetter: Character? {
+        guard let key = openedByKey?.split(separator: "+").last, key.count == 1,
+              let c = key.first, c.isLetter else { return nil }
+        return c
+    }
+
     /// The rows as text, submenus opened, for the launch hooks to print and
     /// a check to hold against Blender's menus.
     func dump() -> String {
         var out = [name + (title.map { " \"\($0)\"" } ?? "") + (pie ? " (pie)" : "")]
+        /// A row's accelerator as the dump shows it: " _k".
+        func underlined(_ key: Character?) -> String { key.map { "  _\($0)" } ?? "" }
         if pie {
-            for (i, item) in items.prefix(8).enumerated() {
+            let slots = items.prefix(8).enumerated().filter { i, item in
+                PieDirection.forItem(i) != nil && item.takesAccelerator
+            }
+            let keys = MenuAccelerators.keys(slots.map(\.element.title))
+            for ((i, item), key) in zip(slots, keys) {
                 guard let place = PieDirection.forItem(i) else { continue }
-                if case .separator = item.kind { continue }
                 out.append("  \(place.digit) \(place): " + (item.checked ? "[x] " : "") + item.title
-                           + (item.enabled ? "" : "  (off)"))
+                           + (item.enabled ? "" : "  (off)") + underlined(key))
             }
             return out.joined(separator: "\n")
         }
-        func walk(_ items: [PopupItem], _ depth: Int) {
+        func flat(_ items: [PopupItem]) -> [String?] {
+            items.flatMap { item -> [String?] in
+                if case .columns(let columns) = item.kind { return columns.flatMap(flat) }
+                return item.takesAccelerator ? [item.title] : []
+            }
+        }
+        func walk(_ items: [PopupItem], _ depth: Int, keys: [Character?]) {
             let pad = String(repeating: "  ", count: depth)
+            var next = 0
+            func key() -> Character? {
+                defer { next += 1 }
+                return next < keys.count ? keys[next] : nil
+            }
             for item in items {
                 switch item.kind {
                 case .separator: out.append(pad + "---")
@@ -114,20 +168,26 @@ struct PopupMenuModel: Identifiable {
                 case .columns(let columns):
                     for (i, column) in columns.enumerated() {
                         out.append(pad + "| column \(i + 1)")
-                        walk(column, depth + 1)
+                        let count = flat(column).count
+                        walk(column, depth + 1, keys: Array(keys.dropFirst(next).prefix(count)))
+                        next += count
                     }
                 case .control:
                     out.append(pad + "<fields>")
                 case .action:
                     out.append(pad + (item.checked ? "[x] " : "") + item.title
-                               + (item.key.map { "  <\($0)>" } ?? "") + (item.enabled ? "" : "  (off)"))
+                               + (item.key.map { "  <\($0)>" } ?? "") + (item.enabled ? "" : "  (off)")
+                               + (item.title.isEmpty ? "" : underlined(key())))
                 case .submenu(let build):
-                    out.append(pad + item.title + " >" + (item.enabled ? "" : "  (off)"))
-                    if item.enabled { walk(build(), depth + 1) }
+                    out.append(pad + item.title + " >" + (item.enabled ? "" : "  (off)") + underlined(key()))
+                    if item.enabled {
+                        let rows = build()
+                        walk(rows, depth + 1, keys: hasAccelerators ? MenuAccelerators.keys(flat(rows)) : [])
+                    }
                 }
             }
         }
-        walk(items, 1)
+        walk(items, 1, keys: hasAccelerators ? MenuAccelerators.keys(flat(items)) : [])
         return out.joined(separator: "\n")
     }
 }
@@ -146,6 +206,8 @@ struct PopupMenuOverlay: View {
     /// The row under the pointer or chosen with the arrow keys: (panel, row).
     @State private var hovered: (panel: Int, row: Int)?
     @State private var area: CGSize = .zero
+    /// The key that opened the menu is still down (`openerLetter`).
+    @State private var openerHeld = false
 
     private static let space = "bk-popup"
 
@@ -168,7 +230,20 @@ struct PopupMenuOverlay: View {
             .coordinateSpace(name: Self.space)
             .onAppear { area = geo.size }
             .onChange(of: geo.size) { _, size in area = size }
+            .onReceive(NotificationCenter.default.publisher(for: PieKeys.released)) { note in
+                guard openerHeld, let key = model.openedByKey,
+                      note.userInfo?["usage"] as? Int == PieKeys.usage(ofChordKey: key) else { return }
+                openerHeld = false
+                PieKeys.stopWatching()
+            }
         }
+        .onAppear {
+            if model.hasAccelerators, model.openerLetter != nil, let key = model.openedByKey {
+                openerHeld = true
+                PieKeys.startWatching(key)
+            }
+        }
+        .onDisappear { if openerHeld { PieKeys.stopWatching() } }
     }
 
     // MARK: placement
@@ -266,6 +341,7 @@ struct PopupMenuOverlay: View {
     }
 
     private func row(_ item: PopupItem, panel: Int, index: Int) -> some View {
+        let accelerator = accelerators(panel)[index]
         let lit = hovered?.panel == panel && hovered?.row == index && item.enabled
         let isSub: Bool = { if case .submenu = item.kind { return true } else { return false } }()
         let opened = isSub && open.count > panel && openedFrom[panel] == index
@@ -278,7 +354,7 @@ struct PopupMenuOverlay: View {
             .font(.system(size: 11))
             .frame(width: 16)
             VStack(alignment: .leading, spacing: 1) {
-                Text(item.title).font(BTheme.Font.ui(12.5))
+                PopupItem.titled(item.title, key: accelerator).font(BTheme.Font.ui(12.5))
                 if let note = item.note {
                     Text(note).font(BTheme.Font.ui(10)).foregroundStyle(BTheme.textDim)
                         .frame(maxWidth: 280, alignment: .leading)
@@ -353,11 +429,60 @@ struct PopupMenuOverlay: View {
         }
     }
 
+    /// The rows of a panel, in order, with the index the row views use — every
+    /// row Blender gives a key, greyed or not.
+    private func rows(_ panel: Int) -> [(index: Int, item: PopupItem)] {
+        let rows = panel == 0 ? model.items : (open.count >= panel ? open[panel - 1].rows : [])
+        var out: [(Int, PopupItem)] = []
+        func walk(_ rows: [PopupItem], _ offset: Int) {
+            for (i, item) in rows.enumerated() {
+                if case .columns(let columns) = item.kind {
+                    for (c, column) in columns.enumerated() { walk(column, offset + (i + 1) * 1000 + c * 100) }
+                } else if item.takesAccelerator {
+                    out.append((offset + i, item))
+                }
+            }
+        }
+        walk(rows, 0)
+        return out
+    }
+
+    /// Each row's accelerator in a panel, by row index (`MenuAccelerators`).
+    private func accelerators(_ panel: Int) -> [Int: Character] {
+        guard model.hasAccelerators else { return [:] }
+        let rows = rows(panel)
+        let keys = MenuAccelerators.keys(rows.map(\.item.title))
+        var out: [Int: Character] = [:]
+        for (row, key) in zip(rows, keys) { if let key { out[row.index] = key } }
+        return out
+    }
+
+    /// A letter: the row it is the accelerator of, in the panel the keys are
+    /// in — run, or its submenu opened with the first row lit, as Blender's
+    /// `handle_button_activate_by_type` opens one.
+    private func accelerate(_ letter: Character) {
+        let panel = activePanel
+        guard let index = accelerators(panel).first(where: { $0.value == letter })?.key,
+              let item = rows(panel).first(where: { $0.index == index })?.item, item.enabled else { return }
+        hovered = (panel, index)
+        if case .submenu = item.kind {
+            openSubmenu(item, panel: panel, index: index)
+            if let first = selectable(panel + 1).first { hovered = (panel + 1, first.index) }
+        } else {
+            activate(item, panel: panel, index: index)
+        }
+    }
+
     /// Escape closes; Up, Down, Return, Left and Right walk the rows as they
-    /// do in Blender's menus.
+    /// do in Blender's menus; a row's underlined letter chooses it.
     private var keys: some View {
         ZStack {
             Button("") { dismiss() }.keyboardShortcut(.escape, modifiers: [])
+            let letters = Set(accelerators(activePanel).values)
+                .subtracting(openerHeld ? [model.openerLetter].compactMap { $0 } : [])
+            ForEach(letters.sorted(), id: \.self) { letter in
+                Button("") { accelerate(letter) }.keyboardShortcut(KeyEquivalent(letter), modifiers: [])
+            }
             // A menu of fields (a brush panel) leaves Return and the arrows
             // to the field being typed into.
             if !hasFields {

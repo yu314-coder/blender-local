@@ -19,6 +19,8 @@ enum ViewportMenu: String, CaseIterable {
     case uvMap, toolbar
     case parent, clearParent, moveToCollection, linkToCollection, makeLinks
     case selectGrouped, selectLinked, selectSimilar
+    /// Ctrl+G in a mesh's Edit Mode, and K in Object Mode.
+    case vertexGroups, keyingSets
 
     /// Blender's menu, by its `bl_idname` (or the operator whose invoke draws
     /// it), for the launch hooks and the docs.
@@ -54,6 +56,8 @@ enum ViewportMenu: String, CaseIterable {
         case .selectGrouped:    return "OBJECT_OT_select_grouped"
         case .selectLinked:     return "OBJECT_OT_select_linked"
         case .selectSimilar:    return "VIEW3D_MT_edit_mesh_select_similar"
+        case .vertexGroups:     return "VIEW3D_MT_vertex_group"
+        case .keyingSets:       return "ANIM_OT_keyframe_insert_menu"
         }
     }
 
@@ -199,6 +203,20 @@ enum ViewportMenu: String, CaseIterable {
             guard !v.editing else { return nil }
             title = "Link/Transfer Data"
             rows = makeLinks(v)
+        case .vertexGroups:
+            // Ctrl+G (`wm.call_menu(name='VIEW3D_MT_vertex_group')`).
+            guard v.editing && v.editingMesh, let held = v.vertexGroups() else { return nil }
+            title = "Vertex Groups"
+            rows = vertexGroupRows(v, object: held.object, groups: held.groups)
+        case .keyingSets:
+            // K (`anim.keyframe_insert_menu`, always_prompt): Blender's own
+            // rows for the selection; with none, Blender's menu is empty.
+            guard v.mode == .object, !v.editing, let rows_ = v.keyingSets?() else { return nil }
+            title = BpyAnimation.keyingSetMenuTitle
+            rows = rows_.map { row in
+                guard let row else { return .separator }
+                return .action(row.name) { v.insertKeyingSet(row.identifier) }
+            }
         case .selectGrouped:
             guard !v.editing, v.hasActiveObject else { return nil }
             title = "Select Grouped"
@@ -415,14 +433,58 @@ enum ViewportMenu: String, CaseIterable {
         }
     }
 
-    /// `VIEW3D_MT_mirror` in Object Mode: Interactive Mirror waits for an
-    /// axis key in Blender, so the rows here are its axes.
+    /// `VIEW3D_MT_mirror` in Object Mode: Interactive Mirror (Ctrl+M), which
+    /// waits for an axis key, then its axes.
     @MainActor private static func mirrorRows(_ v: ViewportKeyActions) -> [PopupItem] {
-        var rows: [PopupItem] = []
+        var rows: [PopupItem] = [.action("Interactive Mirror", key: "Ctrl M") { ModalTransformState.beginMirror() },
+                                 .separator]
         for (i, row) in LastOperator.mirrorRows.enumerated() {
             if i == 3 { rows.append(.separator) }
             rows.append(.action(row.label) { v.perform(.mirror(axis: row.axis, local: row.local)) })
         }
+        return rows
+    }
+
+    /// `VIEW3D_MT_vertex_group` in Edit Mode: Assign to New Group, then with
+    /// an active group the rows that act on it, as space_view3d.py draws
+    /// them. A locked active group fails Assign's and Remove's polls in
+    /// Blender ("The active vertex group is locked"), so those are greyed.
+    @MainActor private static func vertexGroupRows(_ v: ViewportKeyActions, object: String,
+                                                   groups: MeshGroups) -> [PopupItem] {
+        let busy = v.isRunning
+        var rows: [PopupItem] = [
+            .action("Assign to New Group", enabled: !busy) {
+                v.sendGroups(GroupsBpy.assignNew(weight: groups.weight, object: object))
+            }]
+        guard let active = groups.activeGroupName else { return rows }
+        let locked = groups.groups.first { $0.name == active }?.locked == true
+        let why = locked ? "\(active) is locked" : nil
+        rows += [
+            .separator,
+            .action("Assign to Active Group", enabled: !busy && !locked, note: why) {
+                v.sendGroups(GroupsBpy.assign(active, weight: groups.weight, object: object))
+            },
+            .action("Remove from Active Group", enabled: !busy && !locked, note: why) {
+                v.sendGroups(GroupsBpy.removeFromGroup(active, object: object))
+            },
+            .action("Remove from All", enabled: !busy && !locked, note: why) {
+                v.sendGroups(GroupsBpy.removeFromAll(object: object))
+            },
+            .separator,
+            .submenu("Set Active Group", enabled: !busy) {
+                groups.groups.map { group in
+                    .action(group.name, checked: group.name == active) {
+                        v.sendGroups(GroupsBpy.setActiveGroupFromMenu(group.name, object: object))
+                    }
+                }
+            },
+            .action("Remove Active Group", enabled: !busy) {
+                v.sendGroups(GroupsBpy.removeGroup(active, object: object))
+            },
+            .action("Remove All Groups", enabled: !busy) {
+                v.sendGroups(GroupsBpy.removeAllGroups(object: object))
+            },
+        ]
         return rows
     }
 

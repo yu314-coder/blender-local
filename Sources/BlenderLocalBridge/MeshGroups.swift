@@ -237,6 +237,26 @@ public enum GroupsBpy {
                 "remove_from", [q(name), q(group)])
     }
 
+    /// Ctrl+G ▸ Assign to New Group (`VIEW3D_MT_vertex_group`): a new group,
+    /// made active, holding the selected vertices at the Weight.
+    public static func assignNew(weight: Float, object name: String) -> Command {
+        command("bpy.ops.object.vertex_group_assign_new()", undo: "Assign to New Group",
+                "assign_new", [q(name), f(min(max(weight, 0), 1))])
+    }
+
+    /// Ctrl+G ▸ Remove from All: the selected vertices out of every group.
+    public static func removeFromAll(object name: String) -> Command {
+        command("bpy.ops.object.vertex_group_remove_from(use_all_groups=True)", undo: "Remove from Vertex Group",
+                "remove_from_all", [q(name)])
+    }
+
+    /// Ctrl+G ▸ Set Active Group, Blender's `vertex_group_set_active`: the
+    /// list's row sets the same index, under the property's own step name.
+    public static func setActiveGroupFromMenu(_ group: String, object name: String) -> Command {
+        command("bpy.ops.object.vertex_group_set_active(group=\(q(group)))", undo: "Set Active Vertex Group",
+                "set_active_group", [q(name), q(group)])
+    }
+
     public static func selectGroup(_ group: String, select: Bool, object name: String) -> Command {
         command("bpy.ops.object.vertex_group_\(select ? "select" : "deselect")()",
                 undo: select ? "Select Vertex Group" : "Deselect Vertex Group",

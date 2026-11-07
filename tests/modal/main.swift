@@ -134,5 +134,28 @@ do {
     check("'' is nothing", M.number("") == nil)
 }
 
+print("== Ctrl+M, Interactive Mirror (transform_mode_mirror.cc) ==")
+do {
+    var m = M(mode: .mirror)
+    check("named Mirror, takes X, Y and Z", m.mode.label == "Mirror" && m.mode.takesConstraint)
+    check("waits for an axis", m.mirrorHeader(space: "global") == "Select a mirror axis (X, Y, Z)"
+          && m.mirrorFactors == SIMD3(1, 1, 1))
+    m.type("5")
+    check("takes no numbers", !m.isTyping && m.valueCount == 0)
+    m.press(axis: 0, plane: false)
+    check("X: flips X, along global X", m.mirrorFactors == SIMD3(-1, 1, 1)
+          && m.mirrorHeader(space: "global") == "Mirror along global X")
+    m.press(axis: 0, plane: false)
+    check("X again: the other orientation", m.constraint == .axis(0, .alternate)
+          && m.mirrorHeader(space: "local") == "Mirror along local X")
+    m.press(axis: 0, plane: false)
+    check("X a third time: none", m.constraint == .none && m.mirrorFactors == SIMD3(1, 1, 1))
+    m.press(axis: 1, plane: true)
+    check("Shift+Y: flips X and Z, locking global Y", m.mirrorFactors == SIMD3(-1, 1, -1)
+          && m.mirrorHeader(space: "global") == "Mirror locking global Y")
+    m.nextValue()
+    check("Tab does nothing", !m.isTyping)
+}
+
 print(failures == 0 ? "\nALL PASS" : "\n\(failures) FAILED")
 exit(failures == 0 ? 0 : 1)

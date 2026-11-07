@@ -225,6 +225,38 @@ public enum CursorTool {
 
     static func bodies(_ objects: [BKObject]) -> [Body] { surfaced(objects).compactMap(Body.init) }
 
+    /// Shift+B's Zoom Region: the nearest surface inside a rectangle of the
+    /// view, as its depth — its distance along `forward` from `eye` — which is
+    /// what Blender reads from the depth buffer there (`view3d_depth_near`).
+    /// The nearest vertex drawn inside the rectangle (`window`), and for a
+    /// face wider than the rectangle a few `rays` across it, each tried only
+    /// against the triangles whose screen box meets it. Nil when neither
+    /// finds a surface. (A grid of 289 rays took a second on a 64,000-vertex
+    /// sphere in a Debug build.)
+    public static func nearestDepth(objects: [BKObject], rays: [(origin: SIMD3<Float>, direction: SIMD3<Float>)],
+                                    window: (lo: SIMD2<Float>, hi: SIMD2<Float>), view: GeometrySnap.View,
+                                    eye: SIMD3<Float>, forward: SIMD3<Float>) -> Float? {
+        var found = bodies(objects)
+        var best: Float?
+        for body in found {
+            for p in body.world {
+                guard let s = view.project(p), s.x >= window.lo.x, s.x <= window.hi.x,
+                      s.y >= window.lo.y, s.y <= window.hi.y else { continue }
+                let depth = simd_dot(p - eye, forward)
+                if depth > 0, best == nil || depth < best! { best = depth }
+            }
+        }
+        for i in found.indices { found[i].narrow(to: window, view: view) }
+        found = found.filter { $0.candidates?.isEmpty != true }
+        guard !found.isEmpty else { return best }
+        for ray in rays {
+            guard let hit = surfaceHit(bodies: found, ray: ray) else { continue }
+            let depth = simd_dot(hit.location - eye, forward)
+            if best == nil || depth < best! { best = depth }
+        }
+        return best
+    }
+
     /// The nearest face along `ray` (from the near plane), or nil.
     public static func surfaceHit(objects: [BKObject],
                                   ray: (origin: SIMD3<Float>, direction: SIMD3<Float>)) -> Surface? {

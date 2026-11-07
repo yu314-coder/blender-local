@@ -214,12 +214,10 @@ struct ObjectMirrorMenu: View {
 
     var body: some View {
         Menu("Mirror") {
-            // Blender's row waits for an axis key; these are those axes.
-            Button {} label: {
-                Text("Interactive Mirror")
-                Text("Waits for an axis key in Blender: the rows below are its axes")
-            }
-            .disabled(true)
+            // Ctrl+M: waits for X, Y or Z, as Blender's row does
+            // (ModalTransform.swift).
+            Button("Interactive Mirror") { ModalTransformState.beginMirror() }
+                .disabled(!state.canDuplicate)
             Divider()
             ForEach(Array(LastOperator.mirrorRows.enumerated()), id: \.offset) { i, row in
                 if i == 3 { Divider() }

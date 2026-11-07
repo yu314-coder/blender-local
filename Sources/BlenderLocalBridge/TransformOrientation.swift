@@ -184,6 +184,18 @@ public enum OrientationBpy {
         return name + ", orient_matrix=" + literal(axes) + ", orient_matrix_type=" + name
     }
 
+    /// Align View to Active's matrix, asked of Blender (`_blenderkit_orient.
+    /// active_axes`): nine numbers, or "none".
+    public static let activeAxes = "import _blenderkit_orient\n_blenderkit_orient.active_axes()"
+
+    /// `activeAxes`' answer as world axes (columns), or nil.
+    public static func parseAxes(_ answer: String) -> simd_float3x3? {
+        let numbers = answer.split(whereSeparator: { $0 == " " || $0 == "\n" }).compactMap { Float($0) }
+        guard numbers.count == 9, numbers.allSatisfy(\.isFinite) else { return nil }
+        return simd_float3x3(SIMD3(numbers[0], numbers[1], numbers[2]), SIMD3(numbers[3], numbers[4], numbers[5]),
+                             SIMD3(numbers[6], numbers[7], numbers[8]))
+    }
+
     /// `orient_type`'s value with the port's matrix for `orientation`, worked
     /// out by `_blenderkit_orient.redo_matrix` when the call runs — for a
     /// redo panel's choice that has to be computed on the rewound scene, as

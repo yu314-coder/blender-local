@@ -45,6 +45,8 @@ struct ModalDrive {
     var snapInverted = false
     /// G G in Edit Mode: Edge Slide or Vertex Slide (ModalSlide.swift).
     var slide: SlideDrive?
+    /// Page Up or Page Down changed the proportional reach (`base` holds it).
+    var resized = false
 }
 
 extension TransformGizmo.Mode {
@@ -85,6 +87,18 @@ extension MetalViewportView.Coordinator {
                           start: nil, pointer: nil, lastHover: nil)
     }
 
+    /// Ctrl+M, Interactive Mirror (`transform.mirror` from the keymap): the
+    /// selection waits for X, Y or Z and flips along it about the pivot, a
+    /// click or Return confirming. Run as a Scale's session that never
+    /// follows the pointer (INPUT_NONE): a mirror is a scale by -1. Not
+    /// during another transform, where Ctrl+M is no key of the modal map.
+    @discardableResult
+    func beginModalMirror() -> Bool {
+        guard modal == nil else { return false }
+        return startModal(.scale, input: ModalTransformInput(mode: .mirror),
+                          start: nil, pointer: nil, lastHover: nil)
+    }
+
     /// The drag begun from `start` (nil: the pointer's place, or a stand-in
     /// until one arrives).
     private func startModal(_ mode: TransformGizmo.Mode, input: ModalTransformInput, start: CGPoint?,
@@ -110,7 +124,8 @@ extension MetalViewportView.Coordinator {
         let from = start ?? here ?? Self.standInStart(g, projection: projection, size: size)
         gizmo = TransformGizmo.beginSession(handle: .screen, at: from, gizmo: g, scene: parent.scene,
                                             camera: parent.camera, size: size, options: parent.options,
-                                            wireframe: parent.shading == .wireframe)
+                                            wireframe: parent.shading == .wireframe,
+                                            mirroring: input.mode == .mirror)
         gizmoResult = nil
         // A curve's or a lattice's points: Blender refused (the banner says
         // why) and there is nothing to steer.
@@ -209,7 +224,16 @@ extension MetalViewportView.Coordinator {
 
     /// A key of Blender's transform modal map (`ViewportMTKView.modalCommands`).
     func modalKey(_ token: String) {
+        // Shift+B's box waiting or being drawn: Escape cancels it, and the
+        // rest of the keys wait (ZoomRegion.swift).
+        if zoomRegionPending || zoomRegionStart != nil {
+            if token == "cancel" { endZoomRegion(nil) }
+            return
+        }
         guard modal != nil else { return }
+        // Mirror changes into nothing else (`transform_mode_is_changeable`)
+        // and takes no numbers.
+        if modal?.input.mode == .mirror, ["g", "r", "s", "tab", "backspace"].contains(token) { return }
         switch token {
         case "confirm":   modalConfirm()
         case "cancel":    modalCancel()
@@ -231,6 +255,10 @@ extension MetalViewportView.Coordinator {
             default:          modalSwitch(.rotate)
             }
         case "s":         modalSwitch(.scale)
+        case "propup":       modalProportionalSize(by: 1.1)
+        case "propdown":     modalProportionalSize(by: 1 / 1.1)
+        case "propup.fine":  modalProportionalSize(by: 1.01)
+        case "propdown.fine": modalProportionalSize(by: 1 / 1.01)
         case "even", "flip", "clamp":
             // E, F and C mean something only while a slide runs.
             if modal?.slide != nil { slideToggle(token) }
@@ -250,6 +278,42 @@ extension MetalViewportView.Coordinator {
             modal?.input.type(c)
             modalUpdate(presenting: true)
         }
+    }
+
+    /// Page Up and Page Down, the wheel and a trackpad's scroll while G, R or
+    /// S runs with proportional editing on (Blender's PROPORTIONAL_SIZE_UP,
+    /// _DOWN and PROPORTIONAL_SIZE, transform.cc): the reach times `factor`
+    /// — 1.1 a step, 1.01 with Shift (precision), 1 + 0.005 a pixel of a
+    /// trackpad's scroll — at most the view's clip end in perspective (1,000
+    /// here) and within bpy's own range. The drag goes on from where it is,
+    /// taken again with the new reach; the slides and Mirror have none.
+    func modalProportionalSize(by factor: Float) {
+        guard var drive = modal, drive.slide == nil, drive.input.mode != .mirror,
+              let session = gizmo, session.points == nil, let p = session.proportional, let view else { return }
+        let range = TransformToolSettings.sizeRange
+        var size = p.size * factor
+        size = min(size, parent.camera.isOrthographic ? range.upperBound : min(1000, range.upperBound))
+        size = max(size, range.lowerBound)
+        guard abs(size - p.size) > 1e-7 else { return }
+        TransformGizmo.rollBack(session)
+        let rebuilt = TransformGizmo.beginSession(handle: .screen, at: drive.start, gizmo: drive.base.gizmo,
+                                                  scene: parent.scene, camera: parent.camera,
+                                                  size: view.bounds.size, options: parent.options,
+                                                  wireframe: parent.shading == .wireframe, proportionalSize: size)
+        drive.base = rebuilt
+        drive.resized = true
+        modal = drive
+        gizmo = rebuilt.invertingSnap(drive.snapInverted)
+        if drive.input.constraint != .none { retargetModal() }
+        modalUpdate(presenting: gizmoResult != nil || !drive.startPending || drive.input.isTyping)
+    }
+
+    /// Blender keeps the reach Page Up and Page Down gave a transform as the
+    /// scene's Proportional Size, confirmed or not (`saveTransform`: "this
+    /// value is being saved even if the operation is canceled").
+    private func keepProportionalSize(_ drive: ModalDrive) {
+        guard drive.resized, let size = drive.base.proportional?.size else { return }
+        parent.bridge?.run(ToolsBpy.size(size))
     }
 
     /// Ctrl pressed or let go on a keyboard, with or without the pointer
@@ -377,6 +441,10 @@ extension MetalViewportView.Coordinator {
             slideUpdate()
             return
         }
+        if modal?.input.mode == .mirror {
+            mirrorUpdate()
+            return
+        }
         guard let drive = modal, let session = gizmo else { return }
         if presenting, let values = drive.input.values {
             presentGizmo(Self.typedResult(values, input: drive.input, session: session),
@@ -399,7 +467,25 @@ extension MetalViewportView.Coordinator {
         ModalTransformState.shared.show(.init(mode: drive.input.mode, constraint: drive.input.constraint,
                                               typing: drive.input.isTyping,
                                               canSlide: drive.input.mode == .translate && drive.base.edit != nil
-                                                  && parent.bridge?.usesRealBlender == true),
+                                                  && parent.bridge?.usesRealBlender == true,
+                                              proportional: session.proportional != nil && session.points == nil),
+                                        owner: self)
+    }
+
+    /// Interactive Mirror as it stands: flipped along the constraint, or as
+    /// it was with none, under Blender's header (`applyMirror`). The pointer
+    /// plays no part.
+    private func mirrorUpdate() {
+        guard let drive = modal, let session = gizmo else { return }
+        let space = (session.frame.orientation?.label ?? "custom").lowercased()
+        let header = drive.input.mirrorHeader(space: space)
+        if drive.input.constraint != .none || gizmoResult != nil {
+            presentGizmo(.scale(drive.input.mirrorFactors), target: nil, readout: header)
+        } else {
+            parent.scene.transformReadout = header
+        }
+        drawModalOverlay()
+        ModalTransformState.shared.show(.init(mode: .mirror, constraint: drive.input.constraint, typing: false),
                                         owner: self)
     }
 
@@ -438,6 +524,8 @@ extension MetalViewportView.Coordinator {
             // The slides are not a turn, a move or a scale of the session
             // (ModalSlide.swift shows them).
             return .translate(.zero)
+        case .mirror:
+            return .scale(input.mirrorFactors)
         }
     }
 
@@ -465,6 +553,7 @@ extension MetalViewportView.Coordinator {
         case .trackball:   lead = "Trackball:"
         case .edgeSlide:   lead = "Edge Slide:"
         case .vertexSlide: lead = "Vertex Slide:"
+        case .mirror:      return input.mirrorHeader(space: space)
         }
         let values = shown.isEmpty ? input.mode.label : "\(lead) " + shown.joined(separator: " | ")
             + (input.mode == .rotate || input.mode == .trackball ? "°" : "")
@@ -511,7 +600,7 @@ extension MetalViewportView.Coordinator {
             line.lineWidth = 1.5
             layer.addSublayer(line)
         }
-        if g.mode != .translate, let centre = p.project(g.origin) {
+        if g.mode != .translate, drive.input.mode != .mirror, let centre = p.project(g.origin) {
             let path = CGMutablePath()
             path.addLines(between: [centre, drive.pointer])
             let dash = CAShapeLayer()
@@ -528,8 +617,28 @@ extension MetalViewportView.Coordinator {
             light.lineDashPhase = 4
             layer.addSublayer(light)
         }
+        // Proportional editing's reach (`drawPropCircle`): a circle of the
+        // Proportional Size about the pivot, square to the view, drawn twice
+        // as Blender draws it — 3 pixels in the grid's colour darkened, then
+        // 1 pixel lightened.
+        if let reach = session.proportional?.size, drive.slide == nil, let centre = p.project(g.origin),
+           let edge = p.project(g.origin + simd_normalize(session.frame.viewAxes.columns.0) * reach) {
+            let r = hypot(edge.x - centre.x, edge.y - centre.y)
+            if r.isFinite, r > 0.5, r < 100_000 {
+                let path = CGPath(ellipseIn: CGRect(x: centre.x - r, y: centre.y - r, width: 2 * r, height: 2 * r),
+                                  transform: nil)
+                for (width, white) in [(CGFloat(3), CGFloat(0.27)), (1, 0.41)] {
+                    let ring = CAShapeLayer()
+                    ring.path = path
+                    ring.fillColor = nil
+                    ring.strokeColor = UIColor(white: white, alpha: 1).cgColor
+                    ring.lineWidth = width
+                    layer.addSublayer(ring)
+                }
+            }
+        }
         // No pointer over the view: show where the drags have taken it.
-        if drive.lastHover == nil, g.mode != .translate {
+        if drive.lastHover == nil, g.mode != .translate, drive.input.mode != .mirror {
             let ring = CAShapeLayer()
             ring.path = CGPath(ellipseIn: CGRect(x: drive.pointer.x - 7, y: drive.pointer.y - 7, width: 14, height: 14),
                                transform: nil)
@@ -567,8 +676,16 @@ extension MetalViewportView.Coordinator {
                                       "The selection changed while \(drive.input.mode.label) ran, so nothing was changed.")
             return
         }
+        // After the commit: the transform's own call carries its size, and
+        // the scene's follows it, as `saveTransform` writes it.
+        defer { keepProportionalSize(drive) }
         if drive.slide != nil {
             slideConfirm()
+            finishModal()
+            return
+        }
+        if drive.input.mode == .mirror {
+            mirrorConfirm(drive)
             finishModal()
             return
         }
@@ -576,10 +693,36 @@ extension MetalViewportView.Coordinator {
         finishModal()
     }
 
+    /// Ctrl+M confirmed: Blender's `transform.mirror`, one step the redo
+    /// panel adjusts. With no axis chosen nothing flipped, and nothing is
+    /// sent. A curve's or a lattice's points, which Blender previewed as a
+    /// scale by -1, commit that scale.
+    private func mirrorConfirm(_ drive: ModalDrive) {
+        guard drive.input.constraint != .none else {
+            discardModalSession()
+            return
+        }
+        if gizmo?.points != nil {
+            endGizmo()
+            return
+        }
+        endConstrainedDrag()
+        defer {
+            gizmo = nil
+            gizmoResult = nil
+            renderer?.gizmoHighlight = nil
+            parent.scene.transformReadout = nil
+            showSnapMarker(nil, projection: nil)
+        }
+        guard let session = gizmo, let bridge = parent.bridge else { return }
+        TransformGizmo.commitMirror(drive.input.mirrorFactors, session: session, bridge: bridge)
+    }
+
     /// Escape or a right-click: everything back where it was, no step.
     func modalCancel() {
-        guard modal != nil else { return }
+        guard let drive = modal else { return }
         discardModalSession()
+        keepProportionalSize(drive)
         finishModal()
     }
 
@@ -653,6 +796,8 @@ final class ModalTransformState {
         var even = false
         var flipped = false
         var clamp = true
+        /// Proportional editing is on: Page Up and Page Down size its reach.
+        var proportional = false
     }
 
     private(set) var shown: Shown?
@@ -684,6 +829,11 @@ final class ModalTransformState {
     /// Transform): in the 3D View that has the keyboard.
     static func begin(_ mode: TransformGizmo.Mode) {
         MetalViewportView.Coordinator.forTransform?.beginModalTransform(mode)
+    }
+
+    /// Ctrl+M from a key or Mirror ▸ Interactive Mirror.
+    static func beginMirror() {
+        MetalViewportView.Coordinator.forTransform?.beginModalMirror()
     }
 }
 
@@ -837,6 +987,7 @@ extension MetalViewportView.Coordinator {
         case "g": beginModalTransform(.translate)
         case "r": beginModalTransform(.rotate)
         case "s": beginModalTransform(.scale)
+        case "m": beginModalMirror()
         case "hover":
             if numbers.count == 2 {
                 let point = CGPoint(x: numbers[0], y: numbers[1])
@@ -909,6 +1060,7 @@ extension MetalViewportView.Coordinator {
         line += " readout=\"\(parent.scene.transformReadout ?? "")\""
         line += " bar=\(ModalTransformState.shared.shown.map { "\($0.mode.label)" } ?? "none")"
         line += " firstResponderModal=\((view as? ViewportMTKView)?.modal != nil)"
+        line += " propSize=\(gizmo?.proportional.map { String($0.size) } ?? "off") sceneSize=\(parent.scene.tools.size)"
         print(line)
         for obj in parent.scene.objects where parent.scene.selection.contains(obj.id) {
             let deg = obj.rotation * 180 / .pi

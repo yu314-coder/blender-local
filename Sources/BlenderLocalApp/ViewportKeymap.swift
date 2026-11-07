@@ -80,6 +80,26 @@ struct ViewportKey {
         ViewportKey(chord: "period", title: "Pivot Point", menu: .view, when: transforming) { $0.openMenu(.pivot) },
         ViewportKey(chord: "shift+space", title: "Toolbar", menu: .view, when: transforming) { $0.openMenu(.toolbar) },
         ViewportKey(chord: "shift+alt+z", title: "Show Overlays", menu: .view, when: navigable) { $0.toggleOverlays() },
+        // `view3d.zoom_border`: View ▸ Navigation ▸ Zoom Region…
+        ViewportKey(chord: "shift+b", title: "Zoom Region…", menu: .view, when: navigable) { $0.zoomRegion() },
+        // Emulate Numpad's Shift+Numpad on the number row (told by the
+        // key's code: `ViewportMTKView.shiftedDigitChord`): Roll Left and
+        // Right, and outside Edit Mode — where Shift with 1, 2 and 3 is
+        // Blender's other select modes — Align View to Active.
+        ViewportKey(chord: "shift+4", title: "Roll Left", menu: .view, hidden: true, when: navigable) { $0.rollView(-step) },
+        ViewportKey(chord: "shift+6", title: "Roll Right", menu: .view, hidden: true, when: navigable) { $0.rollView(step) },
+        ViewportKey(chord: "shift+1", title: "Front", menu: .view, hidden: true,
+                    when: { !$0.editing && $0.hasActiveObject }) { $0.alignView(.front) },
+        ViewportKey(chord: "shift+ctrl+1", title: "Back", menu: .view, hidden: true,
+                    when: { !$0.editing && $0.hasActiveObject }) { $0.alignView(.back) },
+        ViewportKey(chord: "shift+3", title: "Right", menu: .view, hidden: true,
+                    when: { !$0.editing && $0.hasActiveObject }) { $0.alignView(.right) },
+        ViewportKey(chord: "shift+ctrl+3", title: "Left", menu: .view, hidden: true,
+                    when: { !$0.editing && $0.hasActiveObject }) { $0.alignView(.left) },
+        ViewportKey(chord: "shift+7", title: "Top", menu: .view, hidden: true,
+                    when: { !$0.editing && $0.hasActiveObject }) { $0.alignView(.top) },
+        ViewportKey(chord: "shift+ctrl+7", title: "Bottom", menu: .view, hidden: true,
+                    when: { !$0.editing && $0.hasActiveObject }) { $0.alignView(.bottom) },
         ViewportKey(chord: "ctrl+0", title: "Set Active Object as Camera", menu: .view,
                     when: { objectMode($0) && $0.objectAsCamera != nil && !$0.isRunning }) { $0.objectAsCamera?() },
         // The number row's minus and equals are the numpad's: Zoom View.
@@ -122,6 +142,26 @@ struct ViewportKey {
         ViewportKey(chord: "ctrl+numpad_6", title: "Pan Right", menu: .view, hidden: true, when: navigable) { $0.pan(panStep, 0) },
         ViewportKey(chord: "ctrl+numpad_8", title: "Pan Up", menu: .view, hidden: true, when: navigable) { $0.pan(0, panStep) },
         ViewportKey(chord: "ctrl+numpad_2", title: "Pan Down", menu: .view, hidden: true, when: navigable) { $0.pan(0, -panStep) },
+        // `view3d.view_roll` LEFT and RIGHT, and `view3d.view_axis` with
+        // align_active (View ▸ Align View ▸ Align View to Active).
+        ViewportKey(chord: "shift+numpad_4", title: "Roll Left", menu: .view, hidden: true, when: navigable) {
+            $0.rollView(-step)
+        },
+        ViewportKey(chord: "shift+numpad_6", title: "Roll Right", menu: .view, hidden: true, when: navigable) {
+            $0.rollView(step)
+        },
+        ViewportKey(chord: "shift+numpad_1", title: "Front", menu: .view, hidden: true,
+                    when: { $0.hasActiveObject }) { $0.alignView(.front) },
+        ViewportKey(chord: "shift+ctrl+numpad_1", title: "Back", menu: .view, hidden: true,
+                    when: { $0.hasActiveObject }) { $0.alignView(.back) },
+        ViewportKey(chord: "shift+numpad_3", title: "Right", menu: .view, hidden: true,
+                    when: { $0.hasActiveObject }) { $0.alignView(.right) },
+        ViewportKey(chord: "shift+ctrl+numpad_3", title: "Left", menu: .view, hidden: true,
+                    when: { $0.hasActiveObject }) { $0.alignView(.left) },
+        ViewportKey(chord: "shift+numpad_7", title: "Top", menu: .view, hidden: true,
+                    when: { $0.hasActiveObject }) { $0.alignView(.top) },
+        ViewportKey(chord: "shift+ctrl+numpad_7", title: "Bottom", menu: .view, hidden: true,
+                    when: { $0.hasActiveObject }) { $0.alignView(.bottom) },
         ViewportKey(chord: "numpad_period", title: "Frame Selected", menu: .view, hidden: true, when: navigable) {
             $0.frameSelected()
         },
@@ -249,6 +289,17 @@ struct ViewportKey {
         ViewportKey(chord: "shift+r", title: "Repeat Last", menu: .object, when: { $0.canRepeatLast() && !$0.isRunning }) {
             $0.repeatLast()
         },
+        // Ctrl+M (`transform.mirror` in the Object Mode and Mesh keymaps):
+        // Interactive Mirror, waiting for X, Y or Z (ModalTransform.swift).
+        ViewportKey(chord: "ctrl+m", title: "Interactive Mirror", menu: .object,
+                    when: { transforming($0) && !$0.isRunning }) { _ in
+            // Keys run on the main thread (`runPressed` is MainActor).
+            MainActor.assumeIsolated { ModalTransformState.beginMirror() }
+        },
+        // K (`anim.keyframe_insert_menu`, always_prompt): Blender's keying
+        // sets for the selection. Object ▸ Animation's row.
+        ViewportKey(chord: "k", title: "Insert Keyframe with Keying Set…", menu: .object,
+                    when: { objectMode($0) && $0.keyingSets != nil && !$0.isRunning }) { $0.openMenu(.keyingSets) },
         ViewportKey(chord: "f2", title: "Rename Active Object…", menu: .object, hidden: true,
                     when: { objectMode($0) && $0.rename != nil }) { $0.rename?() },
     ]
@@ -269,6 +320,7 @@ struct ViewportKey {
             $0.openMenu(.add)
         },
         meshMenu("u", "UV Mapping", .uvMap),
+        meshMenu("ctrl+g", "Vertex Groups", .vertexGroups),
         // `view3d.edit_mesh_extrude_move_normal`: here the Extrude row the
         // toolbar has, along the normals.
         mesh("e", .extrude),
@@ -285,6 +337,12 @@ struct ViewportKey {
         meshMenu("alt+n", "Normals", .normals),
         mesh("shift+ctrl+b", .bevelVertices),
         mesh("ctrl+t", .triangulate),
+        // `mesh.quads_convert_to_tris(quad_method='FIXED', ngon_method='CLIP')`.
+        ViewportKey(chord: "shift+ctrl+t", title: "Triangulate Faces", menu: .mesh, hidden: true,
+                    when: { meshEdit($0) && !$0.isRunning }) {
+            $0.meshWith(.triangulate, ["quad_method": 1, "ngon_method": 1])
+        },
+        mesh("alt+f", .fill),
         mesh("alt+j", .quadify),
         mesh("shift+n", .recalculateNormals),
         mesh("shift+ctrl+n", .recalculateInside),
@@ -426,11 +484,20 @@ struct ViewportKey {
         return (input, flags)
     }
 
+    /// "shift+4", "shift+ctrl+1": Shift with a number-row digit.
+    static func isShiftedDigit(_ chord: String) -> Bool {
+        let parts = chord.split(separator: "+")
+        guard parts.first == "shift", let key = parts.last, key.count == 1, key.first!.isNumber else { return false }
+        return parts.dropFirst().dropLast().allSatisfy { $0 == "ctrl" }
+    }
+
     /// The chords the 3D View answers itself: the hidden entries and every ⌘
     /// twin, each once.
     static let viewKeys: [String] = {
         var out: [String] = []
-        for entry in all where !entry.chord.contains("numpad_") {
+        // The numpad's and Shift with a digit are told by the key's code
+        // (`ViewportMTKView.pressesBegan`), not by a key command.
+        for entry in all where !entry.chord.contains("numpad_") && !isShiftedDigit(entry.chord) {
             if entry.hidden, !out.contains(entry.chord) { out.append(entry.chord) }
             if let twin = commandTwin(of: entry.chord), !out.contains(twin) { out.append(twin) }
         }

@@ -225,6 +225,10 @@ struct MetalViewportView: UIViewRepresentable {
         /// has passed through, and the operation the keyboard asked for as it
         /// began.
         var regionGesture: RegionGesture?
+        /// Shift+B: the next drag draws Zoom Region's box (ZoomRegion.swift);
+        /// where that drag began, while it runs.
+        var zoomRegionPending = false
+        var zoomRegionStart: CGPoint?
         private var lastPencilPan: CGPoint = .zero
         private var pinchStartDistance: Float = 0
         /// Non-nil for the length of a gizmo drag. While it is set, the drag
@@ -301,6 +305,7 @@ struct MetalViewportView: UIViewRepresentable {
             if handleTexturePaint(g, pressure: 1) { return }
             if handleBlenderSculpt(g, pressure: 1) { return }
 
+            if zoomRegionDrag(g) { return }
             if g.state == .began {
                 lastPan = .zero
                 // The Measure tool's drags make and move rulers, and the
@@ -745,7 +750,18 @@ struct MetalViewportView: UIViewRepresentable {
             // to Blender with each chunk), so the view holds still under it,
             // as Blender's does while a brush is down.
             if sculptInput.isStroking { return }
-            if modal != nil { return }
+            if modal != nil {
+                // The wheel and a trackpad's scroll during G, R or S:
+                // PROPORTIONAL_SIZE (transform.cc), 1 + 0.005 a pixel —
+                // scrolling up, as the wheel's WHEELUPMOUSE, smaller.
+                guard g.state == .changed || g.state == .began, let view = g.view else { return }
+                let t = g.translation(in: view)
+                g.setTranslation(.zero, in: view)
+                let pixels = t.y * view.contentScaleFactor
+                guard pixels != 0 else { return }
+                modalProportionalSize(by: Float(max(1 - 0.005 * pixels, 0.2)))
+                return
+            }
             guard g.state == .changed || g.state == .began else {
                 if g.state == .ended || g.state == .cancelled {
                     endScrollReadout?()
@@ -1210,6 +1226,7 @@ struct MetalViewportView: UIViewRepresentable {
         @objc func handlePencilDrag(_ g: PencilPanGestureRecognizer) {
             let p = g.translation(in: g.view)
             if modalDrag(g) { return }
+            if zoomRegionDrag(g) { return }
             if handleTexturePaint(g, pressure: g.pressure) { return }
             if handleBlenderSculpt(g, pressure: g.pressure) { return }
 
@@ -1417,6 +1434,11 @@ struct MetalViewportView: UIViewRepresentable {
         /// drawn by the workspace. Nil — no system menu — every time.
         func contextMenuInteraction(_ interaction: UIContextMenuInteraction,
                                     configurationForMenuAtLocation location: CGPoint) -> UIContextMenuConfiguration? {
+            // A right-click cancels Zoom Region's box (`WM_gesture_box_modal`).
+            if zoomRegionPending || zoomRegionStart != nil {
+                DispatchQueue.main.async { self.endZoomRegion(nil) }
+                return nil
+            }
             // Blender's right-click during G, R or S cancels it.
             if modal != nil {
                 if touchWatcher?.fingerOrPencilDown != true { DispatchQueue.main.async { self.modalCancel() } }
@@ -1433,6 +1455,11 @@ struct MetalViewportView: UIViewRepresentable {
             // A tap in the view gives it the keyboard back — after a sheet with
             // a text field, say — so Tab reaches it again.
             (view as? ViewportMTKView)?.takeKeyboard()
+            // A click with no box drawn: Zoom Region has nothing to zoom on.
+            if zoomRegionPending {
+                endZoomRegion(nil)
+                return
+            }
             // A click or a tap confirms G, R or S, as Blender's left click.
             if modal != nil {
                 modalConfirm()
@@ -1618,6 +1645,9 @@ final class ViewportMTKView: MTKView {
             ("g", [], "g"), ("r", [], "r"), ("s", [], "s"),
             // A slide's own keys (handleEventEdgeSlide): Even, Flipped, Clamp.
             ("e", [], "even"), ("f", [], "flip"), ("c", [], "clamp"),
+            // PROPORTIONAL_SIZE_UP and _DOWN, Shift for Blender's precision.
+            (UIKeyCommand.inputPageUp, [], "propup"), (UIKeyCommand.inputPageDown, [], "propdown"),
+            (UIKeyCommand.inputPageUp, .shift, "propup.fine"), (UIKeyCommand.inputPageDown, .shift, "propdown.fine"),
             ("z", .command, "swallow"), ("z", [.command, .shift], "swallow"),
             ("z", .control, "swallow"), ("z", [.control, .shift], "swallow"),
         ]
@@ -1656,7 +1686,8 @@ final class ViewportMTKView: MTKView {
         var rest = presses
         if modal == nil, let viewKeys {
             for press in presses {
-                guard let key = press.key, let chord = Self.numpadChord(key), viewKeys.canPress(chord) else { continue }
+                guard let key = press.key, let chord = Self.numpadChord(key) ?? Self.shiftedDigitChord(key),
+                      viewKeys.canPress(chord) else { continue }
                 viewKeys.press(chord)
                 rest.remove(press)
                 numpadPresses.insert(ObjectIdentifier(press))
@@ -1697,6 +1728,22 @@ final class ViewportMTKView: MTKView {
         if flags.contains(.alternate) { parts.append("alt") }
         if flags.contains(.command) { parts.append("cmd") }
         return (parts + [name]).joined(separator: "+")
+    }
+
+    /// Blender's chord for Shift with a number-row digit — Emulate Numpad's
+    /// Shift+Numpad (Roll Left and Right on 4 and 6, Align View to Active on
+    /// 1, 3 and 7): "shift+4", "shift+ctrl+1". Shift turns the digit into a
+    /// symbol on most layouts, which no key command on the digit would see,
+    /// so it is told by the key's code, as the numpad is.
+    static func shiftedDigitChord(_ key: UIKey) -> String? {
+        let flags = key.modifierFlags
+        guard flags.contains(.shift), !flags.contains(.numericPad), !flags.contains(.alternate),
+              !flags.contains(.command) else { return nil }
+        let code = key.keyCode.rawValue
+        let one = UIKeyboardHIDUsage.keyboard1.rawValue, zero = UIKeyboardHIDUsage.keyboard0.rawValue
+        guard code >= one, code <= zero else { return nil }
+        let digit = code == zero ? 0 : code - one + 1
+        return "shift+" + (flags.contains(.control) ? "ctrl+" : "") + "\(digit)"
     }
 
     override func pressesEnded(_ presses: Set<UIPress>, with event: UIPressesEvent?) {

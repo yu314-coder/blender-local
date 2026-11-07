@@ -113,5 +113,28 @@ check("steered back to the middle: closes", G.release(heldFor: 0.1, steered: tru
 check("the tap timeout is 20 hundredths", G.tapTimeout == 0.2)
 check("the drag distance is √50", near(G.dragDistance * G.dragDistance, 50, 1e-9))
 
+print("== accelerator keys (menu_block_set_keyaccels) ==")
+do {
+    typealias A = MenuAccelerators
+    check("the Shading pie: W, S, M, R",
+          A.keys(["Wireframe", "Solid", "Material Preview", "Rendered"]) == ["w", "s", "m", "r"])
+    check("a first letter taken: the next word's", A.keys(["Select All", "Select None"]) == ["s", "n"])
+    check("no word's first letter left: any letter, second pass", A.keys(["Aa", "Ab"]) == ["a", "b"])
+    check("first letters go first across the menu, then the rest",
+          A.keys(["Box Select", "Bevel", "Circle"]) == ["b", "e", "c"], "\(A.keys(["Box Select", "Bevel", "Circle"]))")
+    check("a digit is no key; the letter after it starts a word", A.keys(["3D Cursor"]) == ["d"])
+    check("rows that take none are skipped", A.keys(["Move", nil, "Mirror"]) == ["m", nil, "i"],
+          "\(A.keys(["Move", nil, "Mirror"]))")
+    check("an empty title takes none", A.keys([""]) == [nil])
+    check("all 26 taken: the rest get none",
+          A.keys((0..<27).map { i in String(UnicodeScalar(97 + (i % 26))!) })[26] == nil)
+    func at(_ key: Character, _ title: String) -> Int? {
+        A.underline(key, in: title).map { title.distance(from: title.startIndex, to: $0.lowerBound) }
+    }
+    check("underlined: the capital first", at("n", "Select None") == 7)
+    check("underlined: else the first lower case", at("e", "Bevel") == 1)
+    check("underlined: nowhere when absent", at("z", "Bevel") == nil)
+}
+
 print(failures == 0 ? "\nALL PASS" : "\n\(failures) FAILED")
 exit(failures == 0 ? 0 : 1)

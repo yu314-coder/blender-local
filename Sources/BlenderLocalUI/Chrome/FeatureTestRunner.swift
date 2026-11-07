@@ -908,6 +908,109 @@ final class FeatureTestRunner {
                 return "Trackball 30°, 45° of \(verts(s)), committed as one step (\(op.name))"
             }
 
+        case "transform.mirror_ctrl_m":
+            // Ctrl+M (ModalTransform.swift): it waits for an axis, X flips
+            // along it, and the confirm commits Blender's Mirror.
+            let s = try onSphere()
+            await settle()
+            let (c, _) = try viewport()
+            let generation = bridge.adjustableGeneration
+            return await command {
+                guard c.beginModalMirror() else { throw Failure(detail: "Interactive Mirror began nothing on \(s.name)") }
+                c.modalAxis(0, plane: false)
+                c.modalConfirm()
+                guard bridge.adjustableGeneration != generation, let op = bridge.adjustable, op.name == "Mirror" else {
+                    throw Failure(detail: "the confirm left no Mirror panel: "
+                                  + (bridge.lastOutcome?.error ?? "no outcome"))
+                }
+                return "Mirror along X of \(verts(s)), committed as one step"
+            }
+
+        case "view.zoom_region":
+            // Shift+B, then a box over the middle of the view, where the
+            // sphere is framed (ZoomRegion.swift).
+            _ = try onSphere()
+            await settle()
+            let door = try door()
+            let (c, view) = try viewport()
+            let before = door.camera()
+            return await command {
+                guard door.pressKey("shift+b"), c.zoomRegionPending else {
+                    throw Failure(detail: "Shift+B began no box")
+                }
+                let size = view.bounds.size
+                c.endZoomRegion(CGRect(x: size.width * 0.4, y: size.height * 0.4,
+                                       width: size.width * 0.2, height: size.height * 0.2))
+                let after = door.camera()
+                door.setCamera(before)
+                guard after.distance < before.distance else {
+                    throw Failure(detail: String(format: "the view did not zoom in (%.2f m to %.2f m)",
+                                                 before.distance, after.distance))
+                }
+                return String(format: "Zoom Region: %.2f m to %.2f m", before.distance, after.distance)
+            }
+
+        case "view.roll_align":
+            // Shift+Numpad 6, then Shift+Numpad 1 (ViewportCamera.roll, .align).
+            let s = try onSphere()
+            await settle()
+            let door = try door()
+            let before = door.camera()
+            return await command {
+                guard door.pressKey("shift+numpad_6") else { throw Failure(detail: "Shift+Numpad 6 means nothing here") }
+                let rolled = door.camera().roll - before.roll
+                guard door.pressKey("shift+numpad_1") else { throw Failure(detail: "Shift+Numpad 1 means nothing here") }
+                let aligned = door.camera()
+                door.setCamera(before)
+                guard abs(abs(rolled) - 15 * .pi / 180) < 1e-4 else {
+                    throw Failure(detail: String(format: "Roll Right turned the view %.2f°", rolled * 180 / .pi))
+                }
+                // Front aligned: the object's -Y toward the eye.
+                let m = s.modelMatrix
+                let want = -simd_normalize(SIMD3(m.columns.1.x, m.columns.1.y, m.columns.1.z))
+                let back = simd_normalize(aligned.eye - aligned.target)
+                guard simd_distance(back, want) < 1e-3 else {
+                    throw Failure(detail: "Front aligned looks along \(back), not \(want)")
+                }
+                return "Roll Right 15°, then Front aligned to \(s.name)"
+            }
+
+        case "anim.keying_set":
+            // K: Blender's Insert Keyframe Menu, its Location row.
+            let s = try onSphere()
+            await settle()
+            let door = try door()
+            return await command {
+                guard door.pressKey("k"), let menu = door.openMenu(),
+                      let row = menu.items.first(where: { $0.title == "Location" }),
+                      case .action(let run) = row.kind else {
+                    door.closeMenu()
+                    throw Failure(detail: "K opened no menu with Location")
+                }
+                door.closeMenu()
+                run()
+                if let error = bridge.lastOutcome?.error { throw Failure(detail: error) }
+                return "\(menu.title ?? "menu") ▸ Location on \(s.name)"
+            }
+
+        case "mesh.vertex_groups":
+            // Ctrl+G in Edit Mode: Blender's Vertex Groups menu.
+            let obj = try editing()
+            await settle()
+            let door = try door()
+            return await command {
+                guard door.pressKey("ctrl+g"), let menu = door.openMenu(),
+                      let row = menu.items.first(where: { $0.title == "Assign to New Group" }),
+                      case .action(let run) = row.kind else {
+                    door.closeMenu()
+                    throw Failure(detail: "Ctrl+G opened no Vertex Groups menu (Blender's groups unread?)")
+                }
+                door.closeMenu()
+                run()
+                if let error = bridge.lastOutcome?.error { throw Failure(detail: error) }
+                return "Vertex Groups ▸ Assign to New Group on \(obj.name)"
+            }
+
         case "view.pie_shading", "view.pie_pivot":
             // Z's Shading pie and Period's Pivot Point pie (PieMenu.swift):
             // the key opens the pie round the pointer, and the item in a

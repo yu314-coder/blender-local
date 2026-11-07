@@ -322,6 +322,44 @@ public enum BpyAnimation {
     /// `delete_key_v3d_invoke`'s confirmation, word for word.
     public static let deleteConfirmation = "Delete keyframes from selected objects?"
 
+    /// K in Object Mode, Blender's Insert Keyframe Menu
+    /// (`anim.keyframe_insert_menu`, always_prompt): the keying sets Blender
+    /// offers the selection, asked as the menu opens (`keying_set_rows`).
+    public static let keyingSetRows = "import _blenderkit_anim\n_blenderkit_anim.keying_set_rows()"
+    /// The menu's title: the operator's name, as `insert_key_menu_invoke`
+    /// titles it.
+    public static let keyingSetMenuTitle = "Insert Keyframe Menu"
+
+    /// One row of K's menu: a keying set's identifier and the name the menu
+    /// shows.
+    public struct KeyingSetRow: Equatable, Sendable {
+        public let identifier: String
+        public let name: String
+        public init(identifier: String, name: String) { self.identifier = identifier; self.name = name }
+    }
+
+    /// `keying_set_rows`' answer: nil for a separator.
+    public static func parseKeyingSetRows(_ answer: String) -> [KeyingSetRow?] {
+        answer.split(separator: "\n", omittingEmptySubsequences: true).compactMap { line -> KeyingSetRow?? in
+            if line == "-" { return .some(nil) }
+            let parts = line.split(separator: "\t", maxSplits: 1).map(String.init)
+            guard parts.count == 2, !parts[0].isEmpty else { return nil }
+            return .some(KeyingSetRow(identifier: parts[0], name: parts[1]))
+        }
+    }
+
+    /// A row of K's menu: what Blender's rows run, `keyframe_insert_by_name`
+    /// (keyframing.cc), under the borrowed 3D View its poll wants. One undo
+    /// step under the operator's name.
+    public static func insertKeyingSet(_ identifier: String) -> BlenderCommand {
+        BlenderCommand(
+            call: "bpy.ops.anim.keyframe_insert_by_name(type=\(Bpy.quote(identifier)))",
+            body: "import _blenderkit_anim, _blenderkit_context\n"
+                + "with _blenderkit_context.temp_override_view3d('Insert Keyframe'):\n"
+                + "    _blenderkit_anim.keyframe_insert_by_name(\(Bpy.quote(identifier)))",
+            undo: "Insert Keyframe (by name)")
+    }
+
     /// What a frame change prints when the viewport's object list has to be
     /// rebuilt — keyed visibility — rather than just moved.
     public static let fullMirrorMarker = "BK_ANIM_FULL_MIRROR"

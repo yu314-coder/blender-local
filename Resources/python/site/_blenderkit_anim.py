@@ -595,6 +595,60 @@ def keyframe_insert():
     return inserted
 
 
+def keying_set_rows():
+    """K in Object Mode: the rows of Blender's Insert Keyframe Menu
+    (`anim.keyframe_insert_menu` with always_prompt; `insert_key_menu_invoke`
+    in keyframing.cc), printed one a line as identifier TAB name, '-' for a
+    separator.
+
+    They are the keying sets `ANIM_keying_sets_enum_itemf` offers: the active
+    one, the scene's own, then each builtin one whose poll passes. Asked of
+    that item function itself, through `UILayout.enum_item_name` on the
+    operator's properties, under the borrowed 3D View: the polls read
+    `context.area`, which a Blender with no window has none of. Measured in
+    5.2.1 on the factory cube: 19 rows with it selected (Available first, as
+    keyingsets_builtins.py orders them), 18 with nothing selected (no
+    Available), none with no active object."""
+    import _blenderkit_context
+    if not is_real_blender():
+        return
+    with _blenderkit_context.temp_override_view3d('Insert Keyframe Menu'):
+        context = bpy.context
+        scene = context.scene
+        props = context.window_manager.operator_properties_last('anim.keyframe_insert_menu')
+        candidates = []
+        if scene.keying_sets.active is not None:
+            candidates += ['__ACTIVE__', None]
+        own = [ks.bl_idname for ks in scene.keying_sets]
+        candidates += own
+        if own:
+            candidates.append(None)
+        candidates += [ks.bl_idname for ks in scene.keying_sets_all if ks.bl_idname not in own]
+        rows = []
+        for identifier in candidates:
+            if identifier is None:
+                if rows and rows[-1] is not None:
+                    rows.append(None)
+                continue
+            name = bpy.types.UILayout.enum_item_name(props, 'type', identifier)
+            if name:
+                rows.append((identifier, name))
+        while rows and rows[-1] is None:
+            rows.pop()
+    for row in rows:
+        print('-' if row is None else row[0] + '\t' + row[1])
+
+
+def keyframe_insert_by_name(identifier):
+    """A row of K's menu: `anim.keyframe_insert_by_name`, which is what the
+    menu's rows run in Blender (keyframing.cc: "prefer
+    ANIM_OT_keyframe_insert_by_name"). Called under the borrowed 3D View, as
+    its poll wants an area (`ED_operator_areaactive`)."""
+    result = bpy.ops.anim.keyframe_insert_by_name(type=identifier)
+    if 'FINISHED' not in result:
+        raise RuntimeError("No keyframes were inserted")
+
+
 _BONE_PATH = re.compile(r'pose\.bones\["((?:[^"\\]|\\.)*)"\]')
 
 

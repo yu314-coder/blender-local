@@ -44,4 +44,6 @@ public enum UndoStep {
     /// A Scale drag, `transform.resize`: Blender's Scale tool runs Resize,
     /// and its step is Resize.
     public static let resize = "Resize"
+    /// Ctrl+M's Interactive Mirror, `transform.mirror`.
+    public static let mirror = "Mirror"
 }

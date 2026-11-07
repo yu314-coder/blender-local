@@ -31,6 +31,8 @@ extension ViewportCamera {
     /// as Axis Angle). Any orbit leaves it, as Blender's view becomes User.
     var isAxisAligned: Bool {
         let half = Float.pi / 2
+        // A rolled view is Blender's User view (`view_roll_angle`).
+        guard roll == 0 else { return false }
         if abs(elevation) == half { return azimuth == 0 }
         return elevation == 0 && [0, Float.pi, half, -half].contains(azimuth)
     }

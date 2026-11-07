@@ -673,6 +673,10 @@ def _camera_rotation(camera):
     right = Vector((math.cos(a), math.sin(a), 0.0))
     up = Vector((-math.sin(e) * math.sin(a), math.sin(e) * math.cos(a), math.cos(e)))
     back = Vector((math.cos(e) * math.sin(a), -math.cos(e) * math.cos(a), math.sin(e)))
+    # Its roll (Shift+Numpad 4 and 6): right and up turned about `back`.
+    r = camera.get('roll', 0.0)
+    if r:
+        right, up = right * math.cos(r) + up * math.sin(r), up * math.cos(r) - right * math.sin(r)
     return Matrix((right, up, back)).transposed()
 
 

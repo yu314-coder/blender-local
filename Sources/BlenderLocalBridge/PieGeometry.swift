@@ -190,3 +190,62 @@ public enum PieGeometry {
         return pointing.map { .choose($0) } ?? .close
     }
 }
+
+/// Blender's accelerator keys: the letter each row of a menu or a pie is
+/// chosen by, drawn underlined (`menu_block_set_keyaccels`, interface.cc,
+/// 5.2.1). Two passes over the rows in order. The first gives a row the first
+/// unused letter that starts one of its words — a word being a run of letters,
+/// what follows one character after it the next word — so first letters go
+/// first across the whole menu; the second gives a row that found none the
+/// first unused letter anywhere in it. Rows that take a key are Blender's
+/// buttons, menus and pie items, greyed or not (a greyed one's key does
+/// nothing); separators and headings take none.
+public enum MenuAccelerators {
+    /// `titles`: each row's label, nil for a row that takes no key.
+    public static func keys(_ titles: [String?]) -> [Character?] {
+        var used = Set<UInt8>()
+        var keys = [Character?](repeating: nil, count: titles.count)
+        for pass in 0..<2 {
+            var missing = 0
+            for (i, title) in titles.enumerated() {
+                guard let title, keys[i] == nil, !title.isEmpty else { continue }
+                let bytes = Array(title.utf8)
+                var p = 0
+                var found: UInt8?
+                while p < bytes.count {
+                    let c = lower(bytes[p])
+                    if c >= 97, c <= 122, !used.contains(c) {
+                        found = c
+                        break
+                    }
+                    if pass == 0 {
+                        // Over the rest of the word, then the one character
+                        // after it (`isalpha`, C's: ASCII letters only).
+                        while p < bytes.count, isLetter(bytes[p]) { p += 1 }
+                        if p < bytes.count { p += 1 }
+                    } else {
+                        p += 1
+                    }
+                }
+                if let found {
+                    used.insert(found)
+                    keys[i] = Character(UnicodeScalar(found))
+                } else {
+                    missing += 1
+                }
+                if used.count == 26 { return keys }
+            }
+            if missing == 0 { break }
+        }
+        return keys
+    }
+
+    /// Where Blender underlines `key` in `title`: its first capital, else its
+    /// first lower case (`widget_draw_text`); nil when neither is there.
+    public static func underline(_ key: Character, in title: String) -> Range<String.Index>? {
+        title.range(of: String(key).uppercased()) ?? title.range(of: String(key))
+    }
+
+    private static func isLetter(_ b: UInt8) -> Bool { (b >= 65 && b <= 90) || (b >= 97 && b <= 122) }
+    private static func lower(_ b: UInt8) -> UInt8 { (b >= 65 && b <= 90) ? b + 32 : b }
+}

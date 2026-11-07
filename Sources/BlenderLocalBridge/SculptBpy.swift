@@ -17,13 +17,15 @@ public struct SculptCamera: Equatable, Sendable {
     public var orthographic: Bool
     public var near: Float
     public var far: Float
+    /// The view's roll about its own axis (`ViewportCamera.roll`).
+    public var roll: Float
 
     public init(target: SIMD3<Float>, distance: Float, azimuth: Float, elevation: Float,
-                fovY: Float, orthographic: Bool, near: Float, far: Float) {
+                fovY: Float, orthographic: Bool, near: Float, far: Float, roll: Float = 0) {
         self.target = target; self.distance = distance
         self.azimuth = azimuth; self.elevation = elevation
         self.fovY = fovY; self.orthographic = orthographic
-        self.near = near; self.far = far
+        self.near = near; self.far = far; self.roll = roll
     }
 
     /// The Python dict literal `_blenderkit_sculpt.begin` reads.
@@ -32,7 +34,7 @@ public struct SculptCamera: Equatable, Sendable {
         return "dict(target=(\(n(target.x)), \(n(target.y)), \(n(target.z))), "
             + "distance=\(n(distance)), azimuth=\(n(azimuth)), elevation=\(n(elevation)), "
             + "fov_y=\(n(fovY)), ortho=\(orthographic ? "True" : "False"), "
-            + "near=\(n(near)), far=\(n(far)))"
+            + "near=\(n(near)), far=\(n(far))" + (roll == 0 ? "" : ", roll=\(n(roll))") + ")"
     }
 }
 

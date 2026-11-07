@@ -71,6 +71,9 @@ struct ViewportKeyActions {
     var toggleEditing: () -> Void
     var setSelectMode: (MeshSelectMode) -> Void
     var mesh: (LastOperator.Mesh) -> Void
+    /// A mesh operator started from other values than its row's (a
+    /// parameter's key to its value): Shift+Ctrl+T's Triangulate Faces.
+    var meshWith: (LastOperator.Mesh, [String: Double]) -> Void = { _, _ in }
     var add: (PrimitiveKind) -> Void
     /// What the selection offers Set Origin and Apply — read back from
     /// Blender, so a greyed-out row means Blender has nothing to do.
@@ -219,6 +222,25 @@ struct ViewportKeyActions {
     var tool: ActiveTool = .select
     /// U's UV Mapping rows.
     var uv: (UVOperator) -> Void = { _ in }
+
+    // MARK: November 8: the keys build 57 left
+
+    /// Ctrl+G's Vertex Groups (`VIEW3D_MT_vertex_group`): the edited mesh's
+    /// name and groups, asked when the menu opens (nil where Blender sent
+    /// none: the simulator's stand-in has no groups), and a group command.
+    var vertexGroups: () -> (object: String, groups: MeshGroups)? = { nil }
+    var sendGroups: (GroupsBpy.Command) -> Void = { _ in }
+    /// K's Insert Keyframe Menu: the keying sets Blender offers the
+    /// selection, asked when it opens; nil off Blender's bpy.
+    var keyingSets: (() -> [BpyAnimation.KeyingSetRow?])? = nil
+    var insertKeyingSet: (String) -> Void = { _ in }
+    /// Shift+B: Zoom Region's box (ZoomRegion.swift).
+    var zoomRegion: () -> Void = {}
+    /// Shift+Numpad 4 and 6: Roll Left and Right (`view3d.view_roll`).
+    var rollView: (Float) -> Void = { _ in }
+    /// Shift+Numpad 1, 3 and 7: Align View to Active (`view3d.view_axis`,
+    /// align_active).
+    var alignView: (ViewportCamera.Viewpoint) -> Void = { _ in }
 }
 
 private struct AppKeyActionsKey: FocusedValueKey { typealias Value = AppKeyActions }

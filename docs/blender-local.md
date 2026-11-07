@@ -1,5 +1,94 @@
 # Blender Local — the app
 
+## November 8: the keys build 57 left
+
+The user: "pls continue improve the blender local". This round took the Not
+done list of November 7 below, each from Blender 5.2.1's own keymap
+(`blender_default.py`, `generate_keymaps`) and its source.
+
+- **Alt+F Fill** (`mesh.fill`, the Face menu between Wireframe and Grid
+  Fill), adjustable, Beauty its one field. Measured in 5.2.1: an 8-sided
+  circle, every edge selected, 6 faces; again, CANCELLED with Blender's "No
+  faces filled", said in words here; nothing selected, Blender's own "No
+  edges selected". On a closed cube it adds faces in Blender too (11, and 13
+  once triangulated, the app's result to the face).
+- **Triangulate Faces' methods**: Quad Method and N-gon Method in its panel
+  (5.2.1's RNA, Beauty both, as the Face menu's row and Ctrl+T run it), and
+  **Shift+Ctrl+T** starting it at Fixed and Clip (`ViewportKeyActions.meshWith`).
+  The app's triangles equal Blender's own call's, both ways, on a cylinder.
+- **Ctrl+G, Vertex Groups** (`VIEW3D_MT_vertex_group` in Edit Mode): Assign to
+  New Group, then with an active group Assign to Active Group, Remove from
+  Active Group, Remove from All, Set Active Group ▸, Remove Active Group,
+  Remove All Groups — greyed with the active group locked, as Blender's polls
+  are. Measured: Assign to New Group makes Group, then Group.001, active,
+  with an empty group when nothing is selected, as Blender does; Remove from
+  All is CANCELLED with nothing to remove, said in words.
+- **K, Insert Keyframe Menu** (`anim.keyframe_insert_menu`, always_prompt):
+  the rows are Blender's own — its keying sets' item function asked through
+  `UILayout.enum_item_name` under the borrowed 3D View, as the polls read the
+  area (`_blenderkit_anim.keying_set_rows`): 19 with an object selected,
+  Available first; 18 with nothing selected. A row runs what Blender's rows
+  run, `anim.keyframe_insert_by_name`, under the same borrowed view.
+- **Ctrl+M, Interactive Mirror** (TFM_MIRROR, transform_mode_mirror.cc): a
+  modal of its own in ModalTransform.swift. Nothing moves until X, Y or Z; the
+  letter again goes to the other orientation, a third time to none; Shift with
+  one flips the two other axes ("locking"). Its header is Blender's: "Select a
+  mirror axis (X, Y, Z)", "Mirror along global X", "Mirror locking global Y".
+  No pointer input, no numbers, and G, R and S change nothing
+  (`transform_mode_is_changeable`). Previewed as a scale by -1 on a session
+  without proportional editing or Mirror Editing (`transform.mirror` has
+  neither), committed as Blender's `transform.mirror` with the pivot as
+  `center_override` (Individual Origins: `transform_individual('MIRROR')`).
+  Object ▸ Mirror ▸ Interactive Mirror is a real row now. Held to Blender:
+  objects (Global, Local plane, Individual Origins) and Edit Mode vertices,
+  the world matrices and positions equal Blender's.
+- **Page Up and Page Down during G, R and S** (PROPORTIONAL_SIZE_UP and
+  _DOWN): the proportional reach times or over 1.1, 1.01 with Shift; the wheel
+  and a trackpad's scroll by 1 + 0.005 a pixel (PROPORTIONAL_SIZE); at most
+  the clip end in perspective. Blender's circle is drawn about the pivot
+  (`drawPropCircle`: 3 px darkened, 1 px lightened), and the new size becomes
+  the scene's, confirmed or cancelled, as `saveTransform` keeps it. In the
+  app: 1.0 → 1.1 → 1.21 → 1.1 → (Shift) 1.111, committed as
+  `proportional_size=1.11100`, the scene's then 1.111.
+- **Shift+B, Zoom Region** (`view3d.zoom_border`, view3d_navigate_zoom_border.cc):
+  the next drag draws the box; Escape, a right-click or a click without a box
+  cancels. The box is made the view's shape; the nearest surface inside it
+  (the depth Blender reads; here its nearest vertex and a 3 × 3 grid of rays)
+  becomes the view's centre; in perspective the distance makes the view's
+  longer half span the box's half-diagonal (Blender's lens over its sensor
+  with the viewport's zoom of 2), and nothing under the box is Blender's
+  "Depth too large"; in orthographic the distance scales by the box's share.
+- **Roll** (`view3d.view_roll`): Shift+Numpad 4 and 6, and Shift with 4 and
+  6 on the number row (told by the key's code, as the numpad is). The
+  camera has a roll now (`ViewportCamera.roll`); an axis view puts it back to
+  0, orbiting keeps it, and looking through a rolled camera keeps its roll. Measured in
+  5.2.1 from Front: Roll Right took world X to the screen's (0.966, -0.259).
+- **Align View to Active** (`view3d.view_axis` with align_active):
+  Shift+Numpad 1, 3, 7, Ctrl for the other side, and the number row outside
+  Edit Mode (where Shift with 1, 2, 3 is Blender's extra select modes).
+  Blender's matrix where it runs (`_blenderkit_orient.active_axes`: the
+  active element's normal and tangent in Edit Mode, else the object's axes).
+  Measured in 5.2.1 on an object turned (0.3, 0.2, 0.7): Front has its X
+  right, its Z up and its -Y toward the eye, Top its X, Y, Z, Right its Y, Z,
+  X — the app's views equal them.
+- **Accelerator letters** (`menu_block_set_keyaccels`): every pop-up menu and
+  pie has Blender's underlined letters, a press choosing the row — but Add
+  and Add ▸ Mesh, which search as letters are typed in Blender
+  (SEARCH_ON_KEY_PRESS), and the toolbar. The key that opened a menu has to
+  be let go before its own letter counts, as Blender answers a press, not a
+  repeat. With real keys on this Mac: K then L keyed Location, Ctrl+G then A
+  made Group, W in the Shading pie chose Wireframe.
+- Test All Features has Interactive Mirror, Zoom Region, Roll and Align,
+  K ▸ Location and Ctrl+G ▸ Assign to New Group, all Smooth or OK on this
+  Mac. New suites: run-keymenus-blender-check.sh (21 checks in desktop
+  Blender), run-view-tests.sh (21), and the pie and modal suites' new parts.
+- **Not done:** Rip (V, Alt+V, Alt+D: invoke-only, toward the pointer),
+  Shift+1/2/3 (the app has one select mode at a time), Shift+` Walk and Fly,
+  the Add menu's search as letters are typed, Zoom Region's zoom out (a
+  middle-button box), Mesh ▸ Mirror's axis rows in Edit Mode (Ctrl+M is
+  there), and the Mode pie's paint and sculpt modes (the app offers Object
+  and Edit Mode).
+
 ## November 7, later: Blender's pies, its numpad, and the keys still missing
 
 The user: "pls continue improve the blender local to match ui and easy same

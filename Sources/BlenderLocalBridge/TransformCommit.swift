@@ -32,6 +32,11 @@ public struct GizmoCommit: Equatable, Sendable {
         case rotate(angle: Float, axis: Int)
         /// Factors along the orientation's axes.
         case resize(values: SIMD3<Float>, constraint: String)
+        /// Ctrl+M's Interactive Mirror: `transform.mirror` along the axes
+        /// `constraint` holds, in the orientation (its panel: Orientation and
+        /// Constraint Axis, 5.2.1's RNA; no value, no proportional editing,
+        /// no Mirror Editing).
+        case mirror(constraint: [Bool])
     }
 
     public var kind: Kind
@@ -94,6 +99,7 @@ public struct GizmoCommit: Equatable, Sendable {
         case .translate: return UndoStep.move
         case .rotate:    return UndoStep.rotate
         case .resize:    return UndoStep.resize
+        case .mirror:    return UndoStep.mirror
         }
     }
 }
@@ -129,6 +135,8 @@ public extension LastOperator {
             for i in rows.indices { rows[i].keepsZeros = true }
             parameters += rows
             fixed.append("constraint_axis=" + constraint)
+        case .mirror:
+            break
         }
         if let orientation = c.orientation {
             // Each choice carries what Blender needs to use it as the app
@@ -149,6 +157,8 @@ public extension LastOperator {
             // Blender's own panel works it out then.
             var scaling = false
             if case .resize = c.kind { scaling = true }
+            // A mirror is a scale by -1, Local each object's own axes.
+            if case .mirror = c.kind { scaling = true }
             let options = TransformOrientation.allCases.map { o -> Parameter.Option in
                 if o != orientation, o == .normal, c.editing {
                     return Parameter.Option(OrientationBpy.orientTypeWorkedOut(o), o.label)
@@ -166,6 +176,12 @@ public extension LastOperator {
                                         softMax: Double(TransformOrientation.allCases.count - 1), step: 0.02))
         } else {
             fixed.append("orient_matrix=" + OrientationBpy.literal(c.axes))
+        }
+        if case .mirror(let axes) = c.kind {
+            // Blender's panel: Orientation, then Constraint Axis's three
+            // switches. The pivot goes as for a scale (`center_override`).
+            parameters += Parameter.toggles("constraint_axis", "Constraint Axis", axes)
+            return mirrorOperator(c, parameters: parameters, fixed: fixed)
         }
         if c.editing {
             parameters.append(Parameter(key: "mirror", label: "Mirror Editing", kind: .literal(onOff),
@@ -213,6 +229,7 @@ public extension LastOperator {
             case .translate: call = "bpy.ops.transform.translate"
             case .rotate:    call = "bpy.ops.transform.rotate"
             case .resize:    call = "bpy.ops.transform.resize"
+            case .mirror:    call = "bpy.ops.transform.mirror"
             }
         }
         var moving = false
@@ -221,6 +238,34 @@ public extension LastOperator {
         // (measured in 5.2.1), and every pivot moves a selection the same.
         if !c.individualOrigins, !moving, let centre = c.centre {
             fixed.append(String(format: "center_override=(%.4f, %.4f, %.4f)", centre.x, centre.y, centre.z))
+        }
+        var op = LastOperator(name: c.name, call: call, parameters: parameters,
+                              restoration: .throughBlenderUndo, needsEditMode: c.editing)
+        op.fixedArguments = fixed
+        op.leadingArguments = leading
+        op.lead = lead
+        op.afterward = c.afterward
+        return op
+    }
+
+    /// Interactive Mirror's commit: `transform.mirror` about the pivot, or
+    /// one call per object about its own origin with Individual Origins
+    /// (`_blenderkit_tools.transform_individual('MIRROR', …)`), as a scale's
+    /// commit goes.
+    private static func mirrorOperator(_ c: GizmoCommit, parameters: [Parameter], fixed: [String]) -> LastOperator {
+        var fixed = fixed
+        let call: String
+        var lead: String?
+        var leading: [String] = []
+        if c.individualOrigins {
+            call = "_blenderkit_tools.transform_individual"
+            lead = "import _blenderkit_tools"
+            leading = ["'MIRROR'"]
+        } else {
+            call = "bpy.ops.transform.mirror"
+            if let centre = c.centre {
+                fixed.append(String(format: "center_override=(%.4f, %.4f, %.4f)", centre.x, centre.y, centre.z))
+            }
         }
         var op = LastOperator(name: c.name, call: call, parameters: parameters,
                               restoration: .throughBlenderUndo, needsEditMode: c.editing)

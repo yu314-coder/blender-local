@@ -1958,6 +1958,40 @@ struct LayoutWorkspace: View {
         return false
     }
 
+    /// Shift+Numpad 1, 3 and 7: Align View to Active. Blender's matrix where
+    /// it runs (`_blenderkit_orient.active_axes`: the active element's normal
+    /// in Edit Mode, after the taps since are handed over), the active
+    /// object's axes on the simulator's stand-in.
+    private func alignView(_ viewpoint: ViewportCamera.Viewpoint) {
+        var axes: simd_float3x3?
+        if session.usesRealBlender {
+            axes = bridge?.captureWithSelection(OrientationBpy.activeAxes).flatMap(OrientationBpy.parseAxes)
+        } else if let obj = scene.active {
+            axes = OrientationBpy.localAxes(obj.modelMatrix)
+        }
+        guard let axes else { return }
+        camera.align(viewpoint, to: axes)
+    }
+
+    /// A mesh operator from a key or a menu row, with `settings` (a
+    /// parameter's key to its value) where the key starts it elsewhere than
+    /// the row does: Shift+Ctrl+T's Triangulate Faces at Fixed and Clip.
+    private func runMesh(_ op: LastOperator.Mesh, _ settings: [String: Double]) {
+        if editingPoints {
+            // Bevel, Inset and the rest are the mesh's; the Curve or
+            // Lattice menu has what a curve or a lattice has.
+            bridge?.showReport(op.displayName, "\(op.displayName) works on meshes. The "
+                               + (activeIsLattice ? "Lattice" : "Curve") + " menu has the "
+                               + (activeIsLattice ? "lattice's" : "curve's") + " tools.")
+            return
+        }
+        guard !refusedInSculptMode(op.displayName) else { return }
+        var made = LastOperator.mesh(op, spinningAround: scene.active?.location,
+                                     symmetry: scene.active?.symmetry, pointer: meshPointer)
+        for (key, value) in settings { made[key] = value }
+        bridge?.perform(made)
+    }
+
     // MARK: keyboard
 
     /// Everything the 3D View's keys can do, published while it is on screen.
@@ -2001,20 +2035,8 @@ struct LayoutWorkspace: View {
             selectRow: { select($0) },
             toggleEditing: toggleEditing,
             setSelectMode: setSelectMode,
-            mesh: {
-                if editingPoints {
-                    // Bevel, Inset and the rest are the mesh's; the Curve or
-                    // Lattice menu has what a curve or a lattice has.
-                    bridge?.showReport($0.displayName, "\($0.displayName) works on meshes. The "
-                                       + (activeIsLattice ? "Lattice" : "Curve") + " menu has the "
-                                       + (activeIsLattice ? "lattice's" : "curve's") + " tools.")
-                    return
-                }
-                if !refusedInSculptMode($0.displayName) {
-                    bridge?.perform(LastOperator.mesh($0, spinningAround: scene.active?.location,
-                                                      symmetry: scene.active?.symmetry, pointer: meshPointer))
-                }
-            },
+            mesh: { runMesh($0, [:]) },
+            meshWith: { runMesh($0, $1) },
             // Blender adds at the 3D cursor and leaves the view where it is.
             // This used to re-frame the whole scene after every add.
             // While a mesh is edited (Shift+A there), into the mesh.
@@ -2121,7 +2143,19 @@ struct LayoutWorkspace: View {
                 lookThroughCamera(active)
             } : nil,
             tool: tool,
-            uv: { op in bridge?.run(Bpy.uv(op), undo: op.label) })
+            uv: { op in bridge?.run(Bpy.uv(op), undo: op.label) },
+            vertexGroups: {
+                guard let obj = scene.active, let groups = obj.meshGroups else { return nil }
+                return (obj.name, groups)
+            },
+            sendGroups: { command in _ = bridge?.run(command.call, undo: command.undo, executing: command.executed) },
+            keyingSets: session.usesRealBlender ? {
+                BpyAnimation.parseKeyingSetRows(bridge?.capture(BpyAnimation.keyingSetRows) ?? "")
+            } : nil,
+            insertKeyingSet: { identifier in _ = bridge?.run(BpyAnimation.insertKeyingSet(identifier)) },
+            zoomRegion: { MetalViewportView.Coordinator.forTransform?.beginZoomRegion() },
+            rollView: { angle in camera.roll(by: angle) },
+            alignView: { viewpoint in alignView(viewpoint) })
     }
 
     #if DEBUG
@@ -2193,6 +2227,12 @@ struct LayoutWorkspace: View {
             case "edit": toggleEditing()
             default: said = "no such action"
             }
+        case "zoombox":
+            // Shift+B's box, `x,y,w,h` in the 3D View's points, let go.
+            let n = rest.split(separator: ",").compactMap { Double($0) }
+            guard n.count == 4, let c = MetalViewportView.Coordinator.forTransform else { said = "no box"; break }
+            c.endZoomRegion(CGRect(x: n[0], y: n[1], width: n[2], height: n[3]))
+            said = "zoomed"
         case "wait":
             try? await Task.sleep(nanoseconds: UInt64((Double(rest) ?? 1) * 1_000_000_000))
         case "py":
@@ -2208,8 +2248,10 @@ struct LayoutWorkspace: View {
               + "; shading \(shading.label), pivot \(scene.tools.pivot.label), falloff \(scene.tools.falloff.label), "
               + "connected \(scene.tools.connected), origins \(scene.tools.affectOnlyOrigins), tool \(tool.label), "
               + "overlays \(options.showOverlays), select mode \(scene.selectMode), "
-              + String(format: "view az %.1f el %.1f dist %.2f%@", camera.azimuth * 180 / .pi,
-                       camera.elevation * 180 / .pi, camera.distance, camera.isOrthographic ? " ortho" : ""))
+              + String(format: "view az %.1f el %.1f roll %.1f dist %.3f target (%.3f, %.3f, %.3f)%@",
+                       camera.azimuth * 180 / .pi, camera.elevation * 180 / .pi, camera.roll * 180 / .pi,
+                       camera.distance, camera.target.x, camera.target.y, camera.target.z,
+                       camera.isOrthographic ? " ortho" : ""))
         if let popupMenu, popupMenu.pie {
             print("[bk] pie anchor \(popupMenu.anchor.x - viewportOrigin.x),\(popupMenu.anchor.y - viewportOrigin.y) "
                   + "key \(popupMenu.openedByKey ?? "none")")
@@ -2234,8 +2276,9 @@ struct LayoutWorkspace: View {
             ?? CGPoint(x: viewportSize.width / 2, y: viewportSize.height / 2)
         let anchor = CGPoint(x: viewportOrigin.x + local.x, y: viewportOrigin.y + local.y)
         guard var model = ViewportMenu.model(menu, viewportKeys, at: anchor) else { return }
-        // A pie opened by a key waits to see it let go (PieKeys).
-        if model.pie { model.openedByKey = PieKeys.pressing }
+        // A pie opened by a key waits to see it let go (PieKeys), and a menu's
+        // accelerators wait for it before taking its letter.
+        model.openedByKey = PieKeys.pressing
         popupMenu = model
         #if DEBUG
         if ProcessInfo.processInfo.arguments.contains("-menu-dump") {
@@ -3153,7 +3196,7 @@ struct LayoutWorkspace: View {
                           active: scene.activeID, edit: [edit.vertices, edit.edges, edit.faces],
                           overlays: options.measure, global: !measureLocal,
                           view: [camera.target.x, camera.target.y, camera.target.z, camera.distance,
-                                 camera.azimuth, camera.elevation, camera.fovY, camera.isOrthographic ? 1 : 0,
+                                 camera.azimuth, camera.elevation, camera.roll, camera.fovY, camera.isOrthographic ? 1 : 0,
                                  Float(viewportSize.width), Float(viewportSize.height)])
     }
 
@@ -5178,6 +5221,12 @@ private struct ViewportInfoRow: View {
 
     /// While G, R or S runs: Blender's modal map, a finger's gestures first.
     func modalHints(_ shown: ModalTransformState.Shown) -> [Hint] {
+        // Ctrl+M: nothing follows the pointer and nothing is typed
+        // (`applyMirror`'s "Select a mirror axis").
+        if shown.mode == .mirror {
+            return [Hint(gesture: "X Y Z", action: "Axis"), Hint(gesture: "Shift X Y Z", action: "Plane"),
+                    Hint(gesture: "Tap", action: "Confirm"), Hint(gesture: "Esc", action: "Cancel")]
+        }
         var hints = [Hint(gesture: "Drag", action: shown.mode.label),
                      Hint(gesture: "Tap", action: "Confirm"),
                      Hint(gesture: "Esc", action: "Cancel")]
@@ -5197,6 +5246,8 @@ private struct ViewportInfoRow: View {
         default: break
         }
         hints += [Hint(gesture: "0–9", action: "Value"), Hint(gesture: "Shift", action: "Precision")]
+        // PROPORTIONAL_SIZE_UP and _DOWN, with proportional editing on.
+        if shown.proportional { hints.append(Hint(gesture: "Page Up/Down", action: "Proportional Size")) }
         if shown.mode.takesConstraint || shown.mode == .trackball {
             hints.append(Hint(gesture: "Ctrl", action: "Snap Invert"))
         }

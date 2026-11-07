@@ -531,10 +531,19 @@ struct TransformGizmo {
     /// `wireframe`: the viewport is in Wireframe shading, where Blender's
     /// factory settings have X-Ray on (`show_xray_wireframe`, measured True in
     /// 5.2.1 with `xray_alpha_wireframe` 0.0), and this app draws every edge.
+    ///
+    /// `proportionalSize`: the reach Page Up and Page Down have given G, R or
+    /// S as it runs, in place of the scene's (ModalTransform.swift).
+    ///
+    /// `mirroring`: Ctrl+M's Interactive Mirror, whose operator takes no
+    /// proportional editing and no Mirror Editing (`transform.mirror`'s RNA,
+    /// 5.2.1: its properties are the orientation, the constraint and the
+    /// centre), so the preview leaves out both, as Blender's does.
     static func beginSession(handle: Handle, at point: CGPoint, gizmo: TransformGizmo,
                              scene: BKScene, camera: ViewportCamera, size: CGSize,
                              options: ViewportOptions = ViewportOptions(),
-                             wireframe: Bool = false) -> Session {
+                             wireframe: Bool = false, mirroring: Bool = false,
+                             proportionalSize: Float? = nil) -> Session {
         let targets = scene.objects.filter { scene.selection.contains($0.id) && $0.visible }
         // Blender's own tool settings, mirrored onto the scene — not a copy
         // kept in the interface. Captured now so a menu touched mid-drag
@@ -543,8 +552,9 @@ struct TransformGizmo {
         let editing = scene.mode == .edit
         // The size as the commit prints it (five places), for the reason
         // `committed` gives.
-        let proportional = tools.isProportional(editing: editing)
-            ? ProportionalEdit(falloff: tools.falloff, size: (tools.size * 100_000).rounded() / 100_000,
+        let proportional = !mirroring && tools.isProportional(editing: editing)
+            ? ProportionalEdit(falloff: tools.falloff,
+                               size: ((proportionalSize ?? tools.size) * 100_000).rounded() / 100_000,
                                connected: tools.connected)
             : nil
 
@@ -580,7 +590,7 @@ struct TransformGizmo {
             let blender = known.flatMap { $0.blenderPositions.count == positions.count ? $0.blenderPositions : nil }
             let symmetry = SymmetricEdit(positions: blender ?? positions, shown: blender == nil ? nil : positions,
                                          selected: selected, hidden: hidden,
-                                         symmetry: obj.symmetry, proportional: proportional != nil,
+                                         symmetry: mirroring ? MeshSymmetry() : obj.symmetry, proportional: proportional != nil,
                                          edges: edges)
             edit = EditDrag(object: obj, mesh: cage, vertices: selected, model: model,
                             factors: TransformOperation.vertexFactors(
@@ -1050,7 +1060,7 @@ struct TransformGizmo {
             let axis = [commit.axes.columns.0, commit.axes.columns.1, commit.axes.columns.2][index]
             return TransformOperation(kind: .rotate(axis: axis, angle: angle), pivot: pivot,
                                       proportional: session.proportional)
-        case .resize:
+        case .resize, .mirror:
             let values = LastOperator.committedValues(op) ?? SIMD3(repeating: 1)
             let orientation: TransformOperation.Orientation
             switch commit.orientation {
@@ -1237,6 +1247,27 @@ struct TransformGizmo {
     /// release performs (`commitOperator`).
     static func python(_ result: Result, session: Session) -> String {
         commitOperator(result, session: session).python
+    }
+
+    /// Ctrl+M's commit: the flip the preview showed as a scale by -1
+    /// (`ModalTransformInput.mirrorFactors`), sent as Blender's own
+    /// `transform.mirror` with those axes held, in the session's orientation
+    /// and about its pivot, as the Mirror the redo panel adjusts.
+    static func mirrorOperator(_ factors: SIMD3<Float>, session: Session, afterward: String? = nil) -> LastOperator {
+        var commit = gizmoCommit(.scale(factors), session: session, afterward: afterward)
+        commit.kind = .mirror(constraint: (0..<3).map { factors[$0] < 0 })
+        commit.proportional = nil
+        commit.mirror = false
+        return .gizmo(commit)
+    }
+
+    /// The release of Ctrl+M: as `commit`, with Blender's Mirror.
+    @discardableResult
+    static func commitMirror(_ factors: SIMD3<Float>, session: Session, bridge: BpyBridge) -> BpyBridge.Outcome? {
+        guard session.points == nil else { return nil }
+        rollBack(session)
+        let bare = mirrorOperator(factors, session: session)
+        return bridge.perform(mirrorOperator(factors, session: session, afterward: bridge.autoKeying(after: bare.python)))
     }
 
     /// The release: the preview rolled back, and the drag performed through

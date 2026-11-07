@@ -264,6 +264,34 @@ def remove_from(name, group):
               "Blender did not remove the selection from " + group + ".")
 
 
+def assign_new(name, weight):
+    """Ctrl+G ▸ Assign to New Group (`object.vertex_group_assign_new`): a new
+    group (Group, Group.001, ...), made active, holding the selected vertices
+    at the Weight. Measured in 5.2.1: with nothing selected Blender still
+    makes the group, empty, and so does this."""
+    obj = _object(name, modes=('EDIT',), active=True)
+    bpy.context.scene.tool_settings.vertex_group_weight = max(0.0, min(1.0, float(weight)))
+    _finished(bpy.ops.object.vertex_group_assign_new(), "Blender did not make a new vertex group.")
+
+
+def remove_from_all(name):
+    """Ctrl+G ▸ Remove from All (`vertex_group_remove_from(use_all_groups=True)`):
+    the selected vertices out of every group. Measured in 5.2.1: CANCELLED
+    when none of them is in a group, or nothing is selected; a locked group
+    other than the active one is emptied too, and a locked active group
+    fails the poll ("The active vertex group is locked")."""
+    obj = _object(name, modes=('EDIT',), active=True)
+    if not len(obj.vertex_groups):
+        raise Refusal(obj.name + " has no vertex groups.")
+    active = obj.vertex_groups.active
+    if active is not None and active.lock_weight:
+        raise Refusal(active.name + " is locked: unlock it to change its weights.")
+    if not obj.data.total_vert_sel:
+        raise Refusal("Nothing is selected to remove from the vertex groups.")
+    _finished(bpy.ops.object.vertex_group_remove_from(use_all_groups=True),
+              "None of the selected vertices is in a vertex group.")
+
+
 def select_group(name, group, select=True):
     _editing(name, group)
     if select:

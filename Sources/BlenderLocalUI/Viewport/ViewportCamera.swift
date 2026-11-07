@@ -13,6 +13,12 @@ public struct ViewportCamera {
     /// Angle above the XY plane, radians. Clamped just short of the poles so
     /// the up vector never degenerates.
     public var elevation: Float = .pi / 6.4
+    /// A turn about the view's own axis, radians (`view3d.view_roll`): the
+    /// view's right and up turned counter-clockwise on screen by it, so the
+    /// scene turns clockwise — Blender's Roll Right adds 15°, Shift+Numpad 6
+    /// (measured in 5.2.1 from Front: world X went to screen (0.966, -0.259)).
+    /// An axis view (Numpad 1, 3, 7) puts it back to 0; orbiting keeps it.
+    public var roll: Float = 0
 
     /// Blender's default 50 mm lens on a 36 mm sensor: 2·atan(18/50) ≈ 39.6°.
     public var fovY: Float = 2 * atan(18.0 / 50.0)
@@ -97,6 +103,7 @@ public struct ViewportCamera {
         case .right:  azimuth = .pi / 2;   elevation = 0
         case .left:   azimuth = -.pi / 2;  elevation = 0
         }
+        roll = 0
         isOrthographic = true
     }
 
@@ -110,11 +117,43 @@ public struct ViewportCamera {
     /// the azimuth's own horizontal, and up is what is left of the view once
     /// right and the view direction are taken out.
     public var right: SIMD3<Float> {
-        SIMD3(cos(azimuth), sin(azimuth), 0)
+        let r = uprightRight
+        guard roll != 0 else { return r }
+        return r * cos(roll) + uprightUp * sin(roll)
     }
     public var trueUp: SIMD3<Float> {
+        let u = uprightUp
+        guard roll != 0 else { return u }
+        return u * cos(roll) - uprightRight * sin(roll)
+    }
+
+    /// Right and up before the roll: the turntable's own.
+    var uprightRight: SIMD3<Float> { SIMD3(cos(azimuth), sin(azimuth), 0) }
+    var uprightUp: SIMD3<Float> {
         let ce = cos(elevation), se = sin(elevation)
         return SIMD3(-se * sin(azimuth), se * cos(azimuth), ce)
+    }
+
+    /// The view turned to `right`, `up` and `back` (world axes, `back`
+    /// toward the eye), about the same centre at the same distance: the
+    /// angles that give `back`, and the roll that turns the turntable's right
+    /// onto `right`. Straight up or down the azimuth takes the roll's place.
+    public mutating func orient(right: SIMD3<Float>, back: SIMD3<Float>) {
+        let b = simd_normalize(back)
+        guard b.x.isFinite else { return }
+        elevation = asin(min(max(b.z, -1), 1))
+        if abs(b.z) > 1 - 1e-6 {
+            elevation = b.z > 0 ? .pi / 2 : -.pi / 2
+            // At the pole the turntable's right is (cos a, sin a, 0): any
+            // right in the ground plane is one.
+            azimuth = atan2(right.y, right.x)
+            roll = 0
+            return
+        }
+        azimuth = atan2(b.x, -b.y)
+        let r0 = uprightRight, u0 = uprightUp
+        roll = atan2(simd_dot(right, u0), simd_dot(right, r0))
+        if abs(roll) < 1e-6 { roll = 0 }
     }
 
     // MARK: navigation
@@ -262,6 +301,32 @@ public struct ViewportCamera {
 }
 
 public extension ViewportCamera {
+    /// Shift+Numpad 1, 3 and 7 (Ctrl for the other side): the axis view
+    /// turned with the active element — `view3d.view_axis(align_active=True)`,
+    /// whose view is the axis view's times the inverse of the active's
+    /// orientation (`axis_set_view`; measured in 5.2.1: Front aligned to an
+    /// object turned (0.3, 0.2, 0.7) has its X for right, its Z for up and its
+    /// -Y toward the eye). `axes`: the active's world axes, as columns. The
+    /// centre and the distance stay; so does the projection, which Blender
+    /// takes from its last axis view.
+    mutating func align(_ viewpoint: Viewpoint, to axes: simd_float3x3) {
+        var axis = ViewportCamera()
+        axis.snap(to: viewpoint)
+        orient(right: axes * axis.right, back: axes * simd_normalize(axis.eye - axis.target))
+    }
+
+    /// Shift+Numpad 4 and 6: Roll Left and Roll Right by `angle` (Blender's
+    /// 15°, Preferences ▸ Navigation ▸ Rotation Angle), the scene turning
+    /// counter-clockwise and clockwise.
+    mutating func roll(by angle: Float) {
+        var r = roll + angle
+        r = r.truncatingRemainder(dividingBy: 2 * .pi)
+        if r > .pi { r -= 2 * .pi } else if r <= -.pi { r += 2 * .pi }
+        roll = abs(r) < 1e-6 ? 0 : r
+    }
+}
+
+public extension ViewportCamera {
     /// The rotation Blender gives an object it aligns to this view: its X, Y
     /// and Z are the view's right, up and back, so the object looks the way
     /// the view looks (`ED_object_rotation_from_view`).
@@ -278,6 +343,7 @@ public extension ViewportCamera {
     /// viewport having to report every drag.
     func stillAt(_ other: ViewportCamera) -> Bool {
         abs(azimuth - other.azimuth) < 1e-5 && abs(elevation - other.elevation) < 1e-5
+            && abs(roll - other.roll) < 1e-5
             && abs(distance - other.distance) < 1e-4 && abs(fovY - other.fovY) < 1e-5
             && simd_distance(target, other.target) < 1e-4
             && isOrthographic == other.isOrthographic
@@ -304,8 +370,10 @@ public extension ViewportCamera {
         let m = object.modelMatrix
         let back = simd_normalize(SIMD3(m.columns.2.x, m.columns.2.y, m.columns.2.z))
         guard back.x.isFinite, simd_length(back) > 0.5 else { return false }
-        elevation = asin(min(max(back.z, -1), 1))
-        azimuth = atan2(back.x, -back.y)
+        // Its rolled cameras too: the view takes the camera's X for its right.
+        let x = SIMD3(m.columns.0.x, m.columns.0.y, m.columns.0.z)
+        roll = 0
+        orient(right: simd_length(x) > 1e-6 ? simd_normalize(x) : uprightRight, back: back)
         fovY = min(max(display.verticalAngle, 0.02), 3.0)
         isOrthographic = display.projection == .orthographic
         if isOrthographic {

@@ -550,10 +550,13 @@ def transform_individual(kind, **arguments):
     strength and each neighbour in reach turns in place by its own share. That
     is what this does, and it measured 1.5 and 1.099; a turn goes the same way.
     """
+    # MIRROR is Ctrl+M's Interactive Mirror: each object flipped about its
+    # own origin, which has no proportional editing to pass along.
     operator = {'ROTATE': bpy.ops.transform.rotate,
-                'RESIZE': bpy.ops.transform.resize}.get(kind)
+                'RESIZE': bpy.ops.transform.resize,
+                'MIRROR': bpy.ops.transform.mirror}.get(kind)
     if operator is None:
-        raise ValueError("transform_individual takes 'ROTATE' or 'RESIZE', not %r" % (kind,))
+        raise ValueError("transform_individual takes 'ROTATE', 'RESIZE' or 'MIRROR', not %r" % (kind,))
     proportional = {key: arguments.pop(key) for key in _PROPORTIONAL_KEYS if key in arguments}
     objects = _selected_editable()
     if not objects:

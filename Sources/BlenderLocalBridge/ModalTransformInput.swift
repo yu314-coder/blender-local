@@ -35,6 +35,11 @@ public struct ModalTransformInput: Equatable, Sendable {
         /// cannot, a single vertex slides along one of its edges
         /// (TFM_VERT_SLIDE).
         case edgeSlide, vertexSlide
+        /// Ctrl+M, Interactive Mirror (TFM_MIRROR): nothing moves until X, Y
+        /// or Z says along which axis the selection flips about the pivot
+        /// (transform_mode_mirror.cc: no pointer input, INPUT_NONE, and no
+        /// numbers). G, R and S do not change it (`transform_mode_is_changeable`).
+        case mirror
 
         /// Blender's operator names, which its header shows.
         public var label: String {
@@ -45,6 +50,7 @@ public struct ModalTransformInput: Equatable, Sendable {
             case .trackball:   return "Trackball"
             case .edgeSlide:   return "Edge Slide"
             case .vertexSlide: return "Vertex Slide"
+            case .mirror:      return "Mirror"
             }
         }
 
@@ -52,7 +58,7 @@ public struct ModalTransformInput: Equatable, Sendable {
         /// T_NO_CONSTRAINT.
         public var takesConstraint: Bool {
             switch self {
-            case .translate, .rotate, .scale: return true
+            case .translate, .rotate, .scale, .mirror: return true
             case .trackball, .edgeSlide, .vertexSlide: return false
             }
         }
@@ -149,6 +155,7 @@ public struct ModalTransformInput: Equatable, Sendable {
     /// for a plane, three for a move or a scale with no constraint.
     public var valueCount: Int {
         switch mode {
+        case .mirror: return 0
         case .rotate, .edgeSlide, .vertexSlide: return 1
         case .trackball: return 2
         case .translate, .scale: return constraint.freeAxes.count
@@ -159,6 +166,7 @@ public struct ModalTransformInput: Equatable, Sendable {
 
     /// A digit, a point or minus. Anything else is not Blender's number.
     public mutating func type(_ character: Character) {
+        guard valueCount > 0 else { return }
         var texts = typed ?? Array(repeating: "", count: 3)
         var text = texts[component]
         switch character {
@@ -207,6 +215,32 @@ public struct ModalTransformInput: Equatable, Sendable {
             return Array(repeating: first, count: valueCount)
         }
         return read.map { $0 ?? empty }
+    }
+
+    /// Interactive Mirror's flip for its constraint: -1 along the axis it
+    /// holds, along both axes of a plane (Shift with a letter: Blender
+    /// reflects across the third axis and then through the pivot,
+    /// `ElementMirror` with `flip`), nothing with none.
+    public var mirrorFactors: SIMD3<Float> {
+        switch constraint {
+        case .none:              return SIMD3(1, 1, 1)
+        case .axis(let i, _):    var f = SIMD3<Float>(1, 1, 1); f[i] = -1; return f
+        case .plane(let i, _):   var f = SIMD3<Float>(-1, -1, -1); f[i] = 1; return f
+        }
+    }
+
+    /// Interactive Mirror's header (`applyMirror`, transform_mode_mirror.cc;
+    /// the constraint's words from `transform_event_xyz_constraint`):
+    /// "Select a mirror axis (X, Y, Z)" until a letter, then "Mirror along
+    /// global X" or, for a plane, "Mirror locking global X". `space` is the
+    /// orientation's name in lower case, as `t->spacename` is.
+    public func mirrorHeader(space: String) -> String {
+        let names = ["X", "Y", "Z"]
+        switch constraint {
+        case .none:              return "Select a mirror axis (X, Y, Z)"
+        case .axis(let i, _):    return "Mirror along \(space) \(names[i])"
+        case .plane(let i, _):   return "Mirror locking \(space) \(names[i])"
+        }
     }
 
     /// A typed text as a number: "-" alone is minus nothing, ".5" a half.

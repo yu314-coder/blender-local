@@ -50,7 +50,7 @@ final class SculptStrokeInput {
         let camera = SculptCamera(target: camera.target, distance: camera.distance,
                                   azimuth: camera.azimuth, elevation: camera.elevation,
                                   fovY: camera.fovY, orthographic: camera.isOrthographic,
-                                  near: camera.near, far: camera.far)
+                                  near: camera.near, far: camera.far, roll: camera.roll)
         guard bridge.sculptBegin(object: object, camera: camera,
                                  viewWidth: Float(viewSize.width), viewHeight: Float(viewSize.height),
                                  mode: mode, kind: kind) != nil
@@ -620,7 +620,7 @@ extension MetalViewportView.Coordinator {
         print("[bk] vwpaint-stroke camera: " + SculptCamera(target: c.target, distance: c.distance, azimuth: c.azimuth,
                                                           elevation: c.elevation, fovY: c.fovY,
                                                           orthographic: c.isOrthographic,
-                                                          near: c.near, far: c.far).python
+                                                          near: c.near, far: c.far, roll: c.roll).python
               + String(format: " view (%.3f, %.3f)", bounds.width, bounds.height))
         vwPaintReport(object: object, bridge: bridge, label: "before the stroke")
         let drag = ObjectIdentifier(self)

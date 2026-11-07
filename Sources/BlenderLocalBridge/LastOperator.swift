@@ -995,6 +995,9 @@ public extension LastOperator {
         case extrudeIndividual
         case dissolveVerts, dissolveEdges, dissolveFaces
         case mergeAtCenter, bridgeEdgeLoops, gridFill, fillFace
+        // Face ▸ Fill (Alt+F), between Wireframe and Grid Fill in Blender's
+        // Face menu.
+        case fill
         case recalculateNormals, flipNormals
         // Mesh ▸ Shading's first two rows (VIEW3D_MT_edit_mesh_shading):
         // the selected faces drawn smooth or flat, the face-by-face version
@@ -1075,6 +1078,7 @@ public extension LastOperator {
             case .mergeAtCenter:      return "Merge"
             case .bridgeEdgeLoops:    return "Bridge Edge Loops"
             case .gridFill:           return "Grid Fill"
+            case .fill:               return "Fill"
             case .fillFace:           return "Make Edge/Face"
             case .recalculateNormals: return "Recalculate Normals"
             case .flipNormals:        return "Flip Normals"
@@ -1277,7 +1281,7 @@ public extension LastOperator {
                                            .edgeSlide, .offsetEdgeSlide, .bevelWeight, .edgeCrease,
                                            .markSeam, .clearSeam, .markSharp, .clearSharp]
                 case .face:        return [.inset, .poke, .triangulate, .quadify, .solidify, .wireframe,
-                                           .gridFill, .beautifyFaces, .intersectKnife, .intersectBoolean,
+                                           .fill, .gridFill, .beautifyFaces, .intersectKnife, .intersectBoolean,
                                            .weldEdgesIntoFaces]
                 }
             }
@@ -1355,6 +1359,7 @@ public extension LastOperator {
             case .mergeAtCenter:      return "bpy.ops.mesh.merge"
             case .bridgeEdgeLoops:    return "bpy.ops.mesh.bridge_edge_loops"
             case .gridFill:           return "bpy.ops.mesh.fill_grid"
+            case .fill:               return "bpy.ops.mesh.fill"
             case .fillFace:           return "bpy.ops.mesh.edge_face_add"
             case .recalculateNormals: return "bpy.ops.mesh.normals_make_consistent"
             case .flipNormals:        return "bpy.ops.mesh.flip_normals"
@@ -1533,6 +1538,12 @@ public extension LastOperator {
         /// edge selected.
         var refusal: String? {
             switch self {
+            // Measured in 5.2.1: CANCELLED with Blender's "No faces filled"
+            // when the selected edges go round no hole (one edge, or a loop
+            // already filled). With no edge selected it raises "No edges
+            // selected" itself.
+            case .fill:
+                return "Fill found no loop of selected edges to fill: select the edges around a hole"
             case .edgeSlide:
                 return "Edge Slide cannot slide this selection: select an edge, "
                     + "or a loop of edges (Select ▸ Select Loops ▸ Edge Loops)"
@@ -2044,8 +2055,29 @@ public extension LastOperator {
                               value: 0.698, softMin: 0, softMax: 3.142, step: 0.01),
                     Parameter(key: "shape_threshold", label: "Max Shape Angle", kind: .float,
                               value: 0.698, softMin: 0, softMax: 3.142, step: 0.01)]
+            case .fill:
+                // Measured in 5.2.1 on an 8-sided circle, every edge selected:
+                // 6 faces with Beauty, as with it off, the triangles laid
+                // differently.
+                return [Self.toggle("use_beauty", "Beauty", true)]
+            case .triangulate:
+                // Blender's two methods (5.2.1's RNA), Beauty both, as the
+                // Face menu's row and Ctrl+T run it; Shift+Ctrl+T starts at
+                // Fixed and Clip (`blender_default.py`).
+                return [
+                    Parameter(key: "quad_method", label: "Quad Method",
+                              kind: .choice([Parameter.Option("BEAUTY", "Beauty"),
+                                             Parameter.Option("FIXED", "Fixed"),
+                                             Parameter.Option("FIXED_ALTERNATE", "Fixed Alternate"),
+                                             Parameter.Option("SHORTEST_DIAGONAL", "Shortest Diagonal"),
+                                             Parameter.Option("LONGEST_DIAGONAL", "Longest Diagonal")]),
+                              value: 0, softMin: 0, softMax: 4, step: 0.02),
+                    Parameter(key: "ngon_method", label: "N-gon Method",
+                              kind: .choice([Parameter.Option("BEAUTY", "Beauty"),
+                                             Parameter.Option("CLIP", "Clip")]),
+                              value: 0, softMin: 0, softMax: 1, step: 0.02)]
             case .dissolveVerts, .dissolveEdges, .dissolveFaces,
-                 .fillFace, .flipNormals, .triangulate, .shadeSmoothFaces, .shadeFlatFaces:
+                 .fillFace, .flipNormals, .shadeSmoothFaces, .shadeFlatFaces:
                 // Nothing to adjust: they either did the thing or they did not.
                 return []
             case .solidify:

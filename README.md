@@ -68,17 +68,21 @@ screen and says how to use it. It opens by itself the first time.
   orientation. Typed numbers set the exact amount, and Escape or a right-click
   cancels. Holding Ctrl inverts snapping, R pressed again turns the rotation
   into Trackball, and in Edit Mode G pressed again is Edge Slide (Vertex Slide
-  for a lone vertex), with E, F and C for Even, Flipped and Clamp. Object ▸
-  Transform starts the same thing from a menu,
+  for a lone vertex), with E, F and C for Even, Flipped and Clamp. Page Up
+  and Page Down (or the wheel) size the proportional editing circle as it
+  runs. Ctrl+M is Interactive Mirror: X, Y or Z flips the selection about
+  the pivot. Object ▸ Transform starts the same thing from a menu,
   with X, Y, Z, Cancel and Confirm on screen.
 - F12 renders, as in Blender.
 - Blender's pie menus, drawn round the pointer as Blender draws them: Z
   Shading, ` View, Shift+S Snap, Period Pivot Point, Comma Orientation,
   Shift+O Proportional Editing Falloff. Hold the key, point and let go, or
-  press the number key for a place. A keyboard's own numpad works as
-  Blender's does, and Blender's other keys are where Blender has them
-  (Shift+Space Toolbar, Ctrl+= and Ctrl+- Select More and Less, U UV
-  Mapping, and more).
+  press the number key or the underlined letter. Menus have Blender's
+  underlined letters too. A keyboard's own numpad works as Blender's does
+  (Shift with 4 and 6 rolls the view, Shift with 1, 3 and 7 aligns it to the
+  active object), and Blender's other keys are where Blender has them
+  (Shift+B Zoom Region, Shift+Space Toolbar, Ctrl+= and Ctrl+- Select More
+  and Less, K Insert Keyframe with a keying set, U UV Mapping, and more).
 - The Object menu: Duplicate Objects, Duplicate Linked, Join, Parent,
   Convert, Set Origin, Apply, shading, QuadriFlow Remesh, and more.
 - Operator Search, which runs any of Blender's mesh, object, UV, sculpt,
@@ -88,7 +92,8 @@ screen and says how to use it. It opens by itself the first time.
 - Vertex, edge and face selection.
 - Blender's Mesh, Vertex, Edge and Face menus: Extrude, Inset Faces, Bevel,
   Loop Cut, Knife Project, Spin, Bisect, Merge, Dissolve, Bridge Edge Loops,
-  Grid Fill, Normals, and Adjust Last Operation for the last step.
+  Fill (Alt+F), Grid Fill, Triangulate Faces (Ctrl+T, Shift+Ctrl+T), Normals,
+  Ctrl+G's Vertex Groups, and Adjust Last Operation for the last step.
 - X, Y, Z and Topology Mirror editing.
 - Curves' and lattices' control points.
 - Vertex groups and shape keys.

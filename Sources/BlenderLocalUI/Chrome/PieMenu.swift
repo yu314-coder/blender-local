@@ -59,6 +59,16 @@ struct PieMenuOverlay: View {
 
     private var present: Set<PieDirection> { Set(slots.map(\.direction)) }
 
+    /// Each slot's accelerator, by item index: Blender's pies have them too
+    /// (BLOCK_NUMSELECT in interface_region_menu_pie.cc), a letter choosing
+    /// its item at once (`ui_pie_handler`).
+    private var accelerators: [Int: Character] {
+        let keys = MenuAccelerators.keys(slots.map(\.item.title))
+        var out: [Int: Character] = [:]
+        for (slot, key) in zip(slots, keys) { if let key { out[slot.index] = key } }
+        return out
+    }
+
     var body: some View {
         GeometryReader { geo in
             let center = middle(in: geo.size)
@@ -79,7 +89,8 @@ struct PieMenuOverlay: View {
                 }
                 ForEach(slots, id: \.index) { slot in
                     let size = sizes[slot.index] ?? .zero
-                    itemView(slot.item, lit: lit == slot.direction, digit: slot.direction.digit)
+                    itemView(slot.item, lit: lit == slot.direction, digit: slot.direction.digit,
+                             accelerator: accelerators[slot.index])
                         .background(GeometryReader { g in
                             Color.clear
                                 .onAppear { sizes[slot.index] = g.size }
@@ -186,7 +197,7 @@ struct PieMenuOverlay: View {
 
     /// Blender's pie item (`widget_state_pie_menu_item`): the current value
     /// blue, what the pointer points at grey, the text white on either.
-    private func itemView(_ item: PopupItem, lit: Bool, digit: Int) -> some View {
+    private func itemView(_ item: PopupItem, lit: Bool, digit: Int, accelerator: Character?) -> some View {
         let fill: Color = item.checked ? Self.innerSelected
             : lit ? (item.enabled ? Self.item : Self.item.opacity(0.25)) : Self.inner
         let text: Color = !item.enabled ? Self.text.opacity(0.5) : (item.checked || lit ? .white : Self.text)
@@ -196,7 +207,7 @@ struct PieMenuOverlay: View {
             } else if let icon = item.icon {
                 Image(systemName: icon).font(.system(size: 12)).frame(width: 16)
             }
-            Text(item.title).font(BTheme.Font.ui(12.5)).lineLimit(1)
+            PopupItem.titled(item.title, key: accelerator).font(BTheme.Font.ui(12.5)).lineLimit(1)
         }
         .foregroundStyle(text)
         .padding(.leading, 10)
@@ -285,6 +296,15 @@ struct PieMenuOverlay: View {
             .keyboardShortcut(.return, modifiers: [])
             ForEach([1, 2, 3, 4, 6, 7, 8, 9], id: \.self) { n in
                 Button("") { digit(n) }.keyboardShortcut(KeyEquivalent(Character("\(n)")), modifiers: [])
+            }
+            // The items' letters; not the held key's own while it is down,
+            // whose repeats are no press.
+            let held = clickStyle ? nil : model.openerLetter
+            ForEach(accelerators.sorted(by: { $0.key < $1.key }).filter { $0.value != held }, id: \.key) { index, letter in
+                Button("") {
+                    if let slot = slots.first(where: { $0.index == index }) { choose(slot.item) }
+                }
+                .keyboardShortcut(KeyEquivalent(letter), modifiers: [])
             }
         }
         .opacity(0)
