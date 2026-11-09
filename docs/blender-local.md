@@ -1,5 +1,22 @@
 # Blender Local — the app
 
+## November 9 (build 60): Draw Mode is always in the mode menu
+
+The user on build 59: "the mode is not avaliable to select". Two causes: the
+mode menu listed Draw Mode only while a Grease Pencil object was active
+(Blender's rule, so with the starting scene's mesh selected it was nowhere to
+be found), and the whole menu was `.disabled(scene.active == nil)`, which a tap
+on empty space leaves. Now the menu always opens, and Draw Mode is always
+listed (also in Ctrl+Tab's menu): with a Grease Pencil active it enters Draw
+Mode; with anything else, or nothing, it adds a Blank Grease Pencil at the 3D
+cursor (Add Grease Pencil, its own undo step) and enters Draw Mode on it, as
+Blender's 2D Animation file starts. Strokes land on the View drawing plane, so
+the new object takes them from any angle (`LayoutWorkspace.drawMode()`).
+Checked in the app with the real bpy through DEBUG `-menu-ops "do:draw"`
+(tokens split on `;`): from the Ball mesh active and from nothing active,
+Blender ends in `PAINT_GREASE_PENCIL` on a new `GREASEPENCIL` object, and with
+nothing active the menu draws enabled. Build 60 is in TestFlight.
+
 ## November 9: Grease Pencil — Add, the 3D View, Draw Mode, onion skins
 
 The user: "continue improve the blender local for animation…", then "might
@@ -40,7 +57,8 @@ default read from desktop 5.2.1 headless.
   blends over itself where its segments overlap. A selected object has
   Blender's outline in Object Mode; a tap on a stroke or a fill selects it.
 - **Draw Mode** (`PAINT_GREASE_PENCIL`, "Draw Mode" in the mode menu and
-  Ctrl+Tab for a Grease Pencil object; "Strokes Paint Mode Toggle" both ways,
+  Ctrl+Tab -- for a Grease Pencil object in build 59, for any object since
+  build 60 (above); "Strokes Paint Mode Toggle" both ways,
   measured). Its toolbar is Blender's: Cursor, **Brush** (`builtin.brush`,
   labelled Brush in 5.2.1, not Draw) and **Erase**. Blender's own draw
   operator cannot run here: `grease_pencil.brush_stroke` has no exec

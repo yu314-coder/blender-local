@@ -117,8 +117,9 @@ Remesh, Multiresolution, masks, face sets and symmetry.
 (Brush, Blur, Average, Smear), the active vertex group or colour attribute
 drawn as Blender holds it, and each stroke one undo step.
 
-**Draw Mode** (Grease Pencil): Add ▸ Grease Pencil (Blank, Stroke, Monkey), then
-draw with a finger or Apple Pencil, with pressure, the Essentials draw brushes
+**Draw Mode** (Grease Pencil): pick Draw Mode in the mode menu (with no Grease
+Pencil active it adds a Blank one), or Add ▸ Grease Pencil (Blank, Stroke,
+Monkey); then draw with a finger or Apple Pencil, with pressure, the Essentials draw brushes
 and Erase (Dissolve, Point, Stroke). Layers, materials, Additive Drawing,
 keyframes per layer and Onion Skinning make it a 2D animation tool; the 3D
 Viewport draws strokes and fills as Blender does.
