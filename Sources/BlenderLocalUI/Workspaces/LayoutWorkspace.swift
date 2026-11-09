@@ -2260,6 +2260,8 @@ struct LayoutWorkspace: View {
             case "face": setSelectMode(.face)
             case "sidebar": showsSidebar.toggle()
             case "edit": toggleEditing()
+            // The mode menu's Draw Mode, as a tap on it runs it (`drawMode`).
+            case "draw": enterMode(.drawGreasePencil)
             default: said = "no such action"
             }
         case "zoombox":
@@ -2337,11 +2339,11 @@ struct LayoutWorkspace: View {
 
     /// The modes the mode menu offers the active object, in its order.
     private var availableModes: [InteractionMode] {
-        guard scene.active != nil else { return [] }
         var modes: [InteractionMode] = [.object]
         if canEdit || canEditPoints { modes.append(.edit) }
-        // A Grease Pencil object's Draw Mode (`PAINT_GREASE_PENCIL`).
-        if scene.active?.isGreasePencil == true, session.usesRealBlender { modes.append(.drawGreasePencil) }
+        // Draw Mode (`PAINT_GREASE_PENCIL`), always: on anything but a
+        // Grease Pencil object it adds one first (`drawMode`).
+        if session.usesRealBlender { modes.append(.drawGreasePencil) }
         if canEdit {
             modes.append(.sculpt)
             if session.usesRealBlender { modes += PaintModeBpy.modes }
@@ -2359,7 +2361,7 @@ struct LayoutWorkspace: View {
         case .sculpt:       choose(.sculptDraw)
         case .texturePaint: choose(.paintDraw)
         case .vertexPaint, .weightPaint: enterPaintMode(mode)
-        case .drawGreasePencil: enterDrawMode()
+        case .drawGreasePencil: drawMode()
         }
     }
 
@@ -2771,9 +2773,10 @@ struct LayoutWorkspace: View {
                           systemImage: current == .edit ? "checkmark" : InteractionMode.edit.icon)
                 }
             }
-            // A Grease Pencil object's Draw Mode, Blender's own.
-            if scene.active?.isGreasePencil == true, session.usesRealBlender {
-                Button { if current != .drawGreasePencil { enterDrawMode() } } label: {
+            // Draw Mode, always (`drawMode`): Blender lists it only for a
+            // Grease Pencil object; here it makes one when needed.
+            if session.usesRealBlender {
+                Button { if current != .drawGreasePencil { drawMode() } } label: {
                     Label(InteractionMode.drawGreasePencil.label,
                           systemImage: current == .drawGreasePencil ? "checkmark" : InteractionMode.drawGreasePencil.icon)
                 }
@@ -2804,7 +2807,8 @@ struct LayoutWorkspace: View {
                 }
             }
         } label: { menuLabel(current.label, icon: current.icon, active: current != .object) }
-        .disabled(scene.active == nil)
+        // Never greyed out: with nothing active it was disabled whole, so
+        // after a tap on empty space no mode could be picked (build 59).
     }
 
     /// The mode menu's Object Mode: out of Edit Mode as its Tab does, out of
@@ -2814,6 +2818,27 @@ struct LayoutWorkspace: View {
         if editing { setEditing(false) }
         else if scene.mode == .drawGreasePencil { leaveDrawMode() }
         else if scene.mode != .object { choose(.select) }
+    }
+
+    /// The mode menu's and Ctrl+Tab's Draw Mode. Blender lists Draw Mode
+    /// only while a Grease Pencil object is active, and this menu was disabled
+    /// with nothing active: on the iPad the mode was nowhere to pick (the user,
+    /// November 9, on build 59: "the mode is not avaliable to select"). So it
+    /// is always offered, and with anything else active — or nothing — a
+    /// Blank Grease Pencil is added at the 3D cursor first (Add ▸ Grease
+    /// Pencil ▸ Blank, its own undo step) and Draw Mode entered on it, as
+    /// Blender's 2D Animation file starts in Draw Mode on a blank object.
+    /// Strokes land on the View drawing plane (5.x's default), so the new
+    /// object can be drawn on from wherever the view is.
+    private func drawMode() {
+        guard let bridge, session.usesRealBlender, scene.mode != .drawGreasePencil else { return }
+        if scene.active?.isGreasePencil != true {
+            if editing { setEditing(false) } else if scene.mode != .object { toObjectMode() }
+            guard scene.mode == .object else { return }
+            let added = bridge.add(.greasePencil(.blank), at: scene.cursor, view: camera)
+            guard added.succeeded, scene.active?.isGreasePencil == true else { return }
+        }
+        enterDrawMode()
     }
 
     /// Blender's Draw Mode for the active Grease Pencil object, as its mode
