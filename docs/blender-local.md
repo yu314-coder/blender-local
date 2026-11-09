@@ -1,5 +1,527 @@
 # Blender Local — the app
 
+## November 9: Grease Pencil — Add, the 3D View, Draw Mode, onion skins
+
+The user: "continue improve the blender local for animation…", then "might
+need draw mode". Blender 5.x's Grease Pencil (GPv3: object type GREASEPENCIL,
+`bpy.types.GreasePencil`, a drawing per keyframe of each layer, its points
+and strokes curve attributes) for 2D drawing and animation, every name and
+default read from desktop 5.2.1 headless.
+
+- **Add ▸ Grease Pencil ▸ Blank, Stroke, Monkey** (`VIEW3D_MT_grease_pencil_add`,
+  between Text and Lattice, Blender's separator after it):
+  `object.grease_pencil_add(type=…)`, "Add Grease Pencil", adjustable (Type,
+  Radius). Measured: Blank is one layer "Layer" with an empty keyframe at 1
+  and the Black material; Stroke the layers Color and Lines and a 175-point
+  stroke; Monkey Fills and Lines, 1,216 points in 28 strokes. All three have
+  Show In Front on. The Line Art rows are left out (their modifier is
+  evaluated on every change of what it draws, which the budget does not
+  price).
+- **The 3D View draws Grease Pencil objects** (GreasePencilGeometry.swift,
+  GreasePencilPass.swift, GreasePencil.metal). The mirror sends each object's
+  evaluated drawing per visible layer at the current frame and its onion skins
+  (`_blenderkit_gpencil.record`: a JSON record and the drawings' buffers,
+  read with `foreach_get`), compared byte for byte with what is on screen, so
+  an unchanged drawing costs one comparison and no GPU upload. Each stroke is
+  one screen-facing segment per pair of points, a quad in screen space whose
+  fragments keep what lies within the radius (Blender's radius, world units,
+  times the object's scale) — round caps and joins — coloured by the
+  material's stroke colour, the vertex colour, the layer's tint, opacity and
+  Opacity; fills are ear-clipped. Measured in 5.2.1 (Workbench renders): a
+  stroke is filled only when its `fill_id` is not 0, cyclic or not, and
+  `hide_stroke` hides its line and keeps its fill (the Monkey's face).
+  `show_stroke` and `show_fill` are deprecated and read False on every
+  material; visibility is `is_stroke_visible` / `is_fill_visible`. Depth:
+  Stroke Depth Order's 2D Layers draws against the scene at the depth of the
+  object's XZ plane under each pixel, 3D Location at the strokes' own depth,
+  Show In Front over everything; within the object every primitive is one
+  depth step in front of the one before (an integer step of the float), so a
+  later stroke covers an earlier one and a semi-transparent stroke never
+  blends over itself where its segments overlap. A selected object has
+  Blender's outline in Object Mode; a tap on a stroke or a fill selects it.
+- **Draw Mode** (`PAINT_GREASE_PENCIL`, "Draw Mode" in the mode menu and
+  Ctrl+Tab for a Grease Pencil object; "Strokes Paint Mode Toggle" both ways,
+  measured). Its toolbar is Blender's: Cursor, **Brush** (`builtin.brush`,
+  labelled Brush in 5.2.1, not Draw) and **Erase**. Blender's own draw
+  operator cannot run here: `grease_pencil.brush_stroke` has no exec
+  (EXEC_DEFAULT under the borrowed 3D View logs "Invalid operator call" and
+  returns PASS_THROUGH), so the app makes the stroke as Blender's
+  `PaintOperation` would (GreasePencilStroke.swift) and writes it in one call
+  when the finger lifts (`_blenderkit_gpencil.draw_stroke`), one step, "Grease
+  Pencil Draw". Meanwhile it is drawn at once over the view, in Metal. The
+  samples are thinned to a point apart, smoothed by the brush's Active Smooth,
+  simplified by its Simplify (`simplify_pixel_threshold`, RDP), projected onto
+  the drawing plane — Stroke Placement Origin or 3D Cursor, Drawing Plane View,
+  Front, Side, Top or Cursor (5.2.1's defaults: Origin and View) — and taken
+  into the layer's space; radius is half the brush's Size (Unprojected Size
+  for a Scene Size Unit, the Pencil's; pixels at the point's depth for View,
+  divided by the object's scale), opacity its Strength, each times its
+  pressure curve with its toggle on. A finger draws until a Pencil has drawn
+  in the view, then navigates; Ctrl+drag erases, as Blender's
+  `brush_toggle='ERASE'`; a tap is a dot. Blender's refusals before anything
+  is drawn: "No active Grease Pencil layer", "Active layer is locked or
+  hidden". The header: the Essentials Grease Pencil Draw brushes (Airbrush,
+  Ink Pen, Ink Pen Rough, Marker Bold, Marker Chisel, Pen, Pencil, Pencil
+  Soft), the material slots as swatches (a tap makes one active; "+" makes a
+  New Material from a picked colour, `create_gpencil_data`), the active
+  layer, Size and Strength (written when the drag ends) with Size Pressure
+  and Strength Pressure, and Additive Drawing. Erase's: Mode (Dissolve, Point,
+  Stroke), Size, Active Layer — erased along the path when it lifts
+  (`_blenderkit_gpencil.erase`: Point splits a stroke where its middle went,
+  Stroke deletes what it touches, Dissolve lowers opacity by the falloff),
+  locked and hidden layers left alone.
+- **Animation**: a stroke at a frame follows Blender's
+  `ensure_active_keyframe`: Auto Keying on (or no keyframe at or before the
+  frame) makes a keyframe there, a copy of the one in effect with Additive
+  Drawing, blank without; off, the stroke goes into the keyframe in effect.
+  A frame change pushes a Grease Pencil object again only when a layer's
+  keyframe in effect or its onion skins changed
+  (`_blenderkit_gpencil.push_frame`, from `_blenderkit_anim.push_frame`).
+  **Onion Skinning** (Object Data ▸ Onion Skinning: Mode Frames, Keyframes or
+  Selected, Opacity, Filter by Type, Keyframes or Frames Before and After,
+  Custom Colors, Fade, Show Start Frame) is drawn under the frame's strokes,
+  tinted, hidden during playback as Blender hides it, with More ▸ Viewport
+  Overlays ▸ Onion Skins (on here, as Blender's 2D Animation workspace starts
+  it; its General startup file starts it off). The Timeline shows each
+  layer's keyframes as a channel of its own (`_blenderkit_gpencil.LayerChannel`,
+  through the Timeline's `register_channel_source`): tapped, box-selected and
+  moved as F-Curve keys are, by Blender's own operators.
+- **Object Data ▸ Layers**: the list, top layer first, a row making its layer
+  active (Set Active Layer), its Onion Skinning, Hide and Locked toggles, a
+  long press to Rename; + (Add New Layer), − (Remove Layer), the arrows
+  (Reorder Layer), the active layer's Opacity; then Onion Skinning and
+  Settings (Stroke Depth Order). **Material** for a Grease Pencil object: the
+  slots with their swatches, New Material, and the active one's Base Color.
+- **Not done:** Fill, the primitive tools (Line, Polyline, Arc, Curve, Box,
+  Circle), Trim, Eyedropper and Interpolate; Shift+drag (Blender's is Smooth,
+  `brush_toggle='SMOOTH'`, not a straight line); Edit Mode, Sculpt, Weight
+  and Vertex Paint for Grease Pencil; Surface and Stroke placement (they read
+  Blender's depth buffer: drawn at the origin's plane here); fills with holes
+  (strokes sharing a `fill_id`, each filled alone here); the AgX view
+  transform (colours are shown as Standard sRGB); a live preview of the
+  eraser (its path is shown, the erase happens on the lift); with a finger
+  drawing, the view orbits with the navigation gizmo (two fingers pan, a
+  pinch zooms).
+
+## November 9: the Timeline edits keys and markers
+
+The user: "continue improve the blender local for animation…". The docked
+Timeline had transport, the frame, the range, the preview range, Auto
+Keying, Insert and Delete Keyframe, K, and a summary of keys drawn as
+diamonds that nothing could touch; its Marker menu and View ▸ Show Seconds
+were greyed. It is an animation editor now, as Blender's Timeline (a Dope
+Sheet in Timeline mode) is, by finger, pointer and keyboard.
+
+- **Blender does the editing.** The bpy module keeps the startup screen,
+  and its Layout screen holds a Dope Sheet in Timeline mode: measured in the
+  app's bpy (5.3) on this Mac, `action.select_all`, `action.delete`,
+  `marker.add` and `transform.transform` all poll True under that area, and
+  desktop 5.2.1 run headless the same. So `_blenderkit_keys` (new) runs
+  Blender's own `action.*`, `marker.*` and `transform.transform`
+  (TIME_TRANSLATE, TIME_SCALE) under it (`temp_override_timeline`), with
+  Blender's filter, merging, handles and clipboard. Only what Blender does by
+  pointer position is done by frame: a tap on a column
+  (`action.clickselect`'s rules: replace and clear the channels' selection,
+  Shift toggles each key, a tap on nothing deselects), a box (SET, Shift
+  ADD, Ctrl SUB), a tap on a marker — over the channels the Timeline lists
+  (`timeline_channels`: the scene's, then each visible object's — selected
+  ones only with Only Show Selected — with its data, shape keys and
+  materials), held in the check to Blender's own Select All under its
+  Timeline.
+- **Selecting** (header Select menu, `DOPESHEET_MT_select`): a tap selects
+  the column under the finger, Shift+tap (or the on-screen Shift) toggles
+  it, a tap beside every key deselects, a drag from beside the keys draws a
+  box, Ctrl+click selects one side of the current frame; All, None, Invert
+  (A, Alt+A, Ctrl+I), Columns on Selected Keys and the other column rows
+  (K, Ctrl+K, Shift+K, Alt+K), Before and After Current Frame ([ and ]),
+  Select Linked (L), More and Less. A selection runs without the mirroring
+  pass (`BpyBridge.runWithoutMirror`) and records one undo step under the
+  operator's name — none when it changed nothing — and survives undo and
+  saving, since it is the keys' own `select_control_point` and handles.
+- **Moving**: a drag on a selected diamond (or on an unselected one, which
+  the press selects first, as Blender's `wait_to_deselect_others` does), and
+  G, which follows the pointer or a finger and takes typed frames, Return
+  or a tap confirming, Escape or a right-click cancelling. The timeline
+  previews the move as it goes, snapped as the scene's Snap says (Frame by
+  default: by whole frames; Absolute Time Snap: each key onto a frame), the
+  part of a partly selected column left behind; Ctrl inverts the snapping
+  (Blender's Snap Invert — Blender's transform snaps a value it is given
+  even with `snap=False`, measured, so the scene's Snap is turned round for
+  that one call). Let go, it is one `transform.transform` and one Transform
+  step; Blender merges keys that land on others (Auto-Merge Keyframes) and
+  puts the handles right. S scales about the current frame; the header line
+  is Blender's (`DeltaX: 6.00 (30.0000)`, `ScaleX: 1.5000`).
+- **Key menu** (`DOPESHEET_MT_key`) and the right-click / long-press menu
+  (`DOPESHEET_MT_context_menu`): Transform ▸ Move and Scale, Snap and
+  Shift+S's pie, Mirror (Ctrl+M), Jump to Selected (Ctrl+G), Insert
+  Keyframes (I over the Timeline: `action.keyframe_insert`), Copy and Paste
+  (Ctrl+C, Ctrl+V at `action.paste`'s defaults: Frame Start, Mix; Shift+Ctrl+V
+  flipped), Duplicate (Shift+D, then moving; cancelled, the copies stay, as
+  Blender's macro leaves them), Delete Keyframes (X's Delete menu asks
+  "Delete selected keyframes?", Delete deletes at once), Clean Keyframes and
+  Channels, Keyframe Type (R), Handle Type (V), Interpolation Mode (T, under
+  Blender's three headings), Easing Mode (Ctrl+E). The diamonds are drawn
+  in each type's size and colours (`draw_keyframe_shape`: Breakdown 0.85,
+  Extreme 1.2, …), a column's type the first key's unless one is a
+  Keyframe, as Blender's keylist has it; the report packs selection, type
+  and "partly selected" into the byte that was 0 or 1.
+- **Markers** (`DOPESHEET_MT_marker`): drawn along the bottom as
+  `ED_markers_draw` draws them — the strip, a dashed line, the triangle,
+  filled when selected, the name raised for the selected one and the one the
+  current frame is at; tapped, Shift+tapped, dragged (G over them), Add
+  Marker (M), Rename Marker (F2 and a double tap: one field, the first
+  selected marker), Delete Marker (X asks "Delete selected markers?"),
+  Duplicate Marker (Shift+D), Jump to Previous and Next Marker, Bind Camera
+  to Markers (Ctrl+B), Lock Markers, Select ▸ All, None, Invert, Before and
+  After. Over the marker row the keys they share — A, Alt+A, Ctrl+I, [, ],
+  G, Shift+D, X, Delete — act on the markers, as Blender's Markers keymap
+  does there. Mirrored by a new `_blenderkit.anim_markers`.
+- **View** (`TIME_MT_view`): Use Timecode (Ctrl+T) — Blender 5.2.1's name
+  for Show Seconds — shows the numbers and the playhead as Blender's Minimal
+  timecode (`00:01+12`, whole seconds `00:02` where the numbers are a second
+  apart); Show Markers; Frame All (Home), Frame Scene/Preview Range, Go to
+  Current Frame (Numpad 0), Frame Selected (Numpad period); a pinch zooms
+  about the fingers, a two-finger drag or a trackpad's scroll pans, the
+  mouse wheel zooms; the numbers are spaced by Blender's own grid step
+  (`calculate_grid_step`, from the frame rate: 24, 12, 6, 2, 1).
+- **Keys go where the pointer is.** A touch on the Timeline, or the pointer
+  over it, gives it the keyboard (`TimelineInputView`, first responder with
+  Blender's Dope Sheet, Markers and Animation keymaps); the pointer leaving
+  hands it back to the 3D View. Space, the arrows and Ctrl+Z still work;
+  the letters the Timeline does not use are swallowed rather than reaching
+  the 3D View behind it.
+- **Another kind of key plugs in**: `_blenderkit_anim.register_channel_source`
+  takes a function of a data-block that yields channels (`frames`, `flags`,
+  `selection`, `select`); the report and the selection by frame then take
+  it in, and Blender's operators already edit every kind its Timeline lists
+  (Grease Pencil layers among them).
+- **Measured in the app on this Mac** (load averages 500–930 from the other
+  builders, so A/B in one sitting, main's build 58 against this one,
+  `-feature-test-only` of the Timeline's features, the dock shown): the
+  scrub 15 frames in its second (median 66.7 ms) on main, 16 (66.7 ms)
+  here; Play 38 frames at a 50 ms median on both — no regression. A tap on
+  a column is Smooth (0.04 s, no mirroring pass: the undo log reads
+  `Select Keyframes · blender · mirror 0.00 ms`); a drag of the keys ran its
+  preview at 16.7 ms a frame (57 frames, worst 16.7) and let go in one
+  Transform step, its mirroring pass of the 64,226-vertex sphere 137 ms;
+  Interpolation Mode ▸ Linear 130 ms (its pass); Add Marker, now without
+  one. Test All Features has the four (Timeline: a tap on a column, a drag of
+  the selected keys, Key ▸ Interpolation Mode ▸ Linear, Marker ▸ Add
+  Marker).
+- Driven in the app with `-timeline-ops` (new DEBUG hook), Blender's undo
+  log showing one step each: a box from 5 to 30 (Box Select), a tap
+  (Select Keyframes), a drag 24 → 31 (Transform), G with -6 typed, Shift+D
+  by 4, T ▸ Linear, R ▸ Jitter, A then Ctrl+C, frame 52, Ctrl+V (the keys
+  again from 52 on), M on 30 renamed Impact (Add Time Marker, Rename Marker),
+  a marker dragged 1 → 6 (Move Time Marker), Jump to Next Marker, Use
+  Timecode, a zoom and a pan, Frame All; undo and redo of the drag. Real
+  keys (keypost) with the Timeline holding the keyboard: A selected every
+  key, T opened Set Keyframe Interpolation. Screenshots in
+  `~/github/blenderkit-wt/shots/timeline/`.
+- Checks: `run-timeline-tests.sh` (new, 134), `run-timeline-blender-check.sh`
+  (new, 169 in desktop 5.2.1: the Timeline's channels against Blender's own
+  Select All under its Timeline, Only Show Selected and a hidden object; the
+  report's byte; a tap, Shift and a box by Blender's rules and against
+  Column on Current Frame; each select operator, G, S, Shift+D (and
+  cancelled), Delete, Clean, Snap, Mirror, T, Ctrl+E, R, V, Ctrl+G, I from
+  the app's module against the operator run directly on a twin scene; Copy
+  and Paste; the refusals in Blender's words; the markers, Lock Markers and
+  a bound camera; one undo step an edit through `_blenderkit_undo`, undone
+  and redone; every undo label against the operator's `get_rna_type().name`;
+  the nine menus' rows against their `draw()`, the six enum menus against
+  their items). Extended: `run-animation-blender-check.sh` (a key is
+  deselected with its handles, as Blender's selection treats a key),
+  `run-featuretest-tests.sh`, `run-budget-tests.sh` (`action.`, `marker.`,
+  `transform.transform` accounted for), `tests/names/scan.py` (the Dope
+  Sheet's own "Select All" and "Duplicate"). All passing, with
+  `run-animation-tests.sh`, `run-animation-shim-tests.sh`,
+  `run-names-tests.sh` and `run-names-blender-check.sh`.
+- **Landmines, measured in 5.2.1.** An `action.*` operator called with its
+  undo on (`bpy.ops.action.x('EXEC_DEFAULT', True)`) under the borrowed
+  Timeline segfaults in `ED_area_type_hud_ensure`, as the 3D View's did;
+  called as the app calls it, without, it is fine. `transform.transform`
+  snaps a value it is given by the scene's Snap even with `snap=False` (a
+  move by 2.4 moved keys 2), so Ctrl's inverted snap turns
+  `use_snap_anim` round for that one call. `action.clickselect` given
+  mouse coordinates under the borrowed Timeline found no key at any height
+  of its region headless, which is why taps and boxes go by frame. A
+  Timeline column counts as selected when a key's handle is
+  (`BEZT_ISSEL_ANY`).
+- **Not done:** Extend (E) and Slide (Shift+T) — in Key ▸ Transform, greyed;
+  Circle and Lasso Select, Select by Type, Bake Keyframes, the Euler filter,
+  Duplicate Marker to Scene, Sync Markers, Sync Visible Range, Only Show
+  Errors, the Channels region, Adjust Last Operation — Blender's rows,
+  greyed; holds and interpolation lines between keys (Blender draws them
+  in the Dope Sheet's summary); a box over the markers and Ctrl+click's
+  camera on a marker; the 3D View following a key drag before it lets go
+  (it follows on release); Grease Pencil keys themselves (the draw builder's;
+  the plug is ready). The selection by frame takes keys within a hundredth
+  of a frame of the column, where Blender's click takes the column's exact
+  frame.
+
+## November 9: Blender's Material Properties
+
+The user: "add material". Properties ▸ Material was one Base Color picker,
+Metallic and Roughness, writing a material named "<Object> Material" to every
+selected object. It is now Blender 5.x's Material tab, read from Blender
+(`_blenderkit_material.state`, one JSON line) and written through it
+(`MaterialBpy`), every name read from 5.2.1's `properties_material.py`, the
+operators' RNA and the 5.3 sources (`node_templates.cc`,
+`interface_template_id.cc`, `node_shader_*.cc`):
+
+- **The slot list** (EEVEE_MATERIAL_PT_context_material): each slot with its
+  material's swatch (the surface's unlinked Base Color, else its Viewport
+  Display Color, sRGB), a tap makes it active; beside it +, −, Material
+  Specials (Copy Material, Copy Material to Selected, Paste Material, Remove
+  Unused Slots, Remove All Materials) and, with two slots, the move arrows.
+  In Edit Mode Assign, Select and Deselect. Blender's operators throughout,
+  measured headless with no area: they act on `context.object`; − and the
+  two removals fail their poll in Edit Mode ("Unable to remove material slot
+  in edit mode"), and the tab greys them there; a move past the end and
+  Assign with no face selected are CANCELLED silently in Blender and said in
+  words here. Copy and Paste Material need `context.material`, which a
+  Blender with no Properties editor does not have: they run under
+  `temp_override(material=…)`.
+- **The slot's material** (its template_ID): browse (every material of the
+  file with its swatch; step "Browse Material to be linked", the browse
+  button's own tooltip), the name, the user count when shared (tapped: Make
+  Single User, a copy into this slot), Fake User, New, Unlink (X: "Unlink
+  Data-Block", the material stays in the file) and the slot's Link (Data or
+  Object). New is `bpy.data.materials.new("Material")`, not
+  `bpy.ops.material.new()`: called from Python the operator assigns nothing
+  and leaves the new material the user its own `id_us_min` takes back only
+  when a button assigns it (2 users with one object, measured), while
+  `materials.new` makes the same node tree, node by node. With no slot New
+  adds one first (`BKE_object_material_slot_add`, as `new_material_exec`
+  does); on a full slot it copies the slot's material (Blender's duplicate
+  button). Editing a shared material changes it for every user, as in
+  Blender. The app's old "<Object> Material" per selected object is gone:
+  Copy Material to Selected and Object ▸ Link/Transfer Data ▸ Link Materials
+  give a selection one material.
+- **Surface and Volume** (`template_node_view`): the Material Output's input
+  and a menu of every shader (each shader node type with a Shader output, by
+  its name, sorted as `ui_node_menu_column` sorts them: 24 in 5.2.1, Glossy
+  BSDF being ShaderNodeBsdfAnisotropic), and the menu's Remove and
+  Disconnect. Choosing one is `node_socket_add_replace` done in Python: the
+  new node at the old one's place, each input of the same identifier and type
+  taking the old one's value and link, then the old node and what fed only
+  it removed (so a textured Principled BSDF swapped for a Diffuse BSDF loses
+  its Image Texture, Diffuse having Color, not Base Color — Blender's
+  behaviour; the same shader again keeps the node). Step: "Node input
+  modify", `ui_node_link`'s own. Then every input Blender draws (unavailable
+  sockets left out), in panels laid out as the node declares them —
+  Principled BSDF's Diffuse, Subsurface (Subsurface Method), Specular
+  (Distribution), Transmission, Coat, Sheen, Emission, Thin Film, each closed
+  until opened — with Blender's short labels inside a panel (Weight, Tint,
+  IOR Level; Thin Film Thickness reads Thickness, `node_socket_get_label`).
+  Colours are picked in sRGB and written linear; numbers drag within the
+  socket's declared range (`SOFT_RANGES`, from the declarations: Python's
+  writes are not clamped, a Metallic of -1e9 read back -1e9); an input linked
+  to a node shows that node's name (Base Color: Image Texture), as Blender's
+  link button names it.
+- **Settings** (Pass Index; Surface: Backface Culling Camera, Shadow, Light
+  Probe Volume, Displacement, Max Distance, Transparent Shadows, Render
+  Method, Transparency Overlap or Raytraced Transmission, Thickness, From
+  Shadow; Volume: Intersection) and **Viewport Display** (Color, Metallic,
+  Roughness).
+- **Undo**, measured in desktop 5.2.1 with the app's undo: in Object Mode
+  one Undo takes back every control. In Edit Mode Blender's step holds the
+  mesh and its selection: a material's values, its Settings and Viewport
+  Display, a slot added, New, the Link, the active slot, a material browsed
+  into the slot and Unlink each stayed as set after Undo, so the tab pushes
+  no step for them there (as the Data tab does for a shape key's settings);
+  Assign, Select and Deselect were taken back and keep theirs.
+- **The 3D View shows it.** Each pass sends every mesh's slots
+  (`_blenderkit_material.push`, `_blenderkit.sync_materials`): each slot's
+  look — its Viewport Display, which Solid now draws (Blender's default
+  colour type is Material; it drew a uniform grey), and its surface's
+  values, which Material Preview shades with — and, with two slots or more,
+  each triangle's `material_index` (hidden faces left out in Edit Mode, as
+  the triangles are). The renderer draws each slot's triangles with its own
+  look (`slotRuns`, per-slot index buffers built once per mesh and slot
+  change, indexed or corner by corner as the mesh's shading wants): a cube
+  of two materials shows both, in Solid and in Material Preview. The texture
+  pass's untextured slots take their own look too. A colour or number being
+  dragged previews on every object using the material at once
+  (`BKScene.previewMaterial`) and is written once: a number when the finger
+  lifts, a colour when the picking has paused for 0.6 s.
+- Test All Features: Material ▸ Base Color (now through the tab's command),
+  Add Material Slot with New, and Assign in Edit Mode. New suites:
+  run-material-tests.sh (71 checks) and run-material-blender-check.sh (330
+  in desktop 5.2.1: the module's tables against Blender's node types, every
+  command, every Principled BSDF input as the tab builds it from Blender's
+  own state, Undo in both modes, the mirror's looks read back by the Swift).
+  In the app (`-material-ops`, `-shading`, `-properties-scroll`): Add
+  Material Slot, New, Base Color, Viewport Display Color, Assign on one face
+  in Edit Mode drew a cube of three colours in Solid; a shared material
+  swapped to Diffuse BSDF and coloured changed the cube's faces and the
+  sphere sharing it in Material Preview; a plane's Image Texture showed on
+  Base Color in the tab and in the view (shots/materials).
+- **Not done:** the Preview panel (a sphere drawn by the app's own PBR),
+  Displacement and Thickness panels, Line Art, Custom Properties, an
+  input's own link menu (connecting a texture to a socket from the tab) and
+  the expansion of a linked node's inputs beneath it; Add Shader and Mix
+  Shader show their Shader inputs as None. Material Preview approximates
+  each shader as one metallic-roughness surface.
+
+## November 9: Render Animation, and the Render, Output and World tabs
+
+The user: "continue improve the blender local for animation and render part".
+Until now the app rendered one picture. Every name below is Blender 5.2.1's
+(RNA `.name`, the panels' `bl_label` and `draw()`, `TOPBAR_MT_render`,
+the Screen keymap).
+
+- **Render ▸ Render Animation** (Ctrl+F12). Blender's own
+  `render.render(animation=True)` — its frame loop, its image writers and its
+  FFmpeg writer — over the scene's Frame Start, End and Step, through the
+  scene camera, with the scene's engine (`_blenderkit_render.render_animation`).
+  The iOS bpy has FFmpeg (`bpy.app.build_options.codec_ffmpeg` True) and its
+  libavcodec has VideoToolbox's H.264 and HEVC encoders, FFmpeg's MPEG-4 part 2,
+  FFV1 and MJPEG, but no libx264; the iOS Blender source picks a software
+  pixel format for the VideoToolbox encoders (`movie_write.cc`). Measured in the
+  app: 3 frames of 64 × 36 each into MPEG-4 H.264, QuickTime H.264, MPEG-4 H.265
+  and MPEG-4 MPEG-4 — ffprobe reads every one (High-profile H.264, Main HEVC,
+  3 frames, 24 fps) and AVFoundation plays every one. So no AVAssetWriter path
+  was needed.
+  - Output: a scene whose Output is Blender's untouched factory one (Media Type
+    Image, PNG, FFmpeg never chosen: MPEG-1 with no codec) renders an
+    **MPEG-4 H.264 video**, the app's default, for that render only; once a
+    format is chosen in the Output tab it renders what was chosen — a video,
+    or numbered frames (Blender's `0001.png` …). Files go to
+    `Documents/Renders/Animation <date>.mp4` (or `.mov`), or the folder
+    `Documents/Renders/Animation <date>/` for frames.
+  - Progress: "Frame 12 of 250 · Sample 3 of 8 · 0:04 left" — a `render_pre`
+    handler writes the frame in hand, the `render_stats` line the panel
+    already read gives the samples; the bar is the whole animation.
+  - **Cancel** stops after the frame in hand. One `render(animation=True)`
+    cannot be interrupted headless (Escape sets `G.is_break`; there is no
+    Escape). The panel writes a file; the `render_post` handler sees it and
+    sets `frame_current` to the end frame, and `RE_RenderAnim`, whose loop
+    counts on `scene->r.cfra` against the end frame it copied (pipeline.cc),
+    ends there, closes the video and puts the frame back. Measured in
+    desktop 5.2.1 and in the app: cancelled during frame 2 of 10, a valid
+    2-frame H.264 video and the frame where it was.
+  - When it is done the panel plays it (AVKit's `VideoPlayer`), or flips
+    through the frames at the scene's rate, with a Share button. **View
+    Animation** (Ctrl+F11) plays the last one again, across launches; **View
+    Render** (F11) shows the last still.
+  - Memory: Blender writes each frame and frees it; Eevee's shadow pool is
+    held as for a still (Good's 128 MB with the scene's own samples).
+  - The first Cycles render's kernel warning applies to Render Animation too
+    (its script contains "render.render", which arms it — and starts
+    Blender's GPU module on the main thread first, `ScriptThread.mayStartGPU`).
+- **A render leaves the scene as it found it, and records no undo step**, as
+  Blender's F12 and Ctrl+F12 do. The panel's renders used to set the engine,
+  the size, the samples, the PNG format and the output path and leave them (the
+  user's scene still had `filepath` pointing at a render of September 21) and
+  record a "Run Script" step for it. Now what a render sets for itself is put
+  back in its `finally` (`_blenderkit_render.save`/`restore`: the media type
+  before the format before the colour, as each resets the next), and
+  `BpySession.runScript(…, recordsUndo: false)` records nothing.
+- **The panel's quick choices are the scene's settings.** Its Engine chip is
+  Render Properties ▸ Render Engine; Draft, Good and Best write the engine's
+  Render samples (the chip shows the number when it is none of the three);
+  the size chip writes Resolution X and Y. A render takes the scene's own,
+  so the panel and the tabs cannot disagree. Choosing Cycles in the app turns
+  a CPU Device to GPU Compute (Metal) in the same step — Blender starts every
+  scene on the CPU, and the app's renders were always Metal; the Device row
+  puts it back, and a scene set to the CPU renders on the CPU.
+- **Output Properties**: Format — Resolution X, Y, %, Frame Rate (Blender's
+  menu: 6 … 240 and Custom, labelled as its Format panel labels it, "29.97
+  fps", "Custom (14 fps)", with FPS and Base for a custom rate); Frame Range —
+  Frame Start, End, Step (Start and End by the Timeline's own rule,
+  `FrameRange`, written into the scene the Timeline draws, so both show the
+  same range at once); Output — the path, the app's (Files ▸ Blender Local ▸
+  Renders, shown and not editable), Media Type (Image, Video), File Format
+  (PNG, JPEG, OpenEXR; FFmpeg Video), Color (BW, RGB, RGBA as the format
+  offers), Color Depth, Compression, Quality, Codec; Encoding — Container
+  (MPEG-4, QuickTime: what AVKit plays), Video ▸ Video Codec (H.264, H.265 /
+  HEVC, MPEG-4 (divx): what this build encodes), Output Quality, Encoding
+  Speed. In 5.x a video needs Media Type ▸ Video first; Blender's own switch
+  makes a Matroska, which the panel could not play, so the app's FFmpeg Video
+  starts MPEG-4 and keeps a QuickTime chosen before.
+- **Render Properties**: Render Engine (EEVEE, Workbench, Cycles); Cycles —
+  Device (CPU, GPU Compute), Sampling ▸ Render (Noise Threshold with its
+  switch, Max Samples, Time Limit), Denoise and Denoiser, Light Paths ▸ Max
+  Bounces ▸ Total, Film ▸ Transparent; EEVEE — Sampling ▸ Viewport and Render
+  Samples, Shadows with Rays and Steps, Raytracing, Motion Blur, Film ▸
+  Transparent; Workbench — Sampling ▸ Render, Lighting (Studio, MatCap,
+  Flat), Object Color (Material … Custom, with its Color), Film ▸
+  Transparent. **Color Management** for all: Display, View, Look, Exposure,
+  Gamma, with the lists the bundled OpenColorIO config gives (5.3 and 5.2.1
+  the same: Standard, ACES 1.3, ACES 2.0, Khronos PBR Neutral, AgX, Filmic,
+  Filmic Log, False Color, Raw; AgX's looks drawn "Punchy" … as Blender's
+  menu draws them). In 5.2.1 the properties are named Display and View, not
+  Display Device and View Transform.
+- **World Properties**: the World, or New (`world.new`, "New World") when the
+  scene has none — made as 5.2.1's `bpy.data.worlds.new` makes one, a
+  Background on the World Output, and given to the scene (headless the
+  operator itself adds a World and gives it to nobody: measured). Surface ▸
+  Color (scene-linear, picked in sRGB as Blender's picker shows it, one step
+  when the picking pauses) and Strength; a Surface with nothing on it gets a
+  Background made and linked; a Surface that is another node says so. Renders
+  show it (an EEVEE render's corner takes the World's blue). The 3D View's
+  Material Preview is the app's own renderer with its own lighting — as in
+  Blender, where Material Preview lights with an HDRI and draws the theme
+  behind it until its World switch is on — and Rendered is still greyed.
+- **The Render menu** is Blender's in the top bar, after File: Render Image,
+  Render Animation, Render Audio… (greyed), View Render, View Animation. The
+  `RenderMenu` that existed was drawn nowhere. The Mac menu bar has a Render
+  menu with the same rows; the 3D View has F12, Ctrl+F12, F11 and Ctrl+F11.
+- Test All Features has Render ▸ Render Animation: 3 frames of Workbench at
+  64 × 36 into an MP4 that AVFoundation plays, the frame kept (Smooth here,
+  0.28–0.45 s, beside Render Image (EEVEE)).
+- **Measured in the app on this Mac (M4, Designed for iPad), a 320 × 180
+  scene of a turning cube on a ground with a sun:** Workbench, 24 frames into
+  an MP4, 0.99 s (ffprobe: H.264 High, 24 frames, 1.0 s; AVFoundation plays
+  it); EEVEE at 8 samples, Cancel pressed during frame 3 of 48, 1.7 s, a
+  3-frame video; **Cycles on the Metal GPU** at 16 samples with
+  OpenImageDenoise, 24 frames in 35.5 s — 6.5 s for the first (kernels
+  loaded from the cache, "37 / 77 render kernels loaded" at 2.4 s), then
+  about 1.2 s a frame; Cycles reloads its kernels each frame of an
+  animation, a few tenths of a second each. Every run left the scene's
+  settings, frame and undo history as they were (`[bk-render] scene after`).
+  The Output tab's Frame Start 5, End 40, 25 fps and FFmpeg Video, through
+  the tab's own writes: four undo steps named Frame Start, End, Frame Rate
+  and File Format, the docked Timeline drawing 5–40 at 25 fps after each, and
+  Undo putting the factory Output back.
+
+Landmines:
+- **A failed animation render leaves a stub video.** Blender opens the movie
+  writer before it finds there is no camera: measured in the app, a 305-byte
+  MP4 that nothing plays. `render_animation` refuses without a camera first
+  and removes a video it made that holds no frame.
+- **`file_format = 'FFMPEG'` is refused while Media Type is Image** (5.x), and
+  `file_format = 'PNG'` while it is Video. Set `media_type` first.
+- **A render the app is killed during leaves what Blender had written**: an
+  animation stopped by ending the app mid-way left a 48-byte MP4 (no
+  `finally` runs). Cancel is the way to stop one.
+- **The Mac test harness hands the app its shell's environment.** With
+  `XDG_CACHE_HOME` set in the shell, `open` passed it on, and Cycles wrote its
+  kernel cache to a folder outside the app's sandbox ("sandbox_extension_issue_file
+  failed … Operation not permitted") and compiled its kernels again, minutes.
+  Run `apprun.sh` under `env -u XDG_CACHE_HOME`; on an iPad the cache is the
+  container's `.cache/cycles`.
+- `RenderSettings.file_extension` still says ".png" after Media Type ▸ Video
+  (5.2.1); `frame_path(frame=…)` is right: a path that ends in the
+  container's extension is used as it is, one that does not gets the frame
+  range added ("Anim0001-0250.mov").
+
+New suites: `scripts/run-output-tests.sh` (host) and
+`scripts/run-renderanim-blender-check.sh` (desktop 5.2.1, every video then
+probed with ffprobe). `run-render-blender-check.sh` now checks the render's
+settings as the render starts (a `render_pre` handler) and the scene's own
+back after it, where it checked that the render had left its own.
+
+DEBUG hooks: `-render-action <renderImage|renderAnimation|viewRender|viewAnimation>`
+presses the top bar's Render menu row once a `-eval64` script has finished;
+`-render-cancel-at <n>` presses Cancel once frame n is under way;
+`-renders-in-tmp` keeps a run's renders in the container's tmp, out of the
+user's Renders folder; `-render-done-exit` ends the run with the render;
+`-render-tab-ops` runs the tabs' own writes (`[bk-tab]`). The panel prints `[bk-render]` lines: what it shows
+as it renders, and the outcome, the undo history and the scene's settings
+after.
+
 ## November 8: the keys build 57 left
 
 The user: "pls continue improve the blender local". This round took the Not
@@ -9508,6 +10030,8 @@ from the shipped binary before every release.
 | `-image3d <path>` | Add ▸ Image to 3D Model on a picture, through the sheet's own prepare and create: Full 3D, or `-image3d-mode relief`; `-image3d-whole` skips the cut-out, `-image3d-detail low\|medium\|high`. The path must be inside the app's container (it is sandboxed); Full 3D needs the converted weights in `Documents/Models/TripoSG/` there (`Library/Application Support/Models/TripoSG/` before build 53, moved on launch) (`cp -Rc` a converted folder; a clone costs no space). Full 3D uses seed 42 here |
 | `-panel <name>` | opens a More-menu panel at launch: `Outliner`, `Properties`, `Tool Settings`, `Render`, `Image to 3D Model` (before round 4: Scene, Object Details, Transform Tools) |
 | `-properties-tab <tab>` | opens the Properties editor on a tab, e.g. `-panel Properties -properties-tab modifiers` |
+| `-render-action <action>` / `-render-cancel-at <n>` / `-renders-in-tmp` | presses a Render menu row (`renderImage`, `renderAnimation`, `viewRender`, `viewAnimation`) once a `-eval64` script has finished; presses the Render panel's Cancel once frame n of an animation is under way; keeps the run's renders in the container's tmp; `-render-done-exit` ends the run when the render does. The panel prints `[bk-render]` lines: what it shows as it renders (with the time), the outcome, the undo history and the scene's settings after |
+| `-render-tab-ops <ops>` | the Render, Output and World tabs' own writes, comma-separated, once a `-eval64` script has finished (the Properties editor open on one of the three): `start=`, `end=`, `step=`, `rate=<preset>`, `format=<PNG\|JPEG\|OPEN_EXR\|FFMPEG>`, `engine=`, `strength=`, `color=r;g;b` (scene-linear), `newworld`, `undo`; each printed (`[bk-tab]`) with the range the Timeline draws, Blender's values and the undo history |
 | `-modifier-dump` / `-modifier-steps <steps>` | prints the active object's modifier rows as the panel holds them, then runs comma-separated steps through what the buttons send: `+kind` (Add Modifier), `Name:viewport\|render\|up\|down\|apply\|remove`, a Multires `Name:subdivide\|unsubdivide\|deleteHigher\|applyBase`, or `Name:key=value;key=value` (an edit by Blender's property names), a declared row's button (`Name:bind_surface`, `bind_mesh`, `generate`, `hook_assign`, …), `+TYPE` (any Add Modifier row on the object, by Blender's type), `@select=Name`, plus `@mode=<MODE>` (F3's Run on `object.mode_set`) and `@hide=1\|0` (the Object tab's Show in Viewports); prints the banner on a failure; waits for `-eval64` to finish |
 | `-opsearch <path>` / `-opsearch-args <json>` | More ▸ Operator Search on one operator: reads its form (`BlenderOperatorForm.infoCall`) and presses Run (`BlenderOperatorForm.command` through `bridge.run`), printing what the form showed, the outcome, the banner, the mode after and the active object's Multires levels as Blender holds them; waits for `-eval64` to finish |
 | `-uv-row <UVOperator>` | runs one row of the UV Editor's UV menu as the menu does (`Bpy.uv`), e.g. `-uv-row unwrapConformal`, printing the outcome and the banner |
@@ -9516,6 +10040,8 @@ from the shipped binary before every release.
 | `-region-select <gestures>` | Box, Circle and Lasso drags through the calls a drag makes (`beginRegion`, `extendRegion`, `finishRegion`): `box:x,y;x,y`, `circle:x,y;…:radius`, `lasso:x,y;x,y;…`, points as fractions of the view or `@x,y,z` in the scene, `+extend` / `+subtract` / `+intersect` for Shift / Ctrl / both, `mode:VERT\|EDGE\|FACE` and `none` between, separated by `\|`. Prints the pass's pick, what Blender holds and what the viewport shows, as vertices, edges and faces, the length of Blender's selection order beside the viewport's, whether a refusal was said, and how many samples of the overlay's shaded path disagree with the region selected from. `-region-mode edit` waits for edit mode, `-region-wait <name>` for an object of that name, `-region-view top` snaps and frames first, `-region-view persp:8` puts the opening perspective view 8 from the origin |
 | `-region-action <mode>` | The select tools' Mode (`set`, `extend`, `subtract`, `difference`, `intersect`), as the Select tool menu's Mode rows set it |
 | `-xray` | X-Ray on, as Viewport Shading ▸ X-Ray does |
+| `-shading <type>` | Viewport Shading at launch: `solid`, `material` (Material Preview), `wireframe` |
+| `-material-ops <tokens>` | Properties ▸ Material's controls through the commands they send (`MaterialBpy`), once the tab has read Blender (after any `-eval64`), comma-separated: `add`, `remove`, `new`, `active:N`, `up`, `down`, `edit`, `object`, `all`, `faces:i;j` (only those faces selected in Blender), `assign`, `select`, `deselect`, `browse:<name>`, `unlink`, `single`, `fake`, `link:DATA\|OBJECT`, `special:<row>`, `shader:<type>`, `base:r;g;b` (sRGB), `metallic:v`, `viewport:r;g;b`; after each it prints the outcome, the step, and the looks and triangles by slot the 3D View draws the object with. Use with `-panel Properties -properties-tab material` |
 | `-select-menu <rows>` | presses Select menu rows through `select`, the call the rows make (`more`, `linked`, `similar:VERT_NORMAL`, `object:child`, `type:MESH`, `objlinked:MATERIAL`, `pattern:Wheel*`, `grouped:CHILDREN`, `nextActive`, `sideOfActive`, …, see `SelectMenu.Command(token:)`), and `adjust:key=value` moves a redo-panel field through `readjust`; after `-select-menu-delay <s>` (3) and any script |
 | `-cut-ops <tokens>` | Loop Cut and the Knife through the calls a pointer and a finger make (`loopCutHover`, `loopCutTap`, `knifeTap`, `knifeHover`, `CutToolActions`), `\|`-separated: `tool:loopCut\|knife\|select`, `hover:<p>`, `tap:<p>`, `through:on\|off`, `undo-point`, `cancel`, `confirm`, `ortho:on\|off`, `orbit:<azimuth>,<elevation>,<distance>` (the view turned between taps), `adjust:<key>=<value>`, `undo`, `redo`, `mode:VERT\|EDGE\|FACE`, `state`, `pause:<s>`; `<p>` a fraction `x,y` or a scene point `@x,y,z`. `-cut-view top\|front\|right\|persp:<d>\|orbit:<az>,<el>,<d>` sets the view first and `-cut-wait <name>` waits for that object in Edit Mode. Prints what a Knife tap snapped to and where the hover's next point is, a Loop Cut's preview against the vertices Blender made, a Knife Confirm's new vertices against the crossings worked out from the mesh and its face sizes, and after each Blender's counts, select mode, redo panel and banner |
 | `-select-pick <tokens>` | Blender's pick selections and Select menu rows in a mesh's Edit Mode through the calls a pointer, a finger and a key make (`meshEditTap`, `selectLinkedUnderPointer`, the rows' `perform`), `\|`-separated: `tap:<p>`, `tap+alt:`, `tap+ctrl+alt:`, `tap+ctrl:`, `+shift`, `pick:loop\|ring\|path\|linked\|none`, `shift:on\|off`, `hover:<p>`, `leave`, `key:L`, `key:shift+L`, `menu:<row token>`, `adjust:k=v`, `view:<name>`, `undo`, `redo`, `mode:VERT\|EDGE\|FACE`, `pause:<s>`; `<p>` a fraction `x,y` or a scene point `@x,y,z`. `-select-pick-view` and `-select-pick-wait <name>` as `-cut-ops`'s. Prints Blender's counts, active element and order beside the viewport's |
@@ -9531,6 +10057,7 @@ from the shipped binary before every release.
 | `-textimage-ops <tokens>` | a text object's Body Text and Data tab rows, Tab on a text, Add ▸ Image ▸ Reference... and Background..., the Empty panel's image rows and the pictures the 3D View draws, through the calls the controls make, once a `-eval64` script has finished, comma-separated: `select:<name>`, `add-text`, `body:<text>` (`\n` a new line), `text:<key>=<value>`, `tab`, `image-ref:<file>`, `image-bg:<file>`, `image-plane:<file>` (each through `ReferenceImages.prepare`, as the pickers), `empty:<key>=<python>`, `view:<top\|front\|…\|persp\|ortho>`, `orbit:<azimuth°>:<elevation°>`, `images` (what `ImageEmptyDraw` draws), `capture:<file.png>` (the 3D View's frame read back, with how many pixels, and in each half, differ from the background, the colours at the centres of the picture's four quarters and an overlays-off control), `culling:old\|blender` (the surface passes culling back faces as they did, or not, `ViewportRenderer.surfaceCull`), `undo`, `redo`, `steps`. After each it prints the active object as the app shows it beside Blender's |
 | `-measure-ops <tokens>` / `-measure-overlays <list>` | the Cursor tool, the Measure tool and Edit Mode's overlays through the calls a finger, a Pencil and the bars make (`cursorTap`, `beginCursorDrag`/`updateCursorDrag`/`endCursorDrag`, `beginRulerDrag`/`updateRulerDrag`/`endRulerDrag`, `rulerTap`, `MeasureActions`), `\|`-separated: `tool:cursor\|measure\|select`, `depth:on\|off`, `orient:NONE\|VIEW\|XFORM\|GEOM`, `snap:on\|off`, `ctrl:on\|off`, `tap:<p>`, `drag:<p>><p>…` (a finger's), `pencil:<p>><p>…`, `remove` (Ruler Remove), `global:on\|off` (the Sidebar's), `py:<base64>`, `cap:<base64>` (what a script prints, without a step), `glyph` (the 3D cursor's axes as the renderer draws them), `view:<name>\|orbit:<az>,<el>,<dist>`, `ortho:on\|off`, `undo`, `redo`, `state`, `pause:<s>`; `<p>` a fraction `x,y`, a scene point `@x,y,z` or `@cursor`, written `^<p>` to reach it with Ctrl held. With the flag, each overlay read prints its time on the main thread, its bytes and labels, and its thinning. After each it prints Blender's cursor (location, mode, Euler, quaternion, axis-angle), the mirror's and the Cursor's settings as Blender holds them, the rulers and their text, and in Edit Mode bmesh's own counts and lengths beside the overlays' statistics and labels. `-measure-overlays stats,length,eangle,area,fangle` sets Viewport Overlays' Statistics and Measurement switches |
 | `-frames <a,b,…>` / `-frames-wait <text>` | once the console shows the text (printed by a `-eval64` script) and no script runs, each frame through `TimelineDriver.setFrame`, the call a scrub and playback make; prints after each what the timeline and the viewport show beside what Blender holds |
+| `-timeline-ops "<token>;…"` | the Timeline driven through the calls its touches, keys and menu rows make (`TimelineOps.swift`): `until:<text>`, `tap:<frame>` (and `shift-`, `ctrl-`, `alt-`), `box:<f0>:<f1>[:shift\|:ctrl]`, `drag:<f0>:<f1>[:hold]`, `release`, `marker-tap:`, `marker-double:`, `marker-drag:<index>:<frame>`, `hover:<frame>[:markers]`, `key:<token>`, `type:<digits>`, `confirm`, `cancel`, `menu:<id>`, `close`, `row:<menu>/<title>`, `rename:<name>`, `zoom:`, `pan:`, `frameall`, `seconds:on\|off`, `markers:on\|off`, `frame:<n>`, `undo`, `redo`, `focus`, `keys:<k…>` (prints them for a watcher's keypost), `dump`, `py:<code>`, `shot:<name>` (prints a line and waits for a window screenshot); ends with `[bk] timeline-ops: done` |
 | `-self-test` / `-feature-test` | opens Preferences at launch and presses the Self-Test or Test All Features button through its own action, then Run; prints `[bk-selftest] ended: …` or each feature's line and `[bk-featuretest] ended: …` with the report's path. `-feature-test-cycles` switches the test's Cycles render on |
 
 ---
@@ -9557,6 +10084,7 @@ for s in scripts/run-*-tests.sh; do "$s"; done
 | `meshpick` | 41 | what a tap in edit mode picks: the radius in points, what the surface hides, edges by their line, a whole polygon, and empty space |
 | `traceback` | 33 | finding the failing line, and an operator's printed warning found for the banner |
 | `render` | 68 | the Render panel's requests, which device renders, where the file goes, the camera view, and the Python the camera and light editors write |
+| `output` | 84 | Render Animation's request, the still render keeping the scene's settings, the panel's chips as the scene's settings, the settings Blender reports read back, Blender's Frame Rate menu, the tabs' writes, the frame-in-hand and outcome files, Cycles' stage lines, and the keys, menus and tabs by source |
 | `image3d` | 39 | Image to 3D Model's relief: outline, depth, faces, UVs, the files Blender reads |
 | `triposg` | 53 | Full 3D without weights: safetensors and the int8/float16 conversion, position embeddings, the flow's inputs, marching cubes, the coarse-to-fine surface, picture, viewpoint fit, symmetry, UV raster, bake |
 | `scriptthread` | 46 | which thread a script runs on (a script that loads a file included, and the list of loading operators held to `_blenderkit_context.FILE_READS`), which scripts have the GPU module started on the main thread first (the start run in python3 with a `gpu.init()` that raises), which console lines run Python (`time` and `watch` before `python`; the first-word rule as the control), and that every console line seeds the history first |
@@ -9586,6 +10114,7 @@ for s in scripts/run-*-tests.sh; do "$s"; done
 | `modkinds` | 284 | round 4, group 8's Swift half, and its review's fixes (a cleared body, Blender's text ranges, the Screw row's price, a move priced first, the stand-in's notes, pictures converted for Blender and drawn as it reads them): Add Modifier by object type (Blender's categories, counts and words, Array (Legacy), the Essentials rows), the eleven declared rows' records, lines and one-line edits (sets, vectors, pointers, Replace Original's price, a setting or item Blender did not send never written), the buttons, Show in Viewport's price, Data Transfer's dynamic Mix Mode, the text and image empty records, Blender's picture visibility rules and the passes, each with a control |
 | `modkinds-shim` | 88 | the simulator's stand-in given every line the ten declared rows it models send: each key down the channel the Swift declares (a number, a vector, an identifier or an object), an identifier the Swift does not have refused |
 | `measure` | 119 | the Cursor tool's, the Measure tool's and Edit Mode's overlays' Swift half: the cursor and units records (settings kept from a pass off the main thread), the tap's and the drag's calls, a sheared and a mirrored object's face normal (the inverse transpose; the matrix and the world cross product its controls), Surface Project's margin rectangle, the drag landing on a snap, Geometry and the drag's snap under a last Subdivision Surface refused and under a Mirror kept (the old rule as control), the snap note, no auto keying after a cursor drag, the cursor drawn turned (the world-aligned drawing as control), the ruler's picks, angle point, Ruler Remove's angle, a tap on nothing, placing and text, the file record clearing the rulers, the read's view row by row and a thinned record's note, the labels' clipping, order, offsets and text, the unit strings |
+| `timeline` | 133 | the Timeline as an animation editor's Swift half: the column under a finger (the nearest when they crowd, the reach's edge), a box's frames either way round, Blender's Snap for a drag (Frame by whole frames, Absolute Time Snap, Ctrl inverting, seconds, S about the current frame), a move's preview leaving the unselected part behind, Frame Scene Range's margin, a pinch and a pan, Frame All and Go to Current Frame, Blender's grid step (`calculate_grid_step`), Use Timecode's Minimal timecode, the markers' layout and Jump to Marker, the report's byte (selection, type, partly selected) and the markers' report, the menus' rows, and what each control sends — a selection without the mirroring pass and its undo step (none when nothing changed), an edit through it — against a recording runtime, and the simulator's refusal |
 
 ### Blender-side checks — the ones that cannot lie
 
@@ -9600,6 +10129,7 @@ fails on any check script that starts Blender without them.
 ./scripts/run-context-blender-check.sh     # 54: temp_override off the main thread, and the six file loads refused there and run on the main thread
 ./scripts/run-image3d-blender-check.sh     # Image to 3D Model's relief and full 3D in Blender
 ./scripts/run-render-blender-check.sh      # renders, and the 3D View's own framing
+./scripts/run-renderanim-blender-check.sh  # Render Animation (video, frames, Cancel, Frame Step, EEVEE, a failure), nothing left changed, every tab's write, the World; each video then probed with ffprobe
 ./scripts/run-tools-blender-check.sh       # 271: every drag's preview against Blender's commit, Mirror Clipping, Auto Merge, parent chains and Affect Only Parents and Origins included, snaps onto Blender's own meshes, and what moves with what against the depsgraph
 ./scripts/run-modifier-blender-check.sh    # 238: each modifier row into Blender, its record back, edits made from Blender's record (Smooth by Angle's included), the Remesh row dragged to its floor, every type modifier_add takes on a mesh reaching the panel, the six new rows, every row's header (moves Blender refuses included), Multires's buttons from Edit and Sculpt Mode, the Sculpt stepper's own edit refused on a base too heavy to sculpt on a level (and, without its check line, setting it), a name with the record's separators, and the Data API browser on a modifier
 ./scripts/run-mirror-blender-check.sh      # 142: Blender's own sync of wire, empty and oversized objects, and a frame change, replayed through the Swift vertex for vertex

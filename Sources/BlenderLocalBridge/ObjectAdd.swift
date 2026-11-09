@@ -11,6 +11,33 @@ public enum ObjectAddition: Hashable, Sendable {
     case camera
     /// `VIEW3D_MT_add`'s Lattice row: `object.add(type='LATTICE')`.
     case lattice
+    /// `VIEW3D_MT_grease_pencil_add`'s Blank, Stroke and Monkey rows:
+    /// `object.grease_pencil_add(type=…)`.
+    case greasePencil(GreasePencilKind)
+
+    /// The Grease Pencil menu's first three rows (5.2.1), each a `type` of
+    /// `object.grease_pencil_add`. The Line Art rows are not offered: their
+    /// modifier is evaluated on every change of the scene it draws, which the
+    /// vertex budget does not price.
+    public enum GreasePencilKind: String, CaseIterable, Sendable {
+        case blank = "EMPTY", stroke = "STROKE", monkey = "MONKEY"
+
+        public var label: String {
+            switch self {
+            case .blank:  return "Blank"
+            case .stroke: return "Stroke"
+            case .monkey: return "Monkey"
+            }
+        }
+
+        public var icon: String {
+            switch self {
+            case .blank:  return "plus"
+            case .stroke: return "scribble"
+            case .monkey: return "face.smiling"
+            }
+        }
+    }
 
     /// `VIEW3D_MT_curve_add`'s first two rows, the Bézier ones. The NURBS
     /// rows, Empty Hair and Fur are not offered.
@@ -31,6 +58,7 @@ public enum ObjectAddition: Hashable, Sendable {
         case .light(let kind): return kind.label
         case .camera:          return "Camera"
         case .lattice:         return "Lattice"
+        case .greasePencil(let kind): return kind.label
         }
     }
 
@@ -42,6 +70,7 @@ public enum ObjectAddition: Hashable, Sendable {
         case .light(let kind): return kind.icon
         case .camera:          return "camera"
         case .lattice:         return "grid"
+        case .greasePencil(let kind): return kind.icon
         }
     }
 
@@ -121,6 +150,25 @@ public extension LastOperator {
 
         case .lattice:
             return addLattice(at: location)
+
+        case .greasePencil(let kind):
+            // Read out of `get_rna_type()` in 5.2.1: "Add Grease Pencil",
+            // Type (Blank, Stroke, Monkey and the Line Art kinds), then
+            // Radius and the placement every add takes. Measured headless:
+            // Blank is one layer named Layer with an empty keyframe at frame
+            // 1 and the Black material; Stroke the layers Color and Lines and
+            // a 175-point stroke; Monkey Fills and Lines, 1,216 points. Each
+            // has Show In Front on.
+            let kinds = ObjectAddition.GreasePencilKind.allCases
+            let type = Parameter(key: "type", label: "Type",
+                                 kind: .choice(kinds.map { Parameter.Option($0.rawValue, $0.label) }),
+                                 value: Double(kinds.firstIndex(of: kind) ?? 0),
+                                 softMin: 0, softMax: Double(kinds.count - 1), step: 0.02)
+            var op = LastOperator(name: "Add Grease Pencil", call: "bpy.ops.object.grease_pencil_add",
+                                  parameters: [type, radius], location: place,
+                                  restoration: .removeCreated)
+            op.dataCollection = "grease_pencils"
+            return op
 
         case .camera:
             var op = LastOperator(name: "Add Camera", call: "bpy.ops.object.camera_add",

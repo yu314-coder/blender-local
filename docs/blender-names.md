@@ -185,6 +185,8 @@ direction as an accessibility value in Blender's words for the property
 | Outliner display modes Scene, Orphan Data | Scenes, Unused Data |
 | Outliner toggles' tooltips | Disable in Viewports, Hide in Viewport, Disable in Renders |
 | Timeline: Auto Keying Settings; Hide Timeline | Auto Keyframing; Close Area |
+| (November 9) Timeline ▸ View ▸ Show Seconds (greyed) | Use Timecode (`SpaceDopeSheetEditor.show_seconds`'s RNA name in 5.2.1, the row TIME_MT_view draws; Ctrl+T) |
+| (November 9) Timeline's undo steps for its keys | the Dope Sheet's operators' names, which `ED_undo_push_op` names a step after: Select Keyframes, Box Select, Select All (both `action.select_all` and `action.select_column`), Transform, Duplicate (`action.duplicate_move`, where the 3D View's is Add Duplicate), Delete Keyframes, Paste Keyframes, Set Keyframe Interpolation, …; the markers' Add Time Marker, Select Time Marker, Move Time Marker, Rename Marker, Delete Markers — each held to `get_rna_type().name` by run-timeline-blender-check.sh |
 | (round 4's review) Object tab: Relations ▸ Show in Viewports | Visibility ▸ Show In ▸ Viewports (OBJECT_PT_visibility) |
 | (round 4's review) Light: a second panel titled Light for an area's Shape and Size | the one Light panel, Shape and Size where Radius is for a point or spot (DATA_PT_EEVEE_light) |
 | (round 4's review) Sculpt header ▸ Remesh: Voxel Remesh | Remesh (VIEW3D_PT_sculpt_voxel_remesh's button; its step is still Voxel Remesh, the operator's name) |

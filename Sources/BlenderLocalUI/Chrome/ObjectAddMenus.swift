@@ -18,6 +18,10 @@ struct ObjectAddItems: View {
         Button { add(.text) } label: {
             Label(ObjectAddition.text.label, systemImage: ObjectAddition.text.icon)
         }
+        // After Text (Point Cloud and Volume are not offered), then
+        // Blender's separator before Armature and Lattice.
+        GreasePencilAddMenu(add: add)
+        Divider()
         // After Text, as in Blender's menu (its Armature row is not offered).
         Button { add(.lattice) } label: {
             Label(ObjectAddition.lattice.label, systemImage: ObjectAddition.lattice.icon)
@@ -47,6 +51,21 @@ struct CurveAddMenu: View {
             }
         } label: {
             Label("Curve", systemImage: ObjectAddition.CurveKind.bezier.icon)
+        }
+    }
+}
+
+/// `VIEW3D_MT_grease_pencil_add`: Blank, Stroke and Monkey.
+struct GreasePencilAddMenu: View {
+    var add: (ObjectAddition) -> Void
+
+    var body: some View {
+        Menu {
+            ForEach(ObjectAddition.GreasePencilKind.allCases, id: \.self) { kind in
+                Button { add(.greasePencil(kind)) } label: { Label(kind.label, systemImage: kind.icon) }
+            }
+        } label: {
+            Label("Grease Pencil", systemImage: "pencil.and.scribble")
         }
     }
 }

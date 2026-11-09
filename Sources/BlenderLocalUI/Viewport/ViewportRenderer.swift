@@ -129,6 +129,10 @@ final class ViewportRenderer: NSObject, MTKViewDelegate {
 
     var scene: BKScene
     var camera: ViewportCamera
+    /// Draw Mode's stroke under the finger, before Blender has it
+    /// (GreasePencilPass.swift); set by the 3D View's coordinator, so no
+    /// SwiftUI view redraws for it.
+    var gpLiveStroke = GPLiveStroke()
     var shading: ViewportShading = .solid
     var options = ViewportOptions()
     /// Which transform gizmo to draw, or nil for none. Set from the active
@@ -480,6 +484,121 @@ final class ViewportRenderer: NSObject, MTKViewDelegate {
         encoder.setRenderPipelineState(resume)
     }
 
+    // MARK: material slots
+
+    /// One slot's triangles, as indices of the vertex buffer (the indexed
+    /// draw) and as corner numbers of the mesh's index buffer (the corner by
+    /// corner draw `*_shaded_vertex` does): the same triangles either way.
+    private struct SlotRun {
+        let slot: Int
+        let vertices: MTLBuffer
+        let corners: MTLBuffer
+        let count: Int
+    }
+
+    private var slotRunCache: [UUID: (mesh: Int, slots: Int, looks: Int, runs: [SlotRun])] = [:]
+
+    /// The object's triangles by material slot, when it uses more than one
+    /// (`BKObject.slotRuns`); nil when one look draws it all. Rebuilt when the
+    /// mesh, the triangles' slots or the number of slots change.
+    private func slotRuns(for obj: BKObject) -> [SlotRun]? {
+        guard obj.materialLooks.count > 1, !obj.triangleSlots.isEmpty else { return nil }
+        if let cached = slotRunCache[obj.id], cached.mesh == obj.meshVersion,
+           cached.slots == obj.materialSlotsVersion, cached.looks == obj.materialLooks.count {
+            return cached.runs.isEmpty ? nil : cached.runs
+        }
+        let indices = obj.mesh.indices
+        let runs: [SlotRun] = (obj.slotRuns() ?? []).compactMap { run in
+            var vertices: [UInt32] = []
+            var corners: [UInt32] = []
+            vertices.reserveCapacity(run.triangles.count * 3)
+            corners.reserveCapacity(run.triangles.count * 3)
+            for t in run.triangles {
+                for k in 0..<3 {
+                    vertices.append(indices[3 * t + k])
+                    corners.append(UInt32(3 * t + k))
+                }
+            }
+            guard let vb = device.makeBuffer(bytes: vertices, length: MemoryLayout<UInt32>.stride * vertices.count,
+                                             options: .storageModeShared),
+                  let cb = device.makeBuffer(bytes: corners, length: MemoryLayout<UInt32>.stride * corners.count,
+                                             options: .storageModeShared)
+            else { return nil }
+            return SlotRun(slot: run.slot, vertices: vb, corners: cb, count: vertices.count)
+        }
+        slotRunCache[obj.id] = (obj.meshVersion, obj.materialSlotsVersion, obj.materialLooks.count, runs)
+        if slotRunCache.count > scene.objects.count * 2 {
+            let live = Set(scene.objects.map(\.id))
+            slotRunCache = slotRunCache.filter { live.contains($0.key) }
+        }
+        return runs.isEmpty ? nil : runs
+    }
+
+    /// Draws each slot's triangles, `before` setting that slot's uniforms:
+    /// indexed by vertex, or corner by corner with `shaded` for a mesh
+    /// Blender shades by its faces or corners (as `drawSurface`).
+    private func drawSlotted(_ runs: [SlotRun], _ b: MeshBuffers, index: MTLBuffer,
+                             encoder: MTLRenderCommandEncoder, shaded: MTLRenderPipelineState?,
+                             resume: MTLRenderPipelineState, before: (Int) -> Void) {
+        var vertexNormalsOnly = false
+        #if DEBUG
+        vertexNormalsOnly = Self.debugVertexNormalsOnly
+        #endif
+        let byCorner = b.shading != nil && shaded != nil && !vertexNormalsOnly
+        if byCorner, let shading = b.shading, let shaded {
+            encoder.setRenderPipelineState(shaded)
+            encoder.setVertexBuffer(shading, offset: 0, index: 5)
+            encoder.setVertexBuffer(index, offset: 0, index: 6)
+            var domain = b.shadingDomain
+            encoder.setVertexBytes(&domain, length: MemoryLayout<UInt32>.stride, index: 7)
+        }
+        for run in runs {
+            before(run.slot)
+            encoder.drawIndexedPrimitives(type: .triangle, indexCount: run.count, indexType: .uint32,
+                                          indexBuffer: byCorner ? run.corners : run.vertices,
+                                          indexBufferOffset: 0)
+        }
+        if byCorner { encoder.setRenderPipelineState(resume) }
+    }
+
+    /// Solid's colour for a slot: its Viewport Display Color; under X-Ray in
+    /// Material Preview, the surface's base colour. An object the mirror sent
+    /// no slots for (the simulator's) keeps the colours it had.
+    private func solidColour(_ obj: BKObject, slot: Int) -> SIMD4<Float> {
+        if obj.materialLooks.isEmpty {
+            return shading == .material ? obj.color : SIMD4(0.80, 0.80, 0.80, 1)
+        }
+        let look = obj.materialLook(slot: slot)
+        return shading == .material ? look.previewBase : look.solidColour
+    }
+
+    /// Material Preview's uniforms for one slot of `obj`: the slot's look,
+    /// or — for an object the mirror sent no slots for — the app's own
+    /// material, black when its graph is not connected.
+    static func pbrUniforms(for obj: BKObject, slot: Int, viewProjection: simd_float4x4,
+                            cameraDistance: Float, eye: SIMD3<Float>, textured: Bool) -> PBRUniforms {
+        let base: SIMD4<Float>, emission: SIMD4<Float>, params: SIMD4<Float>
+        if obj.materialLooks.isEmpty {
+            let m = obj.material
+            // An unconnected graph renders black in Blender; matching that
+            // is what makes the node editor's link mean something.
+            let connected = obj.shaderGraph.isConnected
+            base = connected ? m.baseColor : SIMD4(0, 0, 0, 1)
+            emission = SIMD4(m.emission.x, m.emission.y, m.emission.z, connected ? m.emissionStrength : 0)
+            params = SIMD4(m.metallic, m.roughness, m.ior, cameraDistance)
+        } else {
+            let look = obj.materialLook(slot: slot)
+            base = look.previewBase
+            emission = look.previewEmission
+            params = SIMD4(look.metallic, look.roughness, look.ior, cameraDistance)
+        }
+        return PBRUniforms(viewProjection: viewProjection, model: obj.modelMatrix,
+                           normalMatrix: obj.modelMatrix.inverse.transpose,
+                           baseColor: base, emission: emission, params: params,
+                           // w flags whether a painted texture is bound.
+                           cameraPos: SIMD4(eye.x, eye.y, eye.z, textured ? 1 : 0))
+    }
+
     // MARK: draw
 
     func mtkView(_ view: MTKView, drawableSizeWillChange size: CGSize) {}
@@ -587,6 +706,7 @@ final class ViewportRenderer: NSObject, MTKViewDelegate {
                                               indexBufferOffset: 0)
             }
             drawEditedPoints(encoder, viewProjection: viewProjection)
+            drawGreasePencil(encoder, viewProjection: viewProjection, drawableSize: size)
             drawImageEmpties(images, pass: .blended, encoder: encoder, viewProjection: viewProjection)
             drawImageEmpties(images, pass: .front, encoder: encoder, viewProjection: viewProjection)
             return (viewProjection, false)
@@ -633,30 +753,32 @@ final class ViewportRenderer: NSObject, MTKViewDelegate {
                 guard let b = buffers(for: obj), let index = b.index else { continue }
                 encoder.setFrontFacing(Self.frontFacing(obj.modelMatrix))
                 if texturePaint.drawMaterial(obj, vertices: b.vertex, encoder: encoder, viewProjection: viewProjection, eye: eye, cameraDistance: camera.distance, resume: pbrPipeline) { continue }
-                let m = obj.material
-                // An unconnected graph renders black in Blender; matching that
-                // is what makes the node editor's link mean something.
-                let connected = obj.shaderGraph.isConnected
                 let albedo = texture(for: obj)
-                var u = PBRUniforms(
-                    viewProjection: viewProjection,
-                    model: obj.modelMatrix,
-                    normalMatrix: obj.modelMatrix.inverse.transpose,
-                    baseColor: connected ? m.baseColor : SIMD4(0, 0, 0, 1),
-                    emission: SIMD4(m.emission.x, m.emission.y, m.emission.z,
-                                    connected ? m.emissionStrength : 0),
-                    params: SIMD4(m.metallic, m.roughness, m.ior, camera.distance),
-                    // w flags whether a painted texture is bound.
-                    cameraPos: SIMD4(eye.x, eye.y, eye.z, albedo == nil ? 0 : 1))
+                var u = Self.pbrUniforms(for: obj, slot: obj.soleSlot, viewProjection: viewProjection,
+                                         cameraDistance: camera.distance, eye: eye, textured: albedo != nil)
                 encoder.setFragmentTexture(albedo, index: 0)
                 encoder.setFragmentSamplerState(linearSampler, index: 0)
                 encoder.setVertexBuffer(b.vertex, offset: 0, index: 0)
                 encoder.setVertexBytes(&u, length: MemoryLayout<PBRUniforms>.stride, index: 1)
                 encoder.setFragmentBytes(&u, length: MemoryLayout<PBRUniforms>.stride, index: 1)
-                drawSurface(b, index: index, encoder: encoder, shaded: pbrShadedPipeline, resume: pbrPipeline)
+                if let runs = slotRuns(for: obj) {
+                    // Each slot's faces with that slot's material, as
+                    // Blender draws a mesh of several materials.
+                    drawSlotted(runs, b, index: index, encoder: encoder, shaded: pbrShadedPipeline,
+                                resume: pbrPipeline) { slot in
+                        var su = Self.pbrUniforms(for: obj, slot: slot, viewProjection: viewProjection,
+                                                  cameraDistance: camera.distance, eye: eye,
+                                                  textured: albedo != nil)
+                        encoder.setVertexBytes(&su, length: MemoryLayout<PBRUniforms>.stride, index: 1)
+                        encoder.setFragmentBytes(&su, length: MemoryLayout<PBRUniforms>.stride, index: 1)
+                    }
+                } else {
+                    drawSurface(b, index: index, encoder: encoder, shaded: pbrShadedPipeline, resume: pbrPipeline)
+                }
             }
             drawWires(encoder, viewProjection: viewProjection)
             drawEditedPoints(encoder, viewProjection: viewProjection)
+            drawGreasePencil(encoder, viewProjection: viewProjection, drawableSize: size)
             drawImageEmpties(images, pass: .blended, encoder: encoder, viewProjection: viewProjection)
             drawImageEmpties(images, pass: .front, encoder: encoder, viewProjection: viewProjection)
             return (viewProjection, false)
@@ -689,6 +811,7 @@ final class ViewportRenderer: NSObject, MTKViewDelegate {
                             resume: attributePipeline)
             }
             drawWires(encoder, viewProjection: viewProjection)
+            drawGreasePencil(encoder, viewProjection: viewProjection, drawableSize: size)
             drawImageEmpties(images, pass: .blended, encoder: encoder, viewProjection: viewProjection)
             drawImageEmpties(images, pass: .front, encoder: encoder, viewProjection: viewProjection)
             return (viewProjection, true)
@@ -704,11 +827,11 @@ final class ViewportRenderer: NSObject, MTKViewDelegate {
             guard let b = buffers(for: obj), let index = b.index else { continue }
             encoder.setFrontFacing(Self.frontFacing(obj.modelMatrix))
             if texturePaint.drawSolid(obj, vertices: b.vertex, encoder: encoder, scene: scene, viewProjection: viewProjection, xray: options.xray, resume: options.xray ? meshXrayPipeline : meshPipeline) { continue }
-            // Solid mode uses Blender's uniform surface grey regardless of the
-            // object colour; Material Preview is where the colour shows.
-            var surface: SIMD4<Float> = shading == .material
-                ? obj.color
-                : SIMD4(0.80, 0.80, 0.80, 1)
+            // Solid shading's colour is Blender's default colour type,
+            // Material: each slot's Viewport Display Color (grey, 0.8, for
+            // no material). Material Preview under X-Ray draws through here
+            // with the surface's base colour.
+            var surface = solidColour(obj, slot: obj.soleSlot)
             if options.xray { surface.w = 0.4 }
             var u = Uniforms(viewProjection: viewProjection,
                              model: obj.modelMatrix,
@@ -729,6 +852,16 @@ final class ViewportRenderer: NSObject, MTKViewDelegate {
                 drawSurface(b, index: index, encoder: encoder, shaded: attributeShadedPipeline,
                             resume: attributePipeline)
                 encoder.setRenderPipelineState(surfacePipeline)
+            } else if let runs = slotRuns(for: obj) {
+                drawSlotted(runs, b, index: index, encoder: encoder,
+                            shaded: options.xray ? meshShadedXrayPipeline : meshShadedPipeline,
+                            resume: surfacePipeline) { slot in
+                    var su = u
+                    su.baseColor = solidColour(obj, slot: slot)
+                    if options.xray { su.baseColor.w = 0.4 }
+                    encoder.setVertexBytes(&su, length: MemoryLayout<Uniforms>.stride, index: 1)
+                    encoder.setFragmentBytes(&su, length: MemoryLayout<Uniforms>.stride, index: 1)
+                }
             } else {
                 drawSurface(b, index: index, encoder: encoder,
                             shaded: options.xray ? meshShadedXrayPipeline : meshShadedPipeline,
@@ -902,6 +1035,9 @@ final class ViewportRenderer: NSObject, MTKViewDelegate {
         }
 
         drawEditedPoints(encoder, viewProjection: viewProjection)
+        // Grease Pencil strokes, depth-tested against the surfaces (and the
+        // stroke being drawn, over everything).
+        drawGreasePencil(encoder, viewProjection: viewProjection, drawableSize: size)
 
         // Depth Default with Opacity, blended over the surfaces back to front;
         // then Depth Front and In Front, over everything.
@@ -1395,6 +1531,7 @@ final class ViewportRenderer: NSObject, MTKViewDelegate {
     /// against the untransformed mesh.
     func hitTest(ndc: SIMD2<Float>, aspect: Float) -> BKObject? {
         if let overlay = overlayHitTest(ndc: ndc) { return overlay }
+        if let strokes = greasePencilHitTest(ndc: ndc, aspect: aspect) { return strokes }
         let (origin, direction) = camera.ray(atNDC: ndc, aspect: aspect)
         var best: (obj: BKObject, t: Float)?
 

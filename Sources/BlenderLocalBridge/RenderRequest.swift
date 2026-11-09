@@ -71,6 +71,23 @@ public struct RenderRequest: Equatable, Sendable {
             case .best: return 256
             }
         }
+
+        /// The samples this quality gives an engine; nil for Workbench,
+        /// whose anti-aliasing is not a sample count here.
+        public func samples(for engine: Engine) -> Int? {
+            switch engine {
+            case .cycles: return cyclesSamples
+            case .eevee: return eeveeSamples
+            case .workbench: return nil
+            }
+        }
+
+        /// The quality the scene's own samples are, if they are one of the
+        /// three: the Render panel's chip reads the scene's Render Properties
+        /// ▸ Sampling, and shows the number when it is none of them.
+        public static func matching(samples: Int, engine: Engine) -> Quality? {
+            allCases.first { $0.samples(for: engine) == samples }
+        }
     }
 
     /// Which camera the image is taken from.
@@ -103,12 +120,53 @@ public struct RenderRequest: Equatable, Sendable {
         }
     }
 
+    /// Render Animation (Ctrl+F12): Blender's `render.render(animation=True)`
+    /// over the scene's frame range, through `_blenderkit_render.render_animation`.
+    public struct Animation: Equatable, Sendable {
+        /// An MPEG-4 H.264 video whatever the Output says — the app's default
+        /// while the scene's Output is Blender's untouched one
+        /// (`RenderSettings.outputUntouched`); otherwise the scene's own
+        /// File Format: a video, or a folder of numbered frames.
+        public var video: Bool
+        /// A file the frame being rendered is written to ("index total frame").
+        public var frames: String?
+        /// A file whose existence stops the render after the frame in hand.
+        public var cancel: String?
+        /// A file the outcome is written to, as JSON (`RenderAnimationResult`).
+        public var result: String?
+        /// Frame Start and End for this render only (Test All Features' three
+        /// frames); nil renders the scene's own range, as the panel does.
+        public var range: ClosedRange<Int>?
+
+        public init(video: Bool, frames: String? = nil, cancel: String? = nil, result: String? = nil,
+                    range: ClosedRange<Int>? = nil) {
+            self.video = video
+            self.frames = frames
+            self.cancel = cancel
+            self.result = result
+            self.range = range
+        }
+    }
+
+    /// Cycles' Device (Render Properties ▸ Device): GPU Compute, which is
+    /// Metal here, or the CPU.
+    public enum CyclesDevice: String, Sendable {
+        case gpu = "GPU", cpu = "CPU"
+    }
+
     public var engine: Engine = .cycles
-    public var quality: Quality = .good
-    public var width = 1920
-    public var height = 1080
+    /// The samples for this render only; nil renders with the scene's own
+    /// (Render Properties ▸ Sampling), which is what the Render panel does.
+    public var quality: Quality?
+    /// The size for this render only; nil renders at the scene's own
+    /// Resolution X, Y and % (Output Properties ▸ Format).
+    public var width: Int?
+    public var height: Int?
+    /// Cycles' device for this render. The panel passes the scene's own.
+    public var cyclesDevice: CyclesDevice = .gpu
     public var source: Source = .sceneCamera
-    /// Where the PNG goes.
+    /// Where the PNG goes; for an animation, the path without an extension
+    /// (`Animation`).
     public var output: String
     /// A file the script writes the device it rendered on into, for the panel
     /// to show. Nothing is written when it is nil.
@@ -116,28 +174,44 @@ public struct RenderRequest: Equatable, Sendable {
     /// A file Blender's own render progress is written to as it goes —
     /// "Rendering 25 / 128 samples" — for the panel to read while it waits.
     public var progressReport: String?
+    /// Render Animation rather than Render Image.
+    public var animation: Animation?
 
-    public init(engine: Engine = .cycles, quality: Quality = .good,
-                width: Int = 1920, height: Int = 1080,
+    public init(engine: Engine = .cycles, quality: Quality? = nil,
+                width: Int? = nil, height: Int? = nil,
+                cyclesDevice: CyclesDevice = .gpu,
                 source: Source = .sceneCamera, output: String,
-                deviceReport: String? = nil, progressReport: String? = nil) {
+                deviceReport: String? = nil, progressReport: String? = nil,
+                animation: Animation? = nil) {
         self.engine = engine
         self.quality = quality
         self.width = width
         self.height = height
+        self.cyclesDevice = cyclesDevice
         self.source = source
         self.output = output
         self.deviceReport = deviceReport
         self.progressReport = progressReport
+        self.animation = animation
     }
 
     /// The name a render is saved under: the date, so a folder of them reads
     /// in order and nothing is overwritten.
     public static func fileName(at date: Date = Date()) -> String {
+        "Render \(stamp(date)).png"
+    }
+
+    /// An animation's name, without its extension: Blender adds the video's
+    /// (.mp4, .mov), or it is the folder its numbered frames go in.
+    public static func animationName(at date: Date = Date()) -> String {
+        "Animation \(stamp(date))"
+    }
+
+    static func stamp(_ date: Date) -> String {
         let f = DateFormatter()
         f.locale = Locale(identifier: "en_US_POSIX")
         f.dateFormat = "yyyy-MM-dd 'at' HH.mm.ss"
-        return "Render \(f.string(from: date)).png"
+        return f.string(from: date)
     }
 
     /// Cycles renders on the CPU unless its Metal device is turned on.
@@ -152,6 +226,12 @@ public struct RenderRequest: Equatable, Sendable {
     var deviceLines: [String] {
         guard engine == .cycles else {
             return ["_device = \(Bpy.quote(engine.label + " on the GPU"))"]
+        }
+        // The scene's Device: CPU renders on the CPU, as in Blender.
+        guard cyclesDevice == .gpu else {
+            return ["scene.cycles.device = 'CPU'",
+                    "_device = 'Cycles on the CPU'",
+                    "print('Render device:', _device)"]
         }
         return [
             "_device = 'CPU'",
@@ -185,11 +265,17 @@ public struct RenderRequest: Equatable, Sendable {
     /// interface, so a failed render cannot leave it behind: the removal and
     /// the restored `scene.camera` are in a `finally`.
     public var python: String {
-        var lines = ["import bpy", "scene = bpy.context.scene"]
+        // What the render sets for itself is put back after it
+        // (`_blenderkit_render.save`/`restore`): Blender's F12 and Ctrl+F12
+        // change no setting, and the panel's renders used to leave the
+        // engine, size, samples, format and output path as they set them.
+        var lines = ["import bpy", "import _blenderkit_render", "scene = bpy.context.scene"]
         switch source {
         case .sceneCamera:
             lines.append("if scene.camera is None:")
-            lines.append("    raise RuntimeError(\"This scene has no camera. Add ▸ Camera, or render from the 3D Viewport.\")")
+            lines.append(animation == nil
+                ? "    raise RuntimeError(\"This scene has no camera. Add ▸ Camera, or render from the 3D Viewport.\")"
+                : "    raise RuntimeError(\"This scene has no camera. Add ▸ Camera, then Render Animation.\")")
         case .view(let view):
             lines += [
                 "_data = bpy.data.cameras.new(\(Bpy.quote(Self.viewCameraName)))",
@@ -210,29 +296,49 @@ public struct RenderRequest: Equatable, Sendable {
                 "scene.camera = _camera",
             ]
         }
-        lines += [
-            "scene.render.engine = \(Bpy.quote(engine.rawValue))",
-            "scene.render.resolution_x = \(width)",
-            "scene.render.resolution_y = \(height)",
-            "scene.render.resolution_percentage = 100",
-            "scene.render.image_settings.file_format = 'PNG'",
-            "scene.render.filepath = \(Bpy.quote(output))",
-            // Cycles is an add-on: its settings are only there once it is the
-            // engine, and a build without it has none at all.
-            "if hasattr(scene, 'cycles'):",
-            "    scene.cycles.samples = \(quality.cyclesSamples)",
-            "    scene.cycles.use_adaptive_sampling = True",
-            "if hasattr(scene, 'eevee'):",
-            "    scene.eevee.taa_render_samples = \(quality.eeveeSamples)",
-        ]
-        // Eevee's shadow pool, held to the quality's size for this render
-        // (`Quality.eeveeShadowPool`) and put back after, even if it raises.
-        var cleanup: [String] = []
+        lines += ["_bk_saved = _blenderkit_render.save(scene)",
+                  "scene.render.engine = \(Bpy.quote(engine.rawValue))"]
+        if let width, let height {
+            lines += ["scene.render.resolution_x = \(width)",
+                      "scene.render.resolution_y = \(height)",
+                      "scene.render.resolution_percentage = 100"]
+        }
+        if let range = animation?.range {
+            lines += ["scene.frame_start = \(range.lowerBound)",
+                      "scene.frame_end = \(range.upperBound)",
+                      "scene.frame_step = 1"]
+        }
+        if animation == nil {
+            // A still is read back as a PNG. In 5.x a video Output has to
+            // become an image one first: PNG is refused while the media type
+            // is Video.
+            lines += ["if getattr(scene.render.image_settings, 'media_type', 'IMAGE') != 'IMAGE':",
+                      "    scene.render.image_settings.media_type = 'IMAGE'",
+                      "scene.render.image_settings.file_format = 'PNG'",
+                      "scene.render.filepath = \(Bpy.quote(output))"]
+        }
+        if let quality {
+            lines += [
+                // Cycles is an add-on: its settings are only there once it is
+                // the engine, and a build without it has none at all.
+                "if hasattr(scene, 'cycles'):",
+                "    scene.cycles.samples = \(quality.cyclesSamples)",
+                "    scene.cycles.use_adaptive_sampling = True",
+                "if hasattr(scene, 'eevee'):",
+                "    scene.eevee.taa_render_samples = \(quality.eeveeSamples)",
+            ]
+        }
+        // Eevee's shadow pool, held to a size for this render
+        // (`Quality.eeveeShadowPool`; Good's 128 MB with the scene's own
+        // samples — the pool changes no pixel, measured, only the memory)
+        // and put back after, even if it raises.
+        var cleanup = ["    _blenderkit_render.restore(scene, _bk_saved)"]
         if engine == .eevee {
+            let pool = (quality ?? .good).eeveeShadowPool
             lines += [
                 "_bk_pool = getattr(getattr(scene, 'eevee', None), 'shadow_pool_size', None)",
-                "if _bk_pool is not None and int(_bk_pool) > \(quality.eeveeShadowPool):",
-                "    scene.eevee.shadow_pool_size = '\(quality.eeveeShadowPool)'",
+                "if _bk_pool is not None and int(_bk_pool) > \(pool):",
+                "    scene.eevee.shadow_pool_size = '\(pool)'",
             ]
             cleanup += ["    if _bk_pool is not None:",
                         "        scene.eevee.shadow_pool_size = _bk_pool"]
@@ -267,12 +373,16 @@ public struct RenderRequest: Equatable, Sendable {
                         "    bpy.data.objects.remove(_camera)",
                         "    bpy.data.cameras.remove(_data)"]
         }
-        let render = "bpy.ops.render.render(write_still=True)"
-        if cleanup.isEmpty {
-            lines.append(render)
+        let render: String
+        if let animation {
+            func optional(_ path: String?) -> String { path.map(Bpy.quote) ?? "None" }
+            render = "_blenderkit_render.render_animation(\(Bpy.quote(output)), "
+                + "video=\(animation.video ? "True" : "False"), frames=\(optional(animation.frames)), "
+                + "cancel=\(optional(animation.cancel)), result=\(optional(animation.result)))"
         } else {
-            lines += ["try:", "    " + render, "finally:"] + cleanup
+            render = "bpy.ops.render.render(write_still=True)"
         }
+        lines += ["try:", "    " + render, "finally:"] + cleanup
         return lines.joined(separator: "\n")
     }
 }

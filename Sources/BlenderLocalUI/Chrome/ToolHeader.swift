@@ -73,6 +73,10 @@ struct ToolHeader: View {
             weightBrushSettings
         case .texturePaint:
             TexturePaintHeader(scene: scene, tool: tool)
+        case .drawGreasePencil:
+            Text(tool.label)
+                .font(BTheme.Font.ui(11))
+                .foregroundStyle(BTheme.textDim)
         }
     }
 

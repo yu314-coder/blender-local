@@ -1152,6 +1152,37 @@ func bk_sync_edges(_ name: UnsafePointer<CChar>?, _ edges: UnsafePointer<UInt32>
     }
 }
 
+/// A Grease Pencil object's layers, materials and drawings
+/// (`_blenderkit_gpencil.push`, GreasePencil.swift): during a pass onto the
+/// object the pass just pushed, reusing what the one on screen already has
+/// when the bytes are the same; outside one — a frame change — onto the one
+/// on screen.
+@_cdecl("bk_sync_gpencil")
+func bk_sync_gpencil(_ name: UnsafePointer<CChar>?, _ record: UnsafePointer<CChar>?,
+                     _ blob: UnsafeRawPointer?, _ length: Int) -> Int32 {
+    onMain {
+        guard let name = name.map({ String(cString: $0) }), let record = record.map({ String(cString: $0) }),
+              length >= 0, length == 0 || blob != nil
+        else { return -1 }
+        let bytes = UnsafeRawBufferPointer(start: length == 0 ? nil : blob, count: length)
+        if SceneSync.active {
+            let target = SceneSync.pending.last?.name == name
+                ? SceneSync.pending.last
+                : SceneSync.pending.last { $0.name == name }
+            guard let target,
+                  target.installGreasePencil(record: record, blob: bytes,
+                                             previous: SceneSync.previous[name]) != nil
+            else { return -1 }
+            return 0
+        }
+        guard let screen = PythonSceneBridge.scene?.objects,
+              let target = SceneMirror.frameIndex.object(named: name, in: screen),
+              target.installGreasePencil(record: record, blob: bytes) != nil
+        else { return -1 }
+        return 0
+    }
+}
+
 /// Blender's active UV map and seams for the mesh just pushed. `bk_sync_push`
 /// carries positions, normals and triangles only, so the UV Editor read "No
 /// UVs on this mesh" on the real backend even straight after an unwrap.
@@ -1768,6 +1799,23 @@ func bk_anim_set_keys(_ names: UnsafePointer<UInt8>?, _ namesLength: Int32,
     }
 }
 
+@_cdecl("bk_anim_set_markers")
+func bk_anim_set_markers(_ names: UnsafePointer<UInt8>?, _ namesLength: Int32,
+                         _ cameras: UnsafePointer<UInt8>?, _ camerasLength: Int32,
+                         _ frames: UnsafePointer<Int32>?, _ selected: UnsafePointer<UInt8>?,
+                         _ count: Int32, _ lock: Int32) -> Int32 {
+    onMain {
+        guard let scene = PythonSceneBridge.scene else { return -1 }
+        let applied = AnimationMirror.applyMarkers(
+            names: AnimationMirror.names(animationBuffer(names, namesLength)),
+            cameras: AnimationMirror.names(animationBuffer(cameras, camerasLength)),
+            frames: animationBuffer(frames, count),
+            selected: animationBuffer(selected, count),
+            locked: lock != 0, to: scene)
+        return applied ? 0 : -1
+    }
+}
+
 @_cdecl("bk_anim_set_frame")
 func bk_anim_set_frame(_ frame: Int32, _ subframe: Double,
                        _ names: UnsafePointer<UInt8>?, _ namesLength: Int32,
@@ -1858,5 +1906,22 @@ func bk_tool_get_state(_ ints: UnsafeMutablePointer<Int32>?, _ doubles: UnsafeMu
         for (i, value) in scalars.ints.enumerated() { ints[i] = Int32(clamping: value) }
         for (i, value) in scalars.doubles.enumerated() { doubles[i] = value }
         return 0
+    }
+}
+
+/// The material slots of the mesh just pushed: each slot's look and each
+/// triangle's slot (`SceneMirror.carryMaterials`, MaterialSlots.swift).
+@_cdecl("bk_sync_materials")
+func bk_sync_materials(_ name: UnsafePointer<CChar>?, _ record: UnsafePointer<CChar>?,
+                       _ slots: UnsafePointer<Int32>?, _ count: Int32) -> Int32 {
+    onMain {
+        guard let name = name.map({ String(cString: $0) }), count >= 0, count == 0 || slots != nil
+        else { return -1 }
+        let carried = SceneMirror.carryMaterials(
+            record: record.map { String(cString: $0) } ?? "",
+            triangleSlots: UnsafeBufferPointer(start: slots, count: Int(count)),
+            named: name, pass: SceneSync.active ? SceneSync.pending : nil,
+            screen: PythonSceneBridge.scene?.objects ?? [], index: SceneMirror.frameIndex)
+        return carried < 0 ? -1 : 0
     }
 }

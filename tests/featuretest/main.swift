@@ -220,7 +220,8 @@ check("Object and Edit Mode are offered; Sculpt and the paint modes are hidden",
 check("the continuous interactions are drags, strokes and playback",
       Set(inventory.filter { $0.kind == .continuous }.map(\.key)) == ["view.orbit", "view.pan", "view.zoom",
           "tool.move", "tool.rotate", "tool.scale", "tool.measure", "select.box", "paint.vertex", "paint.weight",
-          "paint.texture", "sculpt.draw", "anim.play", "anim.scrub"])
+          "paint.texture", "sculpt.draw", "anim.play", "anim.scrub", "anim.key_move", "gpencil.draw",
+          "gpencil.erase"])
 
 // The runner is the interface's (it drives the 3D View), so it is read as
 // source: a `case "key"` for every key that runs, and no case for a key the

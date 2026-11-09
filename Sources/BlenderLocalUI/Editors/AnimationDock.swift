@@ -13,8 +13,13 @@ struct AnimationDock: View {
     var scene: BKScene
     var session: BpySession
     var bridge: BpyBridge?
+    /// Opens one of Blender's menus over the workspace — the Timeline's keys'
+    /// menus (T, R, V, Ctrl+E, X, Shift+S, Ctrl+M) and its right-click menu —
+    /// or, given nil, closes the one open.
+    var openMenu: (PopupMenuModel?) -> Void = { _ in }
 
     @State private var driver = TimelineDriver()
+    @State private var controller = TimelineController()
     @State private var ticker = PlaybackTicker()
     @State private var confirmingDelete = false
 
@@ -24,9 +29,12 @@ struct AnimationDock: View {
             // and keep its lifecycle while the Timeline is hidden.
             Color.clear.frame(height: 0)
             if scene.animation.showsTimeline {
-                TimelineView(scene: scene, session: session, driver: driver,
+                TimelineView(scene: scene, session: session, driver: driver, controller: controller,
                              confirmDelete: { confirmingDelete = true },
-                             close: { scene.animation.showsTimeline = false })
+                             close: {
+                                 controller.closed()
+                                 scene.animation.showsTimeline = false
+                             })
                     .transition(.move(edge: .bottom).combined(with: .opacity))
             }
         }
@@ -36,7 +44,11 @@ struct AnimationDock: View {
             bind()
             #if DEBUG
             framesLaunchIfRequested()
+            TimelineOps.launchIfRequested(scene: scene, session: session, driver: driver, controller: controller)
             #endif
+        }
+        .onChange(of: scene.animation.showsTimeline) { _, shown in
+            if !shown { controller.closed() }
         }
         // The bridge arrives after the first layout, when the root view has
         // made it.
@@ -61,11 +73,35 @@ struct AnimationDock: View {
                 .keyboardShortcut(.defaultAction)
             Button("Cancel", role: .cancel) {}
         }
+        // X's Delete Keyframes and X over the markers ask first, in
+        // Blender's words, with its Delete button.
+        .alert(controller.state.confirm?.message ?? "", isPresented: Binding(
+            get: { controller.state.confirm != nil },
+            set: { if !$0 { controller.state.confirm = nil } })) {
+            Button("Delete", role: .destructive) {
+                if let confirm = controller.state.confirm { controller.confirmed(confirm) }
+            }
+            .keyboardShortcut(.defaultAction)
+            Button("Cancel", role: .cancel) { controller.state.confirm = nil }
+        }
+        // F2's Rename Marker (TOPBAR_PT_name_marker: "Marker Name", one field).
+        .alert("Rename Marker", isPresented: Binding(
+            get: { controller.state.renaming },
+            set: { if !$0 { controller.state.renaming = false } })) {
+            TextField("Marker Name", text: Binding(get: { controller.state.renameText },
+                                                   set: { controller.state.renameText = $0 }))
+                .autocorrectionDisabled()
+            Button("Rename") { controller.commitRename() }
+                .keyboardShortcut(.defaultAction)
+            Button("Cancel", role: .cancel) { controller.state.renaming = false }
+        }
         .focusedSceneValue(\.animationKeys, keys)
     }
 
     private func bind() {
         driver.bind(scene: scene, session: session, bridge: bridge)
+        controller.bind(scene: scene, session: session, bridge: bridge, driver: driver)
+        controller.openMenu = openMenu
     }
 
     #if DEBUG

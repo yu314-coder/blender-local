@@ -138,20 +138,19 @@ final class TexturePaintRenderer {
 
         encoder.setRenderPipelineState(pipeline)
         bind(buffers, vertices: vertices, encoder: encoder)
-        let m = obj.material
-        let connected = obj.shaderGraph.isConnected
         for slot in buffers.slots {
             let linked = target.surface.isBaseColor(slot: slot.slot)
             let image = linked && slot.slot < target.images.count ? target.images[slot.slot] : nil
             let texture = image.flatMap { gpu($0)?.srgb }
-            let base: SIMD4<Float> = !connected ? SIMD4(0, 0, 0, 1) : (texture != nil ? SIMD4(1, 1, 1, 1) : m.baseColor)
-            var u = PBRUniforms(viewProjection: viewProjection, model: obj.modelMatrix,
-                                normalMatrix: obj.modelMatrix.inverse.transpose,
-                                baseColor: base,
-                                emission: SIMD4(m.emission.x, m.emission.y, m.emission.z,
-                                                connected ? m.emissionStrength : 0),
-                                params: SIMD4(m.metallic, m.roughness, m.ior, cameraDistance),
-                                cameraPos: SIMD4(eye.x, eye.y, eye.z, texture == nil ? 0 : 1))
+            // Each slot's own material (the mirror's looks), or the app's
+            // one material where the mirror sent none.
+            var u = ViewportRenderer.pbrUniforms(for: obj, slot: slot.slot, viewProjection: viewProjection,
+                                                 cameraDistance: cameraDistance, eye: eye,
+                                                 textured: texture != nil)
+            let connected = obj.materialLooks.isEmpty ? obj.shaderGraph.isConnected
+                : obj.materialLook(slot: slot.slot).connected
+            // The image replaces the socket's own value, as a link does.
+            if texture != nil, connected { u.baseColor = SIMD4(1, 1, 1, u.baseColor.w) }
             encoder.setVertexBytes(&u, length: MemoryLayout<PBRUniforms>.stride, index: 1)
             encoder.setFragmentBytes(&u, length: MemoryLayout<PBRUniforms>.stride, index: 1)
             encoder.setFragmentTexture(texture ?? blank, index: 0)

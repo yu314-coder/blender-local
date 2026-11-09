@@ -57,9 +57,18 @@ public enum RenderingWorkspaceProgress {
         return parts.joined(separator: ":")
     }
 
-    /// A stage line, short enough for one row under the image.
+    /// A stage line, short enough for one row under the image: the part of
+    /// it that says what Blender is doing. Cycles leads with its memory —
+    /// "Mem:5825.27M, Peak:5825.27M | Loading render kernels (may take a few
+    /// minutes the first time)" — and the panel used to show "Mem: 5825M"
+    /// through the whole first kernel build (measured in the app, November 9).
     static func shortened(_ line: String) -> String {
-        let head = line.split(separator: "|").first.map(String.init) ?? line
-        return head.trimmingCharacters(in: .whitespaces)
+        let parts = line.split(separator: "|").map { $0.trimmingCharacters(in: .whitespaces) }
+            .filter { !$0.isEmpty }
+        let bookkeeping = ["Mem", "Peak", "Remaining", "Frame:", "Fra:", "Time:"]
+        if let stage = parts.first(where: { part in !bookkeeping.contains { part.hasPrefix($0) } }) {
+            return stage
+        }
+        return parts.first ?? line.trimmingCharacters(in: .whitespaces)
     }
 }

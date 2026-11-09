@@ -24,8 +24,11 @@ struct ImageEditor: View {
                 if let image {
                     Text("\(image.name)  \(image.width)×\(image.height)")
                         .font(BTheme.Font.mono(10)).foregroundStyle(BTheme.textDim)
+                        // A dated render's name is long: it gives way to the
+                        // header's controls rather than pushing them off.
+                        .lineLimit(1).truncationMode(.middle).layoutPriority(-1)
                 }
-                Spacer()
+                Spacer(minLength: 4)
                 if let headerContent { headerContent }
             }
 

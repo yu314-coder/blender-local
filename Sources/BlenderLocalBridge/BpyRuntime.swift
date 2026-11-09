@@ -778,6 +778,14 @@ public final class BpySession {
     /// that says what happened. Instead the run is announced, the output
     /// follows, and the outcome is reported back for the editor's banner.
     public func runScript(_ source: String, scene: BKScene) {
+        runScript(source, scene: scene, recordsUndo: true)
+    }
+
+    /// `recordsUndo` false: a run that leaves the scene as it found it and is
+    /// no step of the user's — the Render panel's render, which Blender's own
+    /// F12 and Ctrl+F12 record no undo step for. The script puts back what it
+    /// set (`_blenderkit_render.restore`).
+    public func runScript(_ source: String, scene: BKScene, recordsUndo: Bool) {
         let trimmed = source.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else {
             lastRun = RunOutcome(lines: 0, duration: 0, error: "Nothing to run — the editor is empty.",
@@ -845,7 +853,7 @@ public final class BpySession {
         runElapsed = 0
         if offMainThread {
             runOffMainThread(source, scene: scene, lines: lines,
-                             before: before, streamStart: streamStart)
+                             before: before, streamStart: streamStart, recordsUndo: recordsUndo)
             return
         }
         // Only when the number on screen would actually change. `runElapsed`
@@ -883,14 +891,14 @@ public final class BpySession {
         isRunning = false
         runElapsed = 0
         finish(output, source: source, lines: lines, elapsed: elapsed,
-               before: before, streamStart: streamStart, scene: scene)
+               before: before, streamStart: streamStart, scene: scene, recordsUndo: recordsUndo)
     }
 
     /// Everything that happens once a script has finished, whichever thread it
     /// ran on. Always called on the main thread.
     private func finish(_ output: [BpyLine], source: String, lines: Int,
                         elapsed: TimeInterval, before: Int, streamStart: Int,
-                        scene: BKScene) {
+                        scene: BKScene, recordsUndo: Bool = true) {
         // `evaluate` hands back the same text it streamed, so appending it as
         // well would double every line. What the return adds is the *kind* —
         // which lines were errors, and so which are red — so the streamed
@@ -922,7 +930,12 @@ public final class BpySession {
         lastRun = outcome
         console.append(BpyLine(error == nil ? .info : .error, outcome.consoleLine))
         disarmCyclesWarning(scene: scene)
-        pushUndo("Run Script")
+        if recordsUndo {
+            pushUndo("Run Script")
+        } else if usesRealBlender {
+            // No step, but what reads Blender keyed to the revision reads again.
+            backendRevision &+= 1
+        }
     }
 
     /// Whether `_blenderkit_cycles` is armed for the run in progress.
@@ -1297,7 +1310,7 @@ public final class BpySession {
         DispatchQueue(label: "bk.python.script", qos: .userInitiated)
 
     private func runOffMainThread(_ source: String, scene: BKScene, lines: Int,
-                                  before: Int, streamStart: Int) {
+                                  before: Int, streamStart: Int, recordsUndo: Bool = true) {
         // No heartbeat here. It exists to beg the interpreter for a turn on the
         // main thread; when the script is not on the main thread there is
         // nothing to beg for, and the pending calls would only cost the script
@@ -1323,7 +1336,8 @@ public final class BpySession {
                 self.isRunning = false
                 self.runElapsed = 0
                 self.finish(output, source: source, lines: lines, elapsed: elapsed,
-                            before: before, streamStart: streamStart, scene: scene)
+                            before: before, streamStart: streamStart, scene: scene,
+                            recordsUndo: recordsUndo)
             }
         }
     }

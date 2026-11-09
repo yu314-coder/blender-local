@@ -63,7 +63,17 @@ enum PropertiesTab: String, CaseIterable, Identifiable {
     var isImplemented: Bool {
         switch self {
         // Constraints since round 4, group 7: Blender's Object Constraints.
-        case .object, .modifiers, .constraints, .data, .material, .scene: return true
+        // Render, Output and World since November 9 (RenderPropertiesTabs.swift).
+        case .render, .output, .scene, .world,
+             .object, .modifiers, .constraints, .data, .material: return true
+        default: return false
+        }
+    }
+
+    /// The scene's tabs, above Blender's line: not about the active object.
+    var isSceneTab: Bool {
+        switch self {
+        case .tool, .render, .output, .viewLayer, .scene, .world: return true
         default: return false
         }
     }

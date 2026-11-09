@@ -37,7 +37,8 @@ struct LayoutWorkspace: View {
     @State private var panel: String?
     /// F12 opened the Render panel: it renders as it opens, as Blender's
     /// F12 does. Cleared when the panel closes.
-    @State private var renderOnOpen = false
+    /// What opened the Render panel: Blender's Render menu rows and keys.
+    @State private var renderOpening: RenderPanelAction?
     /// Blender's Sidebar (View ▸ Sidebar, N): Item, Tool and View down the
     /// right edge of the 3D View. It existed (SidebarN) and nothing showed it,
     /// so Edit Mode had nowhere to type a vertex's position (round 3's
@@ -508,11 +509,13 @@ struct LayoutWorkspace: View {
                     }
                 }
             }
-            AnimationDock(scene: scene, session: session, bridge: bridge)
+            // The Timeline's own menus (T, R, V, X, Shift+S, its right-click)
+            // open over the workspace as the 3D View's do.
+            AnimationDock(scene: scene, session: session, bridge: bridge, openMenu: { popupMenu = $0 })
                 .helpAnchor(.timeline)
         }
         .sheet(isPresented: Binding(get: { panel != nil }, set: { if !$0 { panel = nil } }),
-               onDismiss: { renderOnOpen = false }) {
+               onDismiss: { renderOpening = nil }) {
             NavigationStack {
                 Group {
                     switch panel {
@@ -521,7 +524,7 @@ struct LayoutWorkspace: View {
                                             increment: $options.snapIncrement)
                     case "Animation": TimelineView(scene: scene, session: session)
                     case "Render": RenderingWorkspace(scene: scene, session: session, bridge: bridge, camera: $camera,
-                                                      startsRendering: renderOnOpen)
+                                                      opening: renderOpening)
                     case "Image to 3D Model":
                         ImageToModelSheet(scene: scene, session: session, bridge: bridge) { panel = nil }
                     default: EmptyView()
@@ -539,6 +542,11 @@ struct LayoutWorkspace: View {
         }
         // A model made from a picture is its texture: show it in Material
         // Preview, framed, rather than as a grey lump in Solid.
+        // Blender's Render menu, from the top bar and the menu bar
+        // (RenderPanelAction); an open Render panel answers it itself.
+        .onReceive(NotificationCenter.default.publisher(for: RenderPanelAction.notification)) { note in
+            if let action = RenderPanelAction(note) { openRender(action) }
+        }
         .onReceive(NotificationCenter.default.publisher(for: ImageToModelImport.didCreate)) { _ in
             shading = .material
             _ = camera.frameSelected(in: scene)
@@ -554,6 +562,20 @@ struct LayoutWorkspace: View {
         .task {
             let args = ProcessInfo.processInfo.arguments
             if let i = args.firstIndex(of: "-panel"), i + 1 < args.count { show(args[i + 1]) }
+        }
+        // `-render-action renderAnimation` (or renderImage, viewRender,
+        // viewAnimation): the top bar's Render menu row, pressed once a
+        // `-eval64` script has finished (RenderingWorkspace's DEBUG lines
+        // report the render; `-render-cancel-at <n>` presses Cancel at frame n).
+        .task(id: bridge == nil) {
+            let args = ProcessInfo.processInfo.arguments
+            guard let i = args.firstIndex(of: "-render-action"), i + 1 < args.count,
+                  let action = RenderPanelAction(rawValue: args[i + 1]), bridge != nil else { return }
+            try? await Task.sleep(nanoseconds: 2_500_000_000)
+            while session.isRunning { try? await Task.sleep(nanoseconds: 100_000_000) }
+            print("[bk-render] Render menu: \(action.title)")
+            fflush(stdout)
+            action.post()
         }
         // `-sculpt-enter` picks Sculpt from the Sculpt menu (`choose`) once a
         // `-eval64` script has finished: Blender's Sculpt Mode on the active
@@ -572,6 +594,15 @@ struct LayoutWorkspace: View {
         }
         // `-xray` turns on X-Ray, as View Style ▸ X-Ray does.
         .task { if ProcessInfo.processInfo.arguments.contains("-xray") { options.xray = true } }
+        // `-shading solid|material|wireframe` picks Viewport Shading, as the
+        // header's buttons do, for a picture of a material in either.
+        .task {
+            let args = ProcessInfo.processInfo.arguments
+            if let i = args.firstIndex(of: "-shading"), i + 1 < args.count,
+               let picked = ViewportShading(rawValue: args[i + 1]) {
+                shading = picked
+            }
+        }
         #if DEBUG
         // `-measure-overlays stats,length,eangle,area,fangle`: Viewport
         // Overlays' Statistics and Measurement switches, as the More menu
@@ -1488,6 +1519,13 @@ struct LayoutWorkspace: View {
         // script — and a brush in hand would now mean nothing.
         .onChange(of: scene.mode) { _, mode in
             if !mode.isBrushMode, tool.isBrush { tool = .select }
+            // Draw Mode's toolbar is Cursor, Draw and Erase: an Undo back
+            // into it, or a script's mode_set, lands on Draw.
+            if mode == .drawGreasePencil, tool != .cursor, tool.requiredMode != .drawGreasePencil {
+                tool = .gpDraw
+                scene.greasePencilDraw = bridge?.greasePencilState()
+            }
+            if mode != .drawGreasePencil, tool.requiredMode == .drawGreasePencil { tool = .select }
             leaveHiddenMode()
         }
         // A script that left Blender in a mode the app does not offer, once
@@ -2123,10 +2161,7 @@ struct LayoutWorkspace: View {
             canRepeatLast: { bridge?.repeatable != nil },
             repeatLast: { if let op = bridge?.repeatable { bridge?.perform(op) } },
             searchOperators: { showOperations = true },
-            render: {
-                renderOnOpen = true
-                show("Render")
-            },
+            renderAction: { openRender($0) },
             brushPanel: session.usesRealBlender && [.sculpt, .vertexPaint, .weightPaint].contains(scene.mode)
                 ? { AnyView(BrushContextPanel(scene: scene, session: session, bridge: bridge)) } : nil,
             pivot: { scene.tools.pivot },
@@ -2305,6 +2340,8 @@ struct LayoutWorkspace: View {
         guard scene.active != nil else { return [] }
         var modes: [InteractionMode] = [.object]
         if canEdit || canEditPoints { modes.append(.edit) }
+        // A Grease Pencil object's Draw Mode (`PAINT_GREASE_PENCIL`).
+        if scene.active?.isGreasePencil == true, session.usesRealBlender { modes.append(.drawGreasePencil) }
         if canEdit {
             modes.append(.sculpt)
             if session.usesRealBlender { modes += PaintModeBpy.modes }
@@ -2322,6 +2359,7 @@ struct LayoutWorkspace: View {
         case .sculpt:       choose(.sculptDraw)
         case .texturePaint: choose(.paintDraw)
         case .vertexPaint, .weightPaint: enterPaintMode(mode)
+        case .drawGreasePencil: enterDrawMode()
         }
     }
 
@@ -2642,6 +2680,11 @@ struct LayoutWorkspace: View {
                             // Sculpt Mode has neither.
                             sculptMenu
                             SculptHeader(scene: scene, session: session, bridge: bridge)
+                        } else if scene.mode == .drawGreasePencil {
+                            // Blender's Draw Mode tool header: the brush, its
+                            // colour (the material), Size and Strength; the
+                            // eraser's Mode for Erase.
+                            GreasePencilHeader(scene: scene, session: session, bridge: bridge, tool: tool)
                         } else if paintingInBlender {
                             // Blender's Weight Paint and Vertex Paint headers:
                             // the brush and its settings. No Add or Mesh menu:
@@ -2728,6 +2771,13 @@ struct LayoutWorkspace: View {
                           systemImage: current == .edit ? "checkmark" : InteractionMode.edit.icon)
                 }
             }
+            // A Grease Pencil object's Draw Mode, Blender's own.
+            if scene.active?.isGreasePencil == true, session.usesRealBlender {
+                Button { if current != .drawGreasePencil { enterDrawMode() } } label: {
+                    Label(InteractionMode.drawGreasePencil.label,
+                          systemImage: current == .drawGreasePencil ? "checkmark" : InteractionMode.drawGreasePencil.icon)
+                }
+            }
             // Object Mode and Edit Mode only (`InteractionMode.isOffered`).
             if canEdit, InteractionMode.sculpt.isOffered {
                 Button { if current != .sculpt { choose(.sculptDraw) } } label: {
@@ -2761,7 +2811,34 @@ struct LayoutWorkspace: View {
     /// a sculpt or paint mode as picking a tool that needs none does
     /// (`ActiveTool.mode(whenChosenFrom:)`).
     private func toObjectMode() {
-        if editing { setEditing(false) } else if scene.mode != .object { choose(.select) }
+        if editing { setEditing(false) }
+        else if scene.mode == .drawGreasePencil { leaveDrawMode() }
+        else if scene.mode != .object { choose(.select) }
+    }
+
+    /// Blender's Draw Mode for the active Grease Pencil object, as its mode
+    /// menu enters it: one step, "Strokes Paint Mode Toggle". The mirror then
+    /// reports the mode, and the toolbar is Draw Mode's (Draw, Erase).
+    private func enterDrawMode() {
+        guard scene.active?.isGreasePencil == true, let bridge else { return }
+        if let held = session.gestureHold {
+            bridge.showReport(InteractionMode.drawGreasePencil.label, held)
+            return
+        }
+        bridge.run(GreasePencilBpy.enter, undo: GreasePencilBpy.modeUndo)
+        guard scene.mode == .drawGreasePencil else { return }
+        scene.greasePencilDraw = bridge.greasePencilState()
+        tool = .gpDraw
+    }
+
+    private func leaveDrawMode() {
+        guard let bridge else { return }
+        if let held = session.gestureHold {
+            bridge.showReport(InteractionMode.object.label, held)
+            return
+        }
+        bridge.run(GreasePencilBpy.leave, undo: GreasePencilBpy.modeUndo)
+        if scene.mode != .drawGreasePencil { tool = .select }
     }
 
     /// A scene saved in a mode the app does not offer (`InteractionMode.isOffered`)
@@ -2784,6 +2861,15 @@ struct LayoutWorkspace: View {
     private var toolShelf: some View {
         ScrollView(.vertical, showsIndicators: false) {
             VStack(spacing: 2) {
+                if scene.mode == .drawGreasePencil {
+                    // Blender's Draw Mode toolbar: Cursor, then Draw and Erase.
+                    ForEach([ActiveTool.cursor, .gpDraw, .gpErase], id: \.self) { item in
+                        Button { choose(item) } label: {
+                            shelfItem(item.label, icon: item.icon, active: tool == item)
+                        }
+                        .accessibilityLabel(item.label)
+                    }
+                } else {
                 selectToolMenu
                 // Blender's toolbar order: the select tools, Cursor, the
                 // transforms, then Measure (after Annotate, which is not built).
@@ -2792,6 +2878,7 @@ struct LayoutWorkspace: View {
                         shelfItem(item.label, icon: item.icon, active: tool == item)
                     }
                     .accessibilityLabel(item.label)
+                }
                 }
                 // Image to 3D Model, the app's own, where it can be seen
                 // without opening a menu.
@@ -2952,6 +3039,14 @@ struct LayoutWorkspace: View {
     /// other (Render, Tool Settings, …) as a sheet.
     private func show(_ name: String) {
         if name == "Outliner" || name == "Properties" { showsEditors = true } else { panel = name }
+    }
+
+    /// The Render panel, opened for one of Blender's Render menu rows (F12,
+    /// Ctrl+F12, F11, Ctrl+F11). An open panel answers the row itself.
+    private func openRender(_ action: RenderPanelAction) {
+        guard panel != "Render" else { return }
+        renderOpening = action
+        show("Render")
     }
 
     /// A header setting drawn as Blender draws it, an icon: 44 points.
@@ -3872,6 +3967,12 @@ struct LayoutWorkspace: View {
                                note: !session.usesRealBlender
                                    ? "Statistics reads Blender's edit mesh, which the simulator's stand-in does not have."
                                    : (!editingMesh ? "Statistics is drawn for a mesh in Edit Mode." : nil))
+                    // Viewport Overlays ▸ Grease Pencil ▸ Onion Skins
+                    // (`use_gpencil_onion_skin`), with a Grease Pencil
+                    // object in the scene.
+                    if scene.objects.contains(where: \.isGreasePencil) {
+                        moreSwitch("Onion Skins", icon: "circle.dotted", isOn: $options.showOnionSkins)
+                    }
                     if editingMesh {
                         moreSwitch(MeasureOverlays.edgeLengthLabel, icon: "arrow.left.and.right",
                                    isOn: $options.measure.edgeLength)
@@ -5269,6 +5370,10 @@ private struct ViewportInfoRow: View {
                      Hint(gesture: "Drag elsewhere", action: "Rotate View")]
         case .cursor:  hints = [Hint(gesture: "Tap", action: "Set 3D Cursor"), Hint(gesture: "Drag", action: "Rotate View")]
         case .measure: hints = [Hint(gesture: "Drag", action: "Measure")]
+        // Draw Mode: Blender's Brush Stroke keymap — the stroke, and Ctrl's
+        // `brush_toggle='ERASE'`.
+        case .gpDraw:  hints = [Hint(gesture: "Drag", action: "Draw"), Hint(gesture: "Ctrl Drag", action: "Erase")]
+        case .gpErase: hints = [Hint(gesture: "Drag", action: "Erase")]
         default:       hints = [Hint(gesture: "Tap", action: select), Hint(gesture: "Drag", action: "Rotate View")]
         }
         return hints + [Hint(gesture: "Two fingers", action: "Move View"), Hint(gesture: "Pinch", action: "Zoom")]

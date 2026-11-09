@@ -38,7 +38,7 @@ for b in open(CALLS).read().split("#--"):
     name, part = head[4:].split()[0], head[4:].split()[-1]
     blocks[name][part] = body.strip()
 
-for module in ("_blenderkit_context", "_blenderkit_knife"):
+for module in ("_blenderkit_context", "_blenderkit_knife", "_blenderkit_render"):
     spec = importlib.util.spec_from_file_location(
         module, ROOT / "Resources" / "python" / "site" / (module + ".py"))
     sys.modules[module] = importlib.util.module_from_spec(spec)

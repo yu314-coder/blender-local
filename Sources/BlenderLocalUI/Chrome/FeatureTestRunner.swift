@@ -1,4 +1,5 @@
 import SwiftUI
+import AVFoundation
 import UIKit
 import MetalKit
 import simd
@@ -456,6 +457,15 @@ final class FeatureTestRunner {
 
     /// A tap on the object in the Outliner, which makes it alone selected and
     /// active.
+    /// What the Material tab reads, and one of its controls as it sends it.
+    private func materialState(_ name: String) -> MaterialPanelState? {
+        bridge.capture(MaterialBpy.state(object: name)).flatMap(MaterialPanelState.parse)
+    }
+
+    private func materialCommand(_ command: MaterialBpy.Command) -> BpyBridge.Outcome {
+        bridge.run(command.call, undo: command.undo, executing: command.executed)
+    }
+
     private func selectOnly(_ name: String) throws {
         try need(bridge.run(Bpy.objectSelection([name], active: name), undo: nil), "selecting \(name)")
     }
@@ -1289,11 +1299,40 @@ final class FeatureTestRunner {
             }
 
         case "properties.material":
+            // The Material tab's Base Color, as its colour field sends it:
+            // the state read from Blender, then the one write.
+            let s = try onSphere()
+            var state = materialState(s.name)
+            if state?.material == nil {
+                try need(materialCommand(MaterialBpy.newMaterial(object: s.name, editing: false)), "New Material")
+                state = materialState(s.name)
+            }
+            guard let material = state?.material, let node = material.surface.node,
+                  let base = node.inputs.first(where: { $0.id == "Base Color" || $0.id == "Color" })
+            else { throw Failure(detail: "\(s.name)'s material has no Base Color to set") }
+            return await command {
+                try need(materialCommand(MaterialBpy.setInput(base, srgb: SIMD3(0.8, 0.35, 0.2), node: node.name,
+                                                       material: material.name, editing: false)))
+                return "\(material.name)'s \(base.label)"
+            }
+        case "properties.material_slot":
             let s = try onSphere()
             return await command {
-                try need(bridge.run([Bpy.setMaterial(s.name, baseColor: SIMD4(0.8, 0.35, 0.2, 1),
-                                                     metallic: 0, roughness: 0.5)], undo: "Set Material"))
-                return "\(s.name)'s Base Color"
+                try need(materialCommand(MaterialBpy.addSlot(object: s.name, editing: false)))
+                try need(materialCommand(MaterialBpy.newMaterial(object: s.name, editing: false)))
+                let slots = materialState(s.name)?.slots.count ?? 0
+                return "\(s.name): \(slots) slots, the last with \(materialState(s.name)?.material?.name ?? "?")"
+            }
+        case "edit.material_assign":
+            let obj = try editing()
+            if (materialState(obj.name)?.slots.count ?? 0) < 2 {
+                try need(materialCommand(MaterialBpy.addSlot(object: obj.name, editing: true)))
+                try need(materialCommand(MaterialBpy.newMaterial(object: obj.name, editing: true)))
+            }
+            try selectRow("all")
+            return await command {
+                try need(materialCommand(MaterialBpy.assign(object: obj.name)))
+                return "every face of \(obj.name) to slot \((materialState(obj.name)?.active ?? 0) + 1)"
             }
         case "modifier.add":
             let child = try cube("child", at: SIMD3(3, 0, 0))
@@ -1570,6 +1609,59 @@ final class FeatureTestRunner {
             try objectMode()
             return m
 
+        case "add.grease_pencil":
+            try objectMode()
+            return await command {
+                // Add ▸ Grease Pencil ▸ Monkey (`GreasePencilAddMenu`).
+                try need(bridge.add(.greasePencil(.monkey), at: scene.cursor, view: view3D))
+                guard let gp = scene.active, gp.isGreasePencil else { throw Failure(detail: "no Grease Pencil object") }
+                return "\(gp.name): \(gp.greasePencilInfo?.pointCount ?? 0) points drawn"
+            }
+        case "mode.draw":
+            guard let gp = scene.objects.last(where: \.isGreasePencil) else { throw Failure(detail: "no Grease Pencil object") }
+            if scene.activeID != gp.id { try need(bridge.run(Bpy.select(gp.name))) }
+            return await command {
+                // The mode menu's Draw Mode.
+                try need(bridge.run(GreasePencilBpy.enter, undo: GreasePencilBpy.modeUndo))
+                guard scene.mode == .drawGreasePencil else { throw Failure(detail: "Blender stayed in \(scene.mode.label)") }
+                scene.greasePencilDraw = bridge.greasePencilState()
+                return "\(gp.name) in Draw Mode, the \(scene.greasePencilDraw?.brush?.name ?? "?") brush"
+            }
+        case "gpencil.draw", "gpencil.erase":
+            guard scene.mode == .drawGreasePencil, let gp = scene.active, gp.isGreasePencil else {
+                throw Failure(detail: "not in Draw Mode")
+            }
+            let erasing = entry.key == "gpencil.erase"
+            if erasing { scene.greasePencilEraser.mode = .stroke }
+            await settle()
+            let (c, view) = try viewport()
+            let b = view.bounds
+            let span = min(b.width, b.height) * 0.22
+            func at(_ p: Double) -> CGPoint {
+                CGPoint(x: b.midX - span + 2 * span * p, y: b.midY + sin(p * 2 * .pi) * span * (erasing ? 0.05 : 0.3))
+            }
+            let before = gp.greasePencilInfo?.strokeCount ?? 0
+            return await continuous(begin: {
+                guard c.beginGreasePencil(at: at(0), in: view, pressure: 0.6, erasing: erasing) else {
+                    throw Failure(detail: "the stroke did not start" + (bridge.report.map { ": \($0.message)" } ?? ""))
+                }
+            }, step: { p in
+                c.addGreasePencil(at(p), pressure: Float(0.4 + 0.6 * p), in: view)
+            }, end: {
+                c.endGreasePencil(in: view)
+                let after = scene.active?.greasePencilInfo?.strokeCount ?? 0
+                guard erasing ? after < before : after == before + 1 else {
+                    throw Failure(detail: "\(before) strokes before, \(after) after")
+                }
+                return "\(before) strokes, then \(after)"
+            })
+        case "mode.object_from_draw":
+            guard scene.mode == .drawGreasePencil else { throw Failure(detail: "not in Draw Mode") }
+            return await command {
+                try need(bridge.run(GreasePencilBpy.leave, undo: GreasePencilBpy.modeUndo))
+                guard scene.mode == .object else { throw Failure(detail: "Blender stayed in \(scene.mode.label)") }
+                return "Object Mode"
+            }
         case "mode.sculpt":
             let s = try onSphere()
             let door = try door()
@@ -1660,6 +1752,63 @@ final class FeatureTestRunner {
                 return "frames 1 to 49 with \(verts(s)) keyed"
             })
 
+        case "anim.key_select":
+            _ = try onSphere()
+            let keys = keysController()
+            guard let column = scene.timelineKeys.last else { throw Failure(detail: "no keys to tap") }
+            let p = keys.point(column.frame)
+            return await command {
+                // A tap on the column: Select Keyframes, by frame.
+                keys.pressBegan(at: p, modifiers: [])
+                keys.pressEnded(at: p, modifiers: [])
+                if let error = bridge.lastOutcome?.error { throw Failure(detail: error) }
+                guard scene.timelineKeys.contains(where: { $0.selected && $0.frame == column.frame }) else {
+                    throw Failure(detail: "the column on \(column.frame) is not selected")
+                }
+                return "the column on frame \(Int(column.frame)) selected"
+            }
+        case "anim.key_move":
+            _ = try onSphere()
+            let keys = keysController()
+            guard let column = scene.timelineKeys.last(where: \.selected) else {
+                throw Failure(detail: "no selected keys to drag")
+            }
+            let from = keys.point(column.frame)
+            let to = keys.point(column.frame + 12)
+            return await continuous(seconds: 1, begin: {
+                keys.pressBegan(at: from, modifiers: [])
+            }, step: { p in
+                keys.pressMoved(to: CGPoint(x: from.x + (to.x - from.x) * CGFloat(p), y: from.y), modifiers: [])
+            }, end: {
+                // Let go: Blender's Transform, once.
+                keys.pressEnded(at: to, modifiers: [])
+                if let error = bridge.lastOutcome?.error { throw Failure(detail: error) }
+                guard scene.timelineKeys.contains(where: { $0.frame == column.frame + 12 }) else {
+                    throw Failure(detail: "no key on \(column.frame + 12) after the drag")
+                }
+                return "frame \(Int(column.frame)) to \(Int(column.frame) + 12), previewed as it went"
+            })
+        case "anim.key_interpolation":
+            _ = try onSphere()
+            let keys = keysController()
+            return await command {
+                // The Key menu's row: Set Keyframe Interpolation, Linear.
+                keys.perform(.interpolation("LINEAR"))
+                try need(bridge.lastOutcome ?? BpyBridge.Outcome(python: "", succeeded: false, error: "no outcome",
+                                                                  objectsBefore: 0, objectsAfter: 0))
+                return "the selected keys Linear"
+            }
+        case "anim.marker_add":
+            let keys = keysController()
+            let before = scene.animation.markers.count
+            return await command {
+                // Marker ▸ Add Marker, M.
+                keys.perform(.markerAdd)
+                if let error = bridge.lastOutcome?.error { throw Failure(detail: error) }
+                guard scene.animation.markers.count == before + 1 else { throw Failure(detail: "no marker added") }
+                return "a marker on frame \(scene.frameCurrent)"
+            }
+
         case "script.run":
             try objectMode()
             let source = "import bpy\nfor i in range(20):\n"
@@ -1713,8 +1862,9 @@ final class FeatureTestRunner {
                                         width: size.0, height: size.1, source: .sceneCamera, output: output.path,
                                         deviceReport: device.path, progressReport: progressFile.path)
             let m = await long {
-                // The Render panel's Render (`RenderingWorkspace.render`).
-                session.runScript(request.python, scene: scene)
+                // The Render panel's Render (`RenderingWorkspace.render`),
+                // which records no undo step.
+                session.runScript(request.python, scene: scene, recordsUndo: false)
                 let progress = await untilIdle(progress: {
                     FileManager.default.fileExists(atPath: progressFile.path)
                 })
@@ -1727,6 +1877,52 @@ final class FeatureTestRunner {
                         + "\(bytes / 1024) KB written", progress)
             }
             for url in [output, progressFile, device] { discard(url) }
+            return m
+
+        case "render.animation":
+            try objectMode()
+            if scene.sceneCamera == nil {
+                try need(bridge.add(.camera, at: view3D.eye, view: view3D), "Add Camera")
+            }
+            let base = temporary.appendingPathComponent("feature-test-animation")
+            let frames = temporary.appendingPathComponent("feature-test-animation-frame.txt")
+            let result = temporary.appendingPathComponent("feature-test-animation.json")
+            let progressFile = temporary.appendingPathComponent("feature-test-animation-progress.txt")
+            let video = base.appendingPathExtension("mp4")
+            for url in [video, frames, result, progressFile] { discard(url) }
+            // Render Animation as the Render panel runs it, on Blender's own
+            // FFmpeg writer, over three frames at a thumbnail's size.
+            let request = RenderRequest(engine: .workbench, width: 64, height: 36, source: .sceneCamera,
+                                        output: base.path, progressReport: progressFile.path,
+                                        animation: RenderRequest.Animation(video: true, frames: frames.path,
+                                                                           result: result.path, range: 1...3))
+            let frameBefore = scene.frameCurrent
+            let m = await long {
+                session.runScript(request.python, scene: scene, recordsUndo: false)
+                let progress = await untilIdle(progress: {
+                    FileManager.default.fileExists(atPath: frames.path)
+                })
+                if let error = session.lastRun?.error { throw Failure(detail: error) }
+                guard let text = try? String(contentsOf: result, encoding: .utf8),
+                      let outcome = RenderAnimationResult.parse(text) else {
+                    throw Failure(detail: "Blender wrote no outcome")
+                }
+                guard outcome.isVideo, outcome.frames == 3,
+                      let bytes = try? FileManager.default.attributesOfItem(atPath: outcome.path)[.size] as? Int,
+                      bytes > 0 else {
+                    throw Failure(detail: "\(outcome.frames) of 3 frames, \(outcome.kind) at \(outcome.path)")
+                }
+                let asset = AVURLAsset(url: URL(fileURLWithPath: outcome.path))
+                let playable = (try? await asset.load(.isPlayable)) ?? false
+                let seconds = (try? await asset.load(.duration))?.seconds ?? 0
+                guard playable else { throw Failure(detail: "the video does not play") }
+                guard scene.frameCurrent == frameBefore else {
+                    throw Failure(detail: "the frame moved from \(frameBefore) to \(scene.frameCurrent)")
+                }
+                return (String(format: "3 frames, 64 × 36, a %.2f s MP4 that plays (%d bytes); frame %d kept",
+                               seconds, bytes, frameBefore), progress)
+            }
+            for url in [video, frames, result, progressFile] { discard(url) }
             return m
 
         case "image3d.relief":
@@ -1825,6 +2021,19 @@ final class FeatureTestRunner {
 
     /// A timeline driver bound as the Timeline's own is (`AnimationDock`).
     private var driver: TimelineDriver?
+    /// The Timeline's keys as the docked Timeline's body has them, laid out
+    /// 1000 points wide over the scene's range.
+    private func keysController() -> TimelineController {
+        if let keysTimeline { return keysTimeline }
+        let made = TimelineController()
+        made.bind(scene: scene, session: session, bridge: bridge, driver: timeline())
+        made.bodySize = CGSize(width: 1000, height: TimelineController.scrubHeight + TimelineController.keysHeight
+                               + TimelineController.markersHeight)
+        keysTimeline = made
+        return made
+    }
+    private var keysTimeline: TimelineController?
+
     private func timeline() -> TimelineDriver {
         if let driver { return driver }
         let made = TimelineDriver()

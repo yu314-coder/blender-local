@@ -10,6 +10,7 @@ def labels(item):
     if isinstance(item, tuple):
         return [l for sub in item for l in labels(sub)]
     return []
-for mode in ('OBJECT', 'EDIT_MESH', 'EDIT_CURVE', 'EDIT_LATTICE', 'EDIT_TEXT', 'SCULPT', 'PAINT_WEIGHT', 'PAINT_VERTEX', 'PAINT_TEXTURE'):
+for mode in ('OBJECT', 'EDIT_MESH', 'EDIT_CURVE', 'EDIT_LATTICE', 'EDIT_TEXT', 'SCULPT', 'PAINT_WEIGHT', 'PAINT_VERTEX', 'PAINT_TEXTURE',
+             'PAINT_GREASE_PENCIL'):
     out[mode] = [l for item in T.tools_from_context(bpy.context, mode=mode) for l in labels(item)]
 open('blender_toolbar.json', 'w').write(json.dumps(out, indent=1))

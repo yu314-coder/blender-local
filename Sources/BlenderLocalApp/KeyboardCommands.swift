@@ -193,9 +193,11 @@ struct ViewportKeyActions {
     var repeatLast: () -> Void = {}
     /// F3, Blender's Search: the Operator Search.
     var searchOperators: () -> Void = {}
-    /// F12, Blender's Render Image: the Render panel, rendering at once; nil
-    /// where the 3D View has no Render panel.
-    var render: (() -> Void)? = nil
+    /// Blender's Render menu keys — F12 Render Image, Ctrl+F12 Render
+    /// Animation, F11 View Render, Ctrl+F11 View Animation: the Render panel,
+    /// opened for the row (rendering at once for the first two); nil where the
+    /// 3D View has no Render panel.
+    var renderAction: ((RenderPanelAction) -> Void)? = nil
     /// The brush panel a right-click opens in Sculpt Mode, Vertex Paint and
     /// Weight Paint (BrushContextPanel.swift); nil in the other modes.
     var brushPanel: (() -> AnyView)? = nil

@@ -58,7 +58,7 @@ stand-in plays Blender's part for UI testing. Device and Mac
 screen and says how to use it. It opens by itself the first time.
 
 **Layout** (the 3D Viewport)
-- Add meshes, curves, lattices, empties, cameras, lights and text.
+- Add meshes, curves, lattices, Grease Pencil, empties, cameras, lights and text.
 - Select by tap, Box, Circle or Lasso, or from the Select menu and the Outliner.
 - Move, Rotate and Scale with a gizmo, with snapping, proportional editing,
   pivots and the 3D cursor.
@@ -73,7 +73,7 @@ screen and says how to use it. It opens by itself the first time.
   runs. Ctrl+M is Interactive Mirror: X, Y or Z flips the selection about
   the pivot. Object ▸ Transform starts the same thing from a menu,
   with X, Y, Z, Cancel and Confirm on screen.
-- F12 renders, as in Blender.
+- F12 renders an image and Ctrl+F12 an animation, as in Blender.
 - Blender's pie menus, drawn round the pointer as Blender draws them: Z
   Shading, ` View, Shift+S Snap, Period Pivot Point, Comma Orientation,
   Shift+O Proportional Editing Falloff. Hold the key, point and let go, or
@@ -117,13 +117,32 @@ Remesh, Multiresolution, masks, face sets and symmetry.
 (Brush, Blur, Average, Smear), the active vertex group or colour attribute
 drawn as Blender holds it, and each stroke one undo step.
 
+**Draw Mode** (Grease Pencil): Add ▸ Grease Pencil (Blank, Stroke, Monkey), then
+draw with a finger or Apple Pencil, with pressure, the Essentials draw brushes
+and Erase (Dissolve, Point, Stroke). Layers, materials, Additive Drawing,
+keyframes per layer and Onion Skinning make it a 2D animation tool; the 3D
+Viewport draws strokes and fills as Blender does.
+
+**Materials**: Blender's Material Properties — material slots (Assign, Select
+and Deselect in Edit Mode), browsing, New, the shared material's user count,
+the Surface shader with every input of its node, Settings and Viewport Display.
+The 3D Viewport colours each face by its material slot.
+
+**Animation**: keyframes and the Timeline, as an editor. Select keys by tap or
+box, move them (G or a drag), scale, duplicate, copy and paste, delete; set
+Interpolation Mode (T), Easing (Ctrl+E), Keyframe Type (R) and Handle Type (V);
+markers (M, F2, drag); Use Timecode; zoom and pan.
+
+**Rendering**: Render Image (F12) and Render Animation (Ctrl+F12) with Cycles on
+the Metal GPU, EEVEE or Workbench — the animation as an MP4 (H.264 or HEVC) or
+numbered frames, with progress, Cancel and playback in the app. The Render,
+Output and World tabs hold Blender's settings: samples, denoising, film, color
+management, resolution, frame rate, frame range and file format.
+
 **More**
 - UV editing: unwrap, Smart UV Project, seams and packing.
 - Texture paint.
-- Materials: the Principled BSDF's base colour, metallic and roughness.
-- Keyframes and a timeline.
-- Rendering with Cycles on the Metal GPU, EEVEE or Workbench, with progress,
-  and camera and light panels.
+- Camera and light panels.
 
 **Image to 3D Model** turns a photo into a model, on the device:
 - **Relief:** depth from Depth Anything V2.

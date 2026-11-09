@@ -207,6 +207,8 @@ let allowed: [(file: String, contains: String, why: String)] = [
     ("ScriptExamples.swift", "", "an example script the user runs and reads: scripts are the user's own Python"),
     ("RenderRequest.swift", "\"bpy.data.objects[\\(quote(name))].data.\\(key) = \\(quote(choice))\"",
      "a camera's or a light's data (the Camera and Light panels), which makes no mesh"),
+    ("GreasePencilBpy.swift", "\"bpy.data.objects[\\(Bpy.quote(object))].data.\\(key) = \\(value)\"",
+     "a Grease Pencil object's Onion Skinning and Stroke Depth Order (GreasePencilBpy.onionSet), which add no point"),
 ]
 // A Python assignment to a modifier's or a curve's data inside a Swift string.
 let patterns = [#"modifiers(\[[^\]]*\]|\.active)\.(\\\([a-z]+\)|[a-z_]+) = "#, #"\.data\.[a-z_\\()]+ = "#,
@@ -299,12 +301,17 @@ let growthFreePrefixes: [(String, String)] = [
      + "update, before Blender evaluates it (_blenderkit_gate)"),
     ("object.constraint", "constraints, priced by the gate as constraint. is"),
     ("object.vertex_group_", "vertex groups"), ("object.shape_key_", "shape keys, which keep the mesh's vertices"),
+    ("object.material_slot_", "material slots: which material a face uses (Properties ▸ Material)"),
+    ("material.", "materials: their settings and nodes, no geometry (Properties ▸ Material)"),
     ("object.shade_", "shading"), ("object.modifier_move_", "priced as object.modifier_move_up/down"),
     ("mesh.edgering_select", "selects"), ("mesh.loop_", "selects"), ("mesh.region_to_loop", "selects"),
     ("mesh.edges_select", "selects"), ("mesh.faces_select", "selects"), ("mesh.shortest_path", "selects"),
     ("mesh.prim", "the primitives, priced by name (PRICED_ADDS) — the cube, plane and monkey too, which "
      + "Edit Mode adds into the edited mesh under its stack"),
     ("view3d.snap_", "the snaps of the selection are priced by name; the cursor's move nothing"),
+    ("action.", "the Timeline's keys: their selection, frames, types, interpolation and handles "
+     + "(_blenderkit_keys); what the moved keys animate is priced by the gate as an action's keys"),
+    ("marker.", "the Timeline's markers"),
 ]
 let growthFree: [String: String] = [
     "curve.cyclic_toggle": "closes or opens a spline: one segment", "curve.handle_type_set": "handles only",
@@ -337,6 +344,12 @@ let growthFree: [String: String] = [
     + "evaluates it", "transform.rotate": "priced by its own wrapper "
     + "(_blenderkit_context._Rotate), as Object Mode's moves are",
     "object.modifier_move_": "priced as object.modifier_move_up/down",
+    "object.grease_pencil_add": "Add ▸ Grease Pencil's Blank, Stroke or Monkey: no mesh, at most 1,216 points "
+    + "(the Monkey), which the gate counts with every Grease Pencil point (_blenderkit_budget._gp_measures)",
+    "grease_pencil.layer_add": "an empty layer", "grease_pencil.layer_remove": "removes a layer",
+    "grease_pencil.layer_move": "reorders layers",
+    "transform.transform": "the Timeline's G and S on keys (TIME_TRANSLATE, TIME_SCALE): what the moved keys "
+    + "animate is priced by the gate as an action's keys (_blenderkit_gate._animation)",
 ]
 let opsPattern = try! NSRegularExpression(pattern: #"bpy\.ops\.([a-z_0-9]+)\.([a-z_0-9]+)"#)
 func operatorCalls(priced: Set<String>) -> [String] {

@@ -152,6 +152,15 @@ UNDO = {
 }
 
 
+# An undo step that is another of Blender's operators' own names, by file: the
+# Timeline's are the Dope Sheet's (`action.select_all` and
+# `action.select_column` are both "Select All", `action.duplicate_move` is
+# "Duplicate": `get_rna_type().name`, 5.2.1, which `ED_undo_push_op` names
+# the step after; tests/timeline/blender/verify.py holds them to it).
+UNDO_ELSEWHERE = {("Sources/BlenderLocalBridge/TimelineEditing.swift", "Select All"),
+                  ("Sources/BlenderLocalBridge/TimelineEditing.swift", "Duplicate")}
+
+
 def swift_literals(source):
     """Every string literal in Swift source, outside comments, as
     (line, text, code-before): the text with each interpolation `\\(...)`
@@ -288,7 +297,7 @@ def problems(literals, path, python=False):
         label = label_of(text)
         if label in EXACT and (str(path), label) not in EXACT_ELSEWHERE:
             found.append(f"{path}:{line}: \"{text}\" (Blender: {EXACT[label]})")
-        if label in UNDO and UNDO_CONTEXT.search(before):
+        if label in UNDO and UNDO_CONTEXT.search(before) and (str(path), label) not in UNDO_ELSEWHERE:
             found.append(f"{path}:{line}: undo step \"{text}\" (Blender's undo history: {UNDO[label]})")
     return found
 

@@ -65,10 +65,17 @@ struct ViewportKey {
         ViewportKey(chord: "f9", title: "Adjust Last Operation", menu: .view, hidden: true, when: navigable) {
             $0.adjustLastOperation()
         },
-        // Blender's F12 (the Screen keymap's `render.render`): the Render
-        // panel, rendering at once.
+        // Blender's Render keys (the Screen keymap, 5.2.1): F12 `render.render`,
+        // Ctrl+F12 with animation, F11 `render.view_show`, Ctrl+F11
+        // `render.play_rendered_anim` — the Render panel, opened for the row.
         ViewportKey(chord: "f12", title: "Render Image", menu: .view, hidden: true,
-                    when: { $0.render != nil && !$0.isRunning }) { $0.render?() },
+                    when: { $0.renderAction != nil && !$0.isRunning }) { $0.renderAction?(.renderImage) },
+        ViewportKey(chord: "ctrl+f12", title: "Render Animation", menu: .view, hidden: true,
+                    when: { $0.renderAction != nil && !$0.isRunning }) { $0.renderAction?(.renderAnimation) },
+        ViewportKey(chord: "f11", title: "View Render", menu: .view, hidden: true,
+                    when: { $0.renderAction != nil }) { $0.renderAction?(.viewRender) },
+        ViewportKey(chord: "ctrl+f11", title: "View Animation", menu: .view, hidden: true,
+                    when: { $0.renderAction != nil }) { $0.renderAction?(.viewAnimation) },
         ViewportKey(chord: "ctrl+z", title: "Undo", menu: .view, hidden: true, when: { $0.canUndo && !$0.isRunning }) {
             $0.undo()
         },
@@ -475,6 +482,7 @@ struct ViewportKey {
         case "f2": input = UIKeyCommand.f2
         case "f3": input = UIKeyCommand.f3
         case "f9": input = UIKeyCommand.f9
+        case "f11": input = UIKeyCommand.f11
         case "f12": input = UIKeyCommand.f12
         case "delete": input = UIKeyCommand.inputDelete
         default:

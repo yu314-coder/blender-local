@@ -23,10 +23,26 @@ HOOKS = ["-workspace", "-eval64", "-stub", "-add", "-adjust", "-mesh", "-caret",
          "-cut-ops", "-cut-view", "-cut-wait", "-select-pick", "-select-pick-view", "-select-pick-wait",
          "-transform-ops", "-relations-ops", "-textimage-ops", "-measure-ops", "-measure-overlays",
          "-data-api", "-self-test", "-feature-test", "-feature-test-cycles", "-feature-test-only", "-frame-timing", "-menu-ops", "-menu-dump", "-data-api-browse", "-data-api-shot",
-         "-ui-audit", "-ui-frame", "-help-tour", "-modal-ops", "-modal-wait", "-key-log"]
+         "-ui-audit", "-ui-frame", "-help-tour", "-modal-ops", "-modal-wait", "-key-log",
+         # build 59
+         "-timeline-ops", "-material-ops", "-material-open-viewport", "-shading", "-properties-scroll",
+         "-draw-ops", "-render-action", "-render-cancel-at", "-render-done-exit", "-render-tab-ops",
+         "-renders-in-tmp"]
 app, mode = pathlib.Path(sys.argv[1]), sys.argv[2]
 root = pathlib.Path(__file__).resolve().parent.parent / "Sources"
-lit = re.compile(r'"([^"\\]{16,})"')
+# Every string literal on a line, its quotes paired from the line's start (a
+# backslash escape kept inside): only those of 16 characters or more with no
+# escape are markers. The old pattern, `"([^"\\]{16,})"`, paired a closing quote
+# with the next opening one, so `readout("View Pivot", String(format: "%.2f, …"`
+# gave `, String(format: ` and never the format string, which then read as a
+# DEBUG-only literal shipped in build 59's release binary.
+_lit = re.compile(r'"((?:[^"\\]|\\.)*)"')
+
+
+class lit:
+    @staticmethod
+    def findall(line):
+        return [m for m in _lit.findall(line) if len(m) >= 16 and "\\" not in m]
 debug, other = set(), set()
 for p in root.rglob("*.swift"):
     stack = []

@@ -234,6 +234,23 @@ static PyObject *bk_sync_modifiers_py(PyObject *self, PyObject *args)
     Py_RETURN_NONE;
 }
 
+/// sync_gpencil(name, record, blob) — a Grease Pencil object's layers,
+/// materials and drawings (`_blenderkit_gpencil.push`). Raises ValueError for
+/// a record the interface cannot read or an object it does not hold.
+static PyObject *bk_sync_gpencil_py(PyObject *self, PyObject *args)
+{
+    const char *name, *record;
+    Py_buffer blob;
+    if (!PyArg_ParseTuple(args, "ssy*", &name, &record, &blob)) return NULL;
+    int rc = bk_sync_gpencil(name, record, blob.buf, (long)blob.len);
+    PyBuffer_Release(&blob);
+    if (rc != 0) {
+        PyErr_Format(PyExc_ValueError, "malformed Grease Pencil record for %s", name);
+        return NULL;
+    }
+    Py_RETURN_NONE;
+}
+
 /// sync_edges(name, edges) — the edges of the mesh just pushed, two vertex
 /// indices each, for a mesh with no faces to draw: a wire circle, an unfilled
 /// curve. Without it such an object never reached the interface at all.
@@ -276,6 +293,26 @@ static PyObject *bk_sync_shading_py(PyObject *self, PyObject *args)
     PyBuffer_Release(&loops); PyBuffer_Release(&normals);
     if (rc != 0) {
         PyErr_Format(PyExc_ValueError, "malformed shading normals for mirrored object %s", name);
+        return NULL;
+    }
+    Py_RETURN_NONE;
+}
+
+/// sync_materials(name, record, slots) — the material slots of the mesh just
+/// pushed: each slot's look, `|`-joined, and a 32-bit slot per triangle (empty
+/// when every triangle uses the first slot).
+static PyObject *bk_sync_materials_py(PyObject *self, PyObject *args)
+{
+    const char *name, *record;
+    Py_buffer slots;
+    if (!PyArg_ParseTuple(args, "ssy*", &name, &record, &slots)) return NULL;
+    int rc = -1;
+    if (slots.len % sizeof(int) == 0) {
+        rc = bk_sync_materials(name, record, (const int *)slots.buf, (int)(slots.len / sizeof(int)));
+    }
+    PyBuffer_Release(&slots);
+    if (rc != 0) {
+        PyErr_Format(PyExc_ValueError, "malformed material slots for mirrored object %s", name);
         return NULL;
     }
     Py_RETURN_NONE;
@@ -1067,6 +1104,28 @@ static PyObject *bk_anim_keys_py(PyObject *self, PyObject *args)
     Py_RETURN_NONE;
 }
 
+/// anim_markers(names, cameras, frames, selected, lock)
+static PyObject *bk_anim_markers_py(PyObject *self, PyObject *args)
+{
+    Py_buffer names, cameras, frames, selected;
+    int lock = 0;
+    if (!PyArg_ParseTuple(args, "y*y*y*y*i", &names, &cameras, &frames, &selected, &lock)) return NULL;
+    int rc = -1;
+    if (frames.len % sizeof(int) == 0 && selected.len == frames.len / (Py_ssize_t)sizeof(int)) {
+        rc = bk_anim_set_markers((const unsigned char *)names.buf, (int)names.len,
+                                 (const unsigned char *)cameras.buf, (int)cameras.len,
+                                 (const int *)frames.buf, (const unsigned char *)selected.buf,
+                                 (int)(frames.len / sizeof(int)), lock);
+    }
+    PyBuffer_Release(&names); PyBuffer_Release(&cameras);
+    PyBuffer_Release(&frames); PyBuffer_Release(&selected);
+    if (rc != 0) {
+        PyErr_SetString(PyExc_ValueError, "malformed marker report");
+        return NULL;
+    }
+    Py_RETURN_NONE;
+}
+
 /// anim_frame(frame, subframe, names, matrices) -> how many objects moved
 static PyObject *bk_anim_frame_py(PyObject *self, PyObject *args)
 {
@@ -1255,12 +1314,14 @@ static PyMethodDef bk_methods[] = {
     {"sync_channels",     bk_sync_channels_py, METH_VARARGS, "Hand the Transform fields the location, rotation and scale they show."},
     {"sync_relations",    bk_sync_relations_py, METH_VARARGS, "Hand the interface the object's parent and what it depends on."},
     {"sync_knots",        bk_sync_knots_py, METH_VARARGS, "Hand the interface a curve's control points, which it snaps to."},
+    {"sync_gpencil",      bk_sync_gpencil_py, METH_VARARGS, "Hand the renderer a Grease Pencil object's layers and drawings."},
     {"sync_edges",        bk_sync_edges_py, METH_VARARGS, "Hand the renderer the edges of a mirrored mesh that has no faces."},
     {"sync_points",       bk_sync_points_py, METH_VARARGS, "Hand Edit Mode a curve's or a lattice's control points, and the Data tab its settings."},
     {"sync_groups",       bk_sync_groups_py, METH_VARARGS, "Hand the Data tab a mesh's vertex groups and shape keys."},
     {"sync_record",       bk_sync_record_py, METH_VARARGS, "Hand the interface the collection tree, Local View, or an object's constraints."},
     {"sync_uvs",          bk_sync_uvs_py, METH_VARARGS, "Hand the UV Editor the active UV map and seams of the mesh just pushed."},
     {"sync_shading",      bk_sync_shading_py, METH_VARARGS, "Hand the renderer the normals Blender shades the mesh just pushed with."},
+    {"sync_materials",    bk_sync_materials_py, METH_VARARGS, "Hand the renderer the material slots of the mesh just pushed."},
     {"sync_uv_layout",    bk_sync_uv_layout_py, METH_VARARGS, "Hand the UV Editor the map before the modifiers, when it differs from the pushed mesh's."},
     {"rename",            bk_rename,    METH_VARARGS, "Rename an object; returns the resolved name."},
     {"remove",            bk_remove,    METH_VARARGS, "Remove one object by name."},
@@ -1305,6 +1366,7 @@ static PyMethodDef bk_methods[] = {
     {"anim_state",        bk_anim_state_py, METH_VARARGS, "Mirror the scene's frame range, rate and keying settings."},
     {"anim_state_get",    bk_anim_state_get_py, METH_NOARGS, "The animation state the interface holds."},
     {"anim_keys",         bk_anim_keys_py, METH_VARARGS, "Mirror every object's keyframe columns."},
+    {"anim_markers",      bk_anim_markers_py, METH_VARARGS, "Mirror the scene's timeline markers."},
     {"anim_frame",        bk_anim_frame_py, METH_VARARGS, "Mirror a frame change: the frame and what it moved."},
     {"anim_mesh",         bk_anim_mesh_py, METH_VARARGS, "Mirror one mesh a frame change deformed."},
     {"sync_mask",         bk_sync_mask_py, METH_VARARGS, "Mirror Blender's sculpt mask onto one object."},

@@ -85,10 +85,14 @@ struct TopBar: View {
 
     var body: some View {
         HStack(spacing: 12) {
-            FileMenu(scene: scene, session: session, bridge: bridge, savedFiles: $savedFiles,
-                     showPreferences: $showPreferences)
-                .helpAnchor(.fileMenu)
-                .frame(maxWidth: .infinity, alignment: .leading)
+            HStack(spacing: 0) {
+                FileMenu(scene: scene, session: session, bridge: bridge, savedFiles: $savedFiles,
+                         showPreferences: $showPreferences)
+                    .helpAnchor(.fileMenu)
+                // Blender's Render menu, after File as in its top bar.
+                RenderMenu(session: session)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
             Picker("Workspace", selection: $workspace) {
                 Text("Scripting").tag(Workspace.scripting)
                 Text(Workspace.layout.rawValue).tag(Workspace.layout)

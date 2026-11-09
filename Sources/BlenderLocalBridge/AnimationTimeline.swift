@@ -13,15 +13,31 @@ import Observation
 
 // MARK: - What the timeline mirrors
 
-/// One column of keys in the timeline's summary row: where it is, and whether
-/// any key in it is selected, which Blender draws in `keyframe_selected`.
+/// One column of keys in the timeline's summary row: where it is, whether
+/// any key in it is selected, which Blender draws in `keyframe_selected`,
+/// the type it is drawn as, and whether a key in it is left unselected — so
+/// a move of the selection leaves part of the column behind.
 public struct TimelineKey: Equatable, Sendable {
     public var frame: Float
     public var selected: Bool
+    public var type: KeyframeType
+    /// Selected, with at least one key in it that is not.
+    public var partial: Bool
 
-    public init(frame: Float, selected: Bool = false) {
+    public init(frame: Float, selected: Bool = false, type: KeyframeType = .keyframe, partial: Bool = false) {
         self.frame = frame
         self.selected = selected
+        self.type = type
+        self.partial = partial && selected
+    }
+
+    /// A column as `_blenderkit_anim.report_keys` packs it in a byte: bit 0
+    /// selected, bits 1-3 the type (BEZT_KEYTYPE_*), bit 4 partly selected.
+    /// A report from before types were sent says 0 or 1, a Keyframe.
+    public init(frame: Float, flag: UInt8) {
+        self.init(frame: frame, selected: flag & 1 != 0,
+                  type: KeyframeType(rawValue: Int((flag >> 1) & 7)) ?? .keyframe,
+                  partial: flag & 16 != 0)
     }
 
     /// `BEZT_BINARYSEARCH_THRESH`: Blender treats keys closer than a hundredth
@@ -29,12 +45,23 @@ public struct TimelineKey: Equatable, Sendable {
     public static let threshold: Float = 0.01
 
     /// Keys from several channels as the columns Blender's keylist makes of
-    /// them: sorted, near-equal frames merged, selected if any merged key is.
+    /// them: sorted, near-equal frames merged, selected if any merged key is,
+    /// the first one's type unless one of them is a Keyframe, which wins
+    /// (`nupdate_ak_bezt`, keyframes_keylist.cc).
     public static func merged(_ keys: [TimelineKey]) -> [TimelineKey] {
         var out: [TimelineKey] = []
-        for key in keys.sorted(by: { $0.frame < $1.frame }) {
+        // Stable, so the first of a frame stays first.
+        let sorted = keys.enumerated().sorted { a, b in
+            a.element.frame != b.element.frame ? a.element.frame < b.element.frame : a.offset < b.offset
+        }.map(\.element)
+        for key in sorted {
             if let last = out.last, key.frame - last.frame <= threshold {
-                out[out.count - 1].selected = last.selected || key.selected
+                var column = last
+                column.partial = last.partial || key.partial || (last.selected != key.selected)
+                column.selected = last.selected || key.selected
+                if key.type == .keyframe { column.type = .keyframe }
+                if !column.selected { column.partial = false }
+                out[out.count - 1] = column
             } else {
                 out.append(key)
             }
@@ -107,6 +134,10 @@ public struct SceneAnimation: Equatable, Sendable {
     public var loopMode: PlaybackLoopMode = .infinite
     /// Keys on the scene itself and its world, which the timeline always counts.
     public var sceneKeys: [TimelineKey] = []
+    /// `scene.timeline_markers`, in the scene's order.
+    public var markers: [TimelineMarker] = []
+    /// `tool_settings.lock_markers`: Marker ▸ Lock Markers.
+    public var lockMarkers = false
     public var notice: AnimationNotice?
     /// Whether the 3D View shows its Timeline. The interface's own, and not
     /// mirrored: in Blender the layout of editors is the screen's business.
@@ -605,6 +636,7 @@ public final class TimelineDriver {
     public func play(reverse: Bool = false) {
         guard let scene, isAvailable else { return }
         clock = PlaybackClock(frame: scene.frameCurrent, time: now(), reverse: reverse)
+        scene.playbackRunning = true
         isPlaying = true
         isPlayingReverse = reverse
     }
@@ -628,6 +660,7 @@ public final class TimelineDriver {
 
     private func stopPlayback() {
         clock = nil
+        scene?.playbackRunning = false
         if isPlaying { isPlaying = false }
         if isPlayingReverse { isPlayingReverse = false }
     }

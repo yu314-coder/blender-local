@@ -28,6 +28,10 @@ emit("RENDER_VIEW", RenderRequest(engine: .workbench, quality: .draft, width: wi
 emit("RENDER_CYCLES", RenderRequest(engine: .cycles, quality: .best, width: width, height: height,
                                     source: .sceneCamera, output: "@OUT@",
                                     deviceReport: "@DEVICE@").python)
+// The Render panel's own: the scene's samples and size, Cycles on the
+// scene's CPU device.
+emit("RENDER_SCENE_SETTINGS", RenderRequest(engine: .cycles, cyclesDevice: .cpu, source: .sceneCamera,
+                                            output: "@OUT@", deviceReport: "@DEVICE@").python)
 emit("RENDER_EEVEE", RenderRequest(engine: .eevee, quality: .good, width: width, height: height,
                                    source: .sceneCamera, output: "@OUT@").python)
 emit("RENDER_EEVEE_BEST", RenderRequest(engine: .eevee, quality: .best, width: width, height: height,

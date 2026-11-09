@@ -164,6 +164,14 @@ struct MetalViewportView: UIViewRepresentable {
         tap.require(toFail: pencilDrag)
         view.addGestureRecognizer(tap)
 
+        // A Pencil's tap: a dot in Draw Mode (GreasePencilInput.swift);
+        // nothing anywhere else, as before.
+        let pencilTap = TypedTapGestureRecognizer(target: context.coordinator,
+                                                  action: #selector(Coordinator.handlePencilTap(_:)),
+                                                  touchType: .pencil)
+        pencilTap.require(toFail: pencilDrag)
+        view.addGestureRecognizer(pencilTap)
+
         // A mouse's or a trackpad's right-click: Blender's context menu.
         // UIKit hands a right-click to a context-menu interaction whatever
         // the app's pointer settings — a tap recogniser's `.secondary` button
@@ -188,6 +196,7 @@ struct MetalViewportView: UIViewRepresentable {
         context.coordinator.sculptLaunchStrokeIfRequested()
         context.coordinator.vwPaintLaunchStrokeIfRequested()
         context.coordinator.standInDabLaunchIfRequested()
+        context.coordinator.drawOpsLaunchIfRequested()
         #endif
         return view
     }
@@ -249,6 +258,8 @@ struct MetalViewportView: UIViewRepresentable {
         let texturePaintInput = TexturePaintInput()
         /// A stroke with Blender's own sculpt brush. See SculptStrokeInput.swift.
         let sculptInput = SculptStrokeInput()
+        /// A Draw Mode stroke or erase. See GreasePencilInput.swift.
+        let gpInput = GreasePencilStrokeInput()
         /// Loop Cut's rings, asked of Blender once per edge (CutToolInput.swift).
         var loopCutCache = LoopCutCache()
         /// Why the last ring could not be had, for a tap to say.
@@ -304,6 +315,7 @@ struct MetalViewportView: UIViewRepresentable {
             if modalDrag(g) { return }
             if handleTexturePaint(g, pressure: 1) { return }
             if handleBlenderSculpt(g, pressure: 1) { return }
+            if handleGreasePencil(g, pressure: 1, pencil: false) { return }
 
             if zoomRegionDrag(g) { return }
             if g.state == .began {
@@ -1229,6 +1241,7 @@ struct MetalViewportView: UIViewRepresentable {
             if zoomRegionDrag(g) { return }
             if handleTexturePaint(g, pressure: g.pressure) { return }
             if handleBlenderSculpt(g, pressure: g.pressure) { return }
+            if handleGreasePencil(g, pressure: g.pressure, pencil: true) { return }
 
             if g.state == .began {
                 lastPencilPan = .zero
@@ -1485,6 +1498,7 @@ struct MetalViewportView: UIViewRepresentable {
 
             if texturePaintTap(at: point) { return }
             if tapBlenderSculpt(at: point, in: view) { return }
+            if greasePencilTap(at: point) { return }
 
             // Sculpt mode taps are dabs, not selections — and a dab is a whole
             // stroke of its own.
@@ -1826,6 +1840,9 @@ final class ViewportMTKView: MTKView {
 /// mask is the secondary one; neither is counted.
 final class TouchKindWatcher: UIGestureRecognizer {
     private var down: Set<ObjectIdentifier> = []
+    /// The kind of the touch that came down last: Draw Mode lets a finger
+    /// navigate once a Pencil has drawn (GreasePencilInput.swift).
+    private(set) var lastTouchType: UITouch.TouchType?
     /// A finger, a Pencil or a left button is down: not a right-click.
     var fingerOrPencilDown: Bool { !down.isEmpty }
 
@@ -1838,6 +1855,7 @@ final class TouchKindWatcher: UIGestureRecognizer {
 
     override func touchesBegan(_ touches: Set<UITouch>, with event: UIEvent) {
         for touch in touches {
+            lastTouchType = touch.type
             switch touch.type {
             case .direct, .pencil:
                 down.insert(ObjectIdentifier(touch))

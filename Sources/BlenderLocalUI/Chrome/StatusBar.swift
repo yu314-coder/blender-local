@@ -26,6 +26,8 @@ struct StatusBar: View {
                     hint("hand.point.up.left", "Tap: Select \(scene.selectMode.label)")
                 case .sculpt, .vertexPaint, .weightPaint, .texturePaint:
                     hint("paintbrush.pointed", "Drag: Brush")
+                case .drawGreasePencil:
+                    hint("pencil.tip", "Drag: Draw")
                 case .object:
                     hint("hand.point.up.left", "Tap: Select")
                 }

@@ -583,12 +583,15 @@ material.keyframe_insert("diffuse_color", frame=22)
 shapey.data.materials.append(material)
 sc.world.keyframe_insert("color", frame=30)
 cube("Still", (8, 0, 0))
-anim.channelbag(a.animation_data).fcurves.find("location", index=0).keyframe_points[0].select_control_point = False
+# Deselected as Blender's select operators deselect a key: the key and both
+# its handles (`select_bezier_subtract`). A column is selected while any of
+# the three is (`BEZT_ISSEL_ANY`, keyframes_keylist.cc), as Blender draws it.
 for fcurve in anim.channelbag(a.animation_data).fcurves:
     if fcurve.data_path == 'location':
         for point in fcurve.keyframe_points:
             if abs(point.co.x - 1) < 0.01:
                 point.select_control_point = False
+                point.select_left_handle = point.select_right_handle = False
 bridge.reset()
 sync.sync()
 keys = bridge.keys or {}

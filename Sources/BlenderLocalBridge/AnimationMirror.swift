@@ -103,7 +103,7 @@ public enum AnimationMirror {
         for (i, name) in names.enumerated() {
             let n = Int(counts[i])
             byName[name] = (0..<n).map {
-                TimelineKey(frame: frames[offset + $0], selected: selected[offset + $0] != 0)
+                TimelineKey(frame: frames[offset + $0], flag: selected[offset + $0])
             }
             offset += n
         }
@@ -112,9 +112,32 @@ public enum AnimationMirror {
             if object.mirroredKeys != keys { object.mirroredKeys = keys }
         }
         let sceneKeys = (0..<sceneFrames.count).map {
-            TimelineKey(frame: sceneFrames[$0], selected: sceneSelected[$0] != 0)
+            TimelineKey(frame: sceneFrames[$0], flag: sceneSelected[$0])
         }
         if scene.animation.sceneKeys != sceneKeys { scene.animation.sceneKeys = sceneKeys }
+        return true
+    }
+
+    /// The scene's markers, replacing what was mirrored before. A list of
+    /// names that is all empty strings arrives as nothing at all (one empty
+    /// name joins to no bytes), so an empty list stands for that many "".
+    ///
+    /// False, and nothing changed, when the buffers do not agree.
+    @discardableResult
+    public static func applyMarkers(names: [String], cameras: [String],
+                                    frames: UnsafeBufferPointer<Int32>,
+                                    selected: UnsafeBufferPointer<UInt8>,
+                                    locked: Bool, to scene: BKScene) -> Bool {
+        let count = frames.count
+        let names = names.isEmpty ? Array(repeating: "", count: count) : names
+        let cameras = cameras.isEmpty ? Array(repeating: "", count: count) : cameras
+        guard names.count == count, cameras.count == count, selected.count == count else { return false }
+        let markers = (0..<count).map {
+            TimelineMarker(name: names[$0], frame: Int(frames[$0]), selected: selected[$0] & 1 != 0,
+                           camera: cameras[$0].isEmpty ? nil : cameras[$0])
+        }
+        if scene.animation.markers != markers { scene.animation.markers = markers }
+        if scene.animation.lockMarkers != locked { scene.animation.lockMarkers = locked }
         return true
     }
 

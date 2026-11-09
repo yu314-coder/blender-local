@@ -16,7 +16,6 @@ in Swift (Sources/BlenderLocalBridge/Animation.swift).
 """
 
 from array import array
-import itertools
 import re
 import sys
 
@@ -108,41 +107,170 @@ def scene_ids(scene):
     return ids
 
 
-def _collect(idblock, every, chosen):
-    """One data-block's key frames, in scene time, into `every`; the frames
-    with a selected key also into `chosen`."""
+# ---------------------------------------------------------------------------
+# Channels: the rows the timeline's summary is made of
+#
+# A channel is one row of keys a Dope Sheet would list under the summary — an
+# F-Curve here. The timeline draws the summary of them, and its selection by
+# frame (`_blenderkit_keys`) works on them: `frames()` in scene time, `flags()`
+# one per key, `select(mask)`. Another kind of key — a Grease Pencil layer's
+# frames — plugs in by registering a source (`register_channel_source`), a
+# function of a data-block that yields its channels; the report and the
+# selection then take it in with no other change. Blender's own operators,
+# which do the editing, see every kind already.
+# ---------------------------------------------------------------------------
+
+# Blender's key types as `foreach_get('type')` reads them (BEZT_KEYTYPE_*):
+# KEYFRAME 0, EXTREME 1, BREAKDOWN 2, JITTER 3, MOVING_HOLD 4, GENERATED 5.
+KEY_TYPES = ('KEYFRAME', 'EXTREME', 'BREAKDOWN', 'JITTER', 'MOVING_HOLD', 'GENERATED')
+
+# A column's byte in the report: selected (any key in it, as Blender's keylist
+# says `BEZT_ISSEL_ANY`), its type in bits 1-3, and whether a key in it is not
+# selected (so a move leaves part of it behind) in bit 4.
+FLAG_SELECTED = 1
+FLAG_PARTIAL = 16
+
+
+def key_flag(selected, key_type):
+    return (FLAG_SELECTED if selected else 0) | ((key_type & 7) << 1)
+
+
+class FCurveChannel:
+    """One F-Curve's keys, in scene time: a strip being tweaked in the NLA
+    plays its keys at the strip's time."""
+    __slots__ = ('idblock', 'animdata', 'fcurve')
+
+    def __init__(self, idblock, animdata, fcurve):
+        self.idblock = idblock
+        self.animdata = animdata
+        self.fcurve = fcurve
+
+    @property
+    def key(self):
+        return self.fcurve.as_pointer()
+
+    def _read(self, name, count, code='b'):
+        values = array(code, [0]) * count
+        self.fcurve.keyframe_points.foreach_get(name, values)
+        return values
+
+    def frames(self):
+        points = self.fcurve.keyframe_points
+        count = len(points)
+        co = array('f', [0.0]) * (2 * count)
+        points.foreach_get('co', co)
+        frames = co[0::2]
+        if self.animdata is not None and self.animdata.use_tweak_mode:
+            frames = array('f', (self.animdata.nla_tweak_strip_time_to_scene(f) for f in frames))
+        return frames
+
+    def selection(self):
+        """BEZT_ISSEL_ANY: the key or either handle."""
+        count = len(self.fcurve.keyframe_points)
+        if count == 0:
+            return []
+        key = self._read('select_control_point', count)
+        left = self._read('select_left_handle', count)
+        right = self._read('select_right_handle', count)
+        return [bool(a or b or c) for a, b, c in zip(key, left, right)]
+
+    def flags(self):
+        count = len(self.fcurve.keyframe_points)
+        if count == 0:
+            return []
+        types = self._read('type', count, 'i')
+        return [key_flag(s, t) for s, t in zip(self.selection(), types)]
+
+    def select(self, mask):
+        """The whole triple selected or not, key by key, as Blender's
+        `select_bezier_add` and `_subtract` set it (BEZT_SEL_ALL)."""
+        values = array('b', (1 if m else 0 for m in mask))
+        if len(values) != len(self.fcurve.keyframe_points):
+            return
+        for flag in ('select_control_point', 'select_left_handle', 'select_right_handle'):
+            self.fcurve.keyframe_points.foreach_set(flag, values)
+
+    def deselect_channel(self):
+        """ANIM_anim_channels_select_set(ACHANNEL_SETFLAG_CLEAR) for this row."""
+        self.fcurve.select = False
+        group = self.fcurve.group
+        if group is not None:
+            group.select = False
+
+
+def fcurve_channels(idblock):
     animdata = getattr(idblock, 'animation_data', None)
     bag = channelbag(animdata)
     if bag is None:
         return
-    tweaked = animdata.use_tweak_mode
     for fcurve in bag.fcurves:
-        points = fcurve.keyframe_points
-        count = len(points)
-        if count == 0:
+        if len(fcurve.keyframe_points):
+            yield FCurveChannel(idblock, animdata, fcurve)
+
+
+# Every source of channels, each a function of a data-block.
+CHANNEL_SOURCES = [fcurve_channels]
+
+
+def register_channel_source(source):
+    """Adds a kind of key to the timeline: `source(idblock)` yields channels
+    with `key`, `frames()`, `flags()`, `selection()`, `select(mask)` and
+    `deselect_channel()` as FCurveChannel has them."""
+    if source not in CHANNEL_SOURCES:
+        CHANNEL_SOURCES.append(source)
+
+
+def channels_of(idblock):
+    for source in CHANNEL_SOURCES:
+        yield from source(idblock)
+
+
+def in_timeline(obj):
+    """Whether the Timeline lists an object at all: Blender's dope sheet
+    filter leaves out an object hidden in the viewport, by its eye, its
+    collection or Disable in Viewports (`animdata_filter_base_is_ok`,
+    anim_filter.cc: ADS_FILTER_INCL_HIDDEN is never set for the Timeline)."""
+    try:
+        return obj.visible_get() and not obj.hide_viewport
+    except (AttributeError, RuntimeError, ReferenceError):
+        return False
+
+
+def _collect(idblock, keys, seen):
+    """One data-block's keys into `keys` as (frame, flag) pairs, in the
+    channels' order; a channel already taken (an action two data-blocks
+    share, ANIMFILTER_NODUPLIS) is not taken again."""
+    for channel in channels_of(idblock):
+        key = channel.key
+        if key in seen:
             continue
-        co = array('f', [0.0]) * (2 * count)
-        points.foreach_get('co', co)
-        selected = array('b', [0]) * count
-        points.foreach_get('select_control_point', selected)
-        frames = co[0::2]
-        if tweaked:
-            # A strip being tweaked plays its keys at the strip's time.
-            frames = array('f', (animdata.nla_tweak_strip_time_to_scene(f) for f in frames))
-        every.update(frames)
-        chosen.update(itertools.compress(frames, selected))
+        seen.add(key)
+        keys.extend(zip(channel.frames(), channel.flags()))
 
 
-def columns(every, chosen):
-    """Frames as the columns Blender's keylist makes of them: sorted, with
-    frames closer than THRESHOLD merged, selected if any merged key is."""
+def columns(keys):
+    """(frame, flag) pairs as the columns Blender's keylist makes of them
+    (keyframes_keylist.cc): sorted, frames closer than THRESHOLD merged into
+    the first one's column, selected if any merged key is, the type of the
+    first key unless one is a proper Keyframe, which wins
+    (`nupdate_ak_bezt`). The sort is stable, so the first key of a frame is
+    the first channel's."""
     out = []
-    for frame in sorted(every):
-        selected = frame in chosen
+    for frame, flag in sorted(keys, key=lambda pair: pair[0]):
+        selected = flag & FLAG_SELECTED
         if out and frame - out[-1][0] <= THRESHOLD:
-            out[-1][1] = out[-1][1] or selected
+            column = out[-1]
+            if selected != (column[1] & FLAG_SELECTED) or (column[1] & FLAG_PARTIAL):
+                column[1] |= FLAG_PARTIAL
+            column[1] |= selected
+            if ((flag >> 1) & 7) == 0:
+                column[1] &= ~(7 << 1)
         else:
-            out.append([frame, selected])
+            out.append([frame, flag])
+    # Partial means a selected column with a key left out of it.
+    for column in out:
+        if not column[1] & FLAG_SELECTED:
+            column[1] &= ~FLAG_PARTIAL
     return out
 
 
@@ -176,6 +304,7 @@ def report():
     scene = bpy.context.scene
     report_state(scene)
     report_keys(scene)
+    report_markers(scene)
     _hidden.clear()
     for obj in scene.objects:
         _hidden[obj.name] = _is_hidden(obj)
@@ -197,31 +326,57 @@ def report_state(scene=None):
 
 
 def report_keys(scene=None):
-    """Every object's key columns, and the scene's own, in one call."""
+    """Every object's key columns, and the scene's own, in one call: a byte
+    a column, its selection, its type and whether it is partly selected
+    (FLAG_*). An object the Timeline does not list — hidden in the viewport
+    — is not reported (`in_timeline`)."""
     scene = scene or bpy.context.scene
     names = []
     counts = array('I')
     frames = array('f')
     flags = array('B')
     for obj in scene.objects:
-        every, chosen = set(), set()
-        for idblock in animated_ids(obj):
-            _collect(idblock, every, chosen)
-        if not every:
+        if not in_timeline(obj):
             continue
-        found = columns(every, chosen)
+        keys, seen = [], set()
+        for idblock in animated_ids(obj):
+            _collect(idblock, keys, seen)
+        if not keys:
+            continue
+        found = columns(keys)
         names.append(obj.name)
         counts.append(len(found))
-        for frame, selected in found:
+        for frame, flag in found:
             frames.append(frame)
-            flags.append(1 if selected else 0)
-    every, chosen = set(), set()
+            flags.append(flag & 0xFF)
+    keys, seen = [], set()
     for idblock in scene_ids(scene):
-        _collect(idblock, every, chosen)
-    found = columns(every, chosen)
+        _collect(idblock, keys, seen)
+    found = columns(keys)
     _blenderkit.anim_keys('\0'.join(names).encode(), counts.tobytes(), frames.tobytes(),
                           flags.tobytes(), array('f', [f for f, _ in found]).tobytes(),
-                          array('B', [1 if s else 0 for _, s in found]).tobytes())
+                          array('B', [flag & 0xFF for _, flag in found]).tobytes())
+
+
+def report_markers(scene=None):
+    """The scene's timeline markers, in the scene's order: each one's name,
+    the camera it is bound to ('' for none), its frame and whether it is
+    selected, and Lock Markers — for the Timeline's marker row."""
+    if not hasattr(_blenderkit, 'anim_markers'):
+        return
+    scene = scene or bpy.context.scene
+    names, cameras = [], []
+    frames = array('i')
+    flags = array('B')
+    for marker in scene.timeline_markers:
+        names.append(marker.name)
+        camera = getattr(marker, 'camera', None)
+        cameras.append(camera.name if camera is not None else '')
+        frames.append(marker.frame)
+        flags.append(1 if marker.select else 0)
+    _blenderkit.anim_markers('\0'.join(names).encode(), '\0'.join(cameras).encode(),
+                             frames.tobytes(), flags.tobytes(),
+                             int(scene.tool_settings.lock_markers))
 
 
 # ---------------------------------------------------------------------------
@@ -391,6 +546,19 @@ def push_frame(scene, changed):
                 # frame).
                 if getattr(getattr(obj, 'data', None), 'shape_keys', None) is not None:
                     _blenderkit_sync()._push_groups(obj, during_pass=False)
+        # Grease Pencil: each object whose keyframes in effect (or onion
+        # skins) the new frame changed (`_blenderkit_gpencil.push_frame`).
+        if len(bpy.data.grease_pencils):
+            try:
+                import _blenderkit_gpencil
+            except ImportError:
+                _blenderkit_gpencil = None
+            if _blenderkit_gpencil is not None:
+                try:
+                    _blenderkit_gpencil.push_frame(scene, depsgraph)
+                except Exception as error:          # noqa: BLE001 - the frame goes on
+                    print(f"[Blender Local] the Grease Pencil drawings of frame "
+                          f"{scene.frame_current} could not be read: {error}")
     finally:
         # Whatever went wrong above, the timeline hears of the frame Blender is
         # on: without `anim_frame` it stops a frame behind (round 1's review),

@@ -93,7 +93,10 @@ def load(name):
 
 
 context = load("_blenderkit_context")
-for name in ("_blenderkit_texpaint", "_blenderkit_anim", "_blenderkit_tools"):
+# The modules the mirror imports by name, which the app finds on its path:
+# _blenderkit_material (each object's slots) and _blenderkit_gpencil (build 59).
+for name in ("_blenderkit_texpaint", "_blenderkit_anim", "_blenderkit_tools",
+             "_blenderkit_material", "_blenderkit_gpencil"):
     load(name)
 sync = load("_blenderkit_sync")
 undo = load("_blenderkit_undo")

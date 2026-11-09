@@ -24,6 +24,10 @@ struct ViewportOptions {
     /// kept on its SpaceView3D in Blender as X-Ray is; what they draw is read
     /// from Blender (EditMeasure.swift). Off, as Blender's start.
     var measure = MeasureOverlays()
+    /// Viewport Overlays ▸ Grease Pencil ▸ Onion Skins
+    /// (`View3DOverlay.use_gpencil_onion_skin`). On here, as Blender's 2D
+    /// Animation workspace starts it; its General startup file starts it off.
+    var showOnionSkins = true
 
     // Snapping, the pivot point and proportional editing used to live here as
     // well, as five separate @State copies that never reached Blender and

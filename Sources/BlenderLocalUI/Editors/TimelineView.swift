@@ -6,17 +6,20 @@ import SwiftUI
 ///
 /// The header follows `playback_controls` in Blender 5.2.1's
 /// scripts/startup/bl_ui/space_time.py, left to right: the View and Marker
-/// menus, the Playback popover, the record button and its popover, the
-/// transport, then the current frame, the preview-range toggle and the range.
-/// Two buttons are added for a screen with no I key: Insert and Delete
-/// Keyframe, which Blender keeps in the Dope Sheet's Keying popover. The body
-/// is the scrubbing strip with its numbers and playhead box
-/// (time_scrub_ui.cc) over the summary of keys, with the frames outside the
-/// range darkened (anim_draw.cc).
+/// menus — with the Dope Sheet's Select and Key menus beside them, whose keys
+/// the Timeline answers in Blender too — the Playback popover, the record
+/// button and its popover, the transport, then the current frame, the
+/// preview-range toggle and the range. Two buttons are added for a screen
+/// with no I key: Insert and Delete Keyframe, which Blender keeps in the Dope
+/// Sheet's Keying popover. The body is the scrubbing strip with its numbers
+/// and playhead box (time_scrub_ui.cc) over the summary of keys, with the
+/// frames outside the range darkened (anim_draw.cc), and the markers' row
+/// along the bottom (anim_markers.cc).
 ///
-/// Nothing here holds animation state. Blender owns the frame, the range and
-/// the keys; the mirror puts them in the scene, this draws them, and every
-/// control goes through `TimelineDriver`.
+/// Nothing here holds animation state. Blender owns the frame, the range,
+/// the keys and the markers; the mirror puts them in the scene, this draws
+/// them, and every control goes through `TimelineDriver` (frames, playback)
+/// or `TimelineController` (keys and markers, TimelineInput.swift).
 struct TimelineView: View {
     var scene: BKScene
     var session: BpySession
@@ -25,17 +28,21 @@ struct TimelineView: View {
     var close: () -> Void
 
     private let docked: TimelineDriver?
+    private let dockedController: TimelineController?
     @State private var standalone = TimelineDriver()
+    @State private var standaloneController = TimelineController()
     private var driver: TimelineDriver { docked ?? standalone }
+    private var controller: TimelineController { dockedController ?? standaloneController }
 
-    static let scrubHeight: CGFloat = 22
-    static let keysHeight: CGFloat = 46
+    static let scrubHeight = TimelineController.scrubHeight
+    static let keysHeight = TimelineController.keysHeight
 
-    init(scene: BKScene, session: BpySession, driver: TimelineDriver,
+    init(scene: BKScene, session: BpySession, driver: TimelineDriver, controller: TimelineController,
          confirmDelete: @escaping () -> Void, close: @escaping () -> Void) {
         self.scene = scene
         self.session = session
         self.docked = driver
+        self.dockedController = controller
         self.confirmDelete = confirmDelete
         self.close = close
     }
@@ -46,6 +53,7 @@ struct TimelineView: View {
         self.scene = scene
         self.session = session
         self.docked = nil
+        self.dockedController = nil
         self.confirmDelete = {}
         self.close = {}
     }
@@ -53,8 +61,8 @@ struct TimelineView: View {
     var body: some View {
         VStack(spacing: 0) {
             header
-            TimelineBody(scene: scene, driver: driver)
-                .frame(height: Self.scrubHeight + Self.keysHeight)
+                .overlay(alignment: .leading) { TimelineModalBar(controller: controller, state: controller.state) }
+            TimelineBody(scene: scene, driver: driver, controller: controller, state: controller.state)
         }
         .background(TimelineColours.back)
         .overlay(alignment: .top) {
@@ -62,7 +70,10 @@ struct TimelineView: View {
         }
         .disabled(session.isRunning)
         .onAppear {
-            if docked == nil { standalone.bind(scene: scene, session: session, bridge: nil) }
+            if docked == nil {
+                standalone.bind(scene: scene, session: session, bridge: nil)
+                standaloneController.bind(scene: scene, session: session, bridge: nil, driver: standalone)
+            }
         }
     }
 
@@ -77,8 +88,12 @@ struct TimelineView: View {
                         .foregroundStyle(BTheme.textDim)
                         .padding(.leading, 4)
                         .accessibilityHidden(true)
-                    viewMenu
-                    markerMenu
+                    TimelineHeaderMenu(id: "TIME_MT_view", controller: controller, scene: scene)
+                    TimelineHeaderMenu(id: "DOPESHEET_MT_select", controller: controller, scene: scene)
+                    if controller.state.showMarkers {
+                        TimelineHeaderMenu(id: "DOPESHEET_MT_marker", controller: controller, scene: scene)
+                    }
+                    TimelineHeaderMenu(id: "DOPESHEET_MT_key", controller: controller, scene: scene)
                     playbackMenu
                     Spacer(minLength: 16)
                     TimelineAutoKeying(scene: scene, driver: driver)
@@ -94,28 +109,6 @@ struct TimelineView: View {
             }
         }
         .frame(height: BTheme.Metric.headerHeight)
-    }
-
-    /// TIME_MT_view's toggle that matters here: whose keys the summary shows
-    /// and the jumps step through.
-    private var viewMenu: some View {
-        Menu("View") {
-            Toggle("Only Show Selected", isOn: Binding(get: { scene.animation.onlySelectedKeys },
-                                                       set: { driver.setOnlySelectedKeys($0) }))
-            Divider()
-            BUnavailable("Show Seconds")
-            BUnavailable("Show Markers")
-        }
-        .menuStyle(BlenderMenuStyle())
-    }
-
-    private var markerMenu: some View {
-        Menu("Marker") {
-            BUnavailable("Add Marker")
-            BUnavailable("Rename Marker")
-            BUnavailable("Delete Marker")
-        }
-        .menuStyle(BlenderMenuStyle())
     }
 
     /// TIME_PT_playback, as much of it as applies: the loop mode. Playback
@@ -204,6 +197,26 @@ enum TimelineColours {
     /// `user_interface.icon_autokey`, "Auto Keying Indicator": the colour
     /// RECORD_ON's themed dot is drawn in.
     static let autoKey = Color(hex: 0xAB3C48)
+
+    /// `common.anim.keyframe_*` and their `_selected`, one pair a key type
+    /// (`draw_keyframe_shape`).
+    static func key(_ type: KeyframeType, selected: Bool) -> Color {
+        switch type {
+        case .keyframe: return selected ? keySelected : key
+        case .breakdown: return Color(hex: selected ? 0x54BFED : 0xB3DBE8)
+        case .movingHold: return Color(hex: selected ? 0xFFAF23 : 0x808080)
+        case .extreme: return Color(hex: selected ? 0xF28080 : 0xE8B3CC)
+        case .jitter: return Color(hex: selected ? 0x61C042 : 0x94E575)
+        case .generated: return Color(hex: selected ? 0xA28962 : 0x585858)
+        }
+    }
+
+    /// `regions.scrubbing.time_marker` and `time_marker_selected`
+    /// (TH_TIME_MARKER_LINE): white at half and at full strength.
+    static func marker(selected: Bool) -> Color { Color.white.opacity(selected ? 1 : 0x80 / 255.0) }
+
+    /// A box being drawn, as the 3D View draws its own.
+    static let box = BTheme.select
 }
 
 // MARK: - Controls
@@ -488,80 +501,138 @@ private struct TimelineNumberField: View {
     }
 }
 
-// MARK: - Body
+// MARK: - Menus
 
-/// Which frames the body shows across its width: the scene range, with a
-/// margin either side so the darkened frames beyond each end are visible, as
-/// Blender's Frame Scene Range leaves them.
-struct TimelineWindow: Equatable {
-    var first: Double
-    var last: Double
-    var width: CGFloat
+/// One of the Timeline's header menus, built from Blender's rows
+/// (`TimelineMenus`): View, Select, Marker and Key.
+private struct TimelineHeaderMenu: View {
+    var id: String
+    var controller: TimelineController
+    var scene: BKScene
 
-    init(range: ClosedRange<Int>, width: CGFloat) {
-        let span = Double(max(range.upperBound - range.lowerBound, 1))
-        let margin = max(span * 0.04, 1)
-        first = Double(range.lowerBound) - margin
-        last = Double(range.upperBound) + margin
-        self.width = max(width, 1)
-    }
-
-    func x(_ frame: Double) -> CGFloat {
-        CGFloat((frame - first) / (last - first)) * width
-    }
-
-    /// The whole frame nearest a point — a scrub snaps to frames.
-    func frame(at x: CGFloat) -> Int {
-        Int((first + Double(x / width) * (last - first)).rounded())
-    }
-
-    /// Frames between numbers: the smallest of the usual steps that keeps the
-    /// numbers a readable distance apart.
-    func step(minimumSpacing: CGFloat = 56) -> Int {
-        let perFrame = width / CGFloat(last - first)
-        let steps = [1, 2, 5, 10, 20, 25, 50, 100, 200, 250, 500, 1000, 2000, 2500, 5000,
-                     10_000, 25_000, 50_000, 100_000, 250_000, 500_000]
-        return steps.first { CGFloat($0) * perFrame >= minimumSpacing } ?? 1_000_000
-    }
-
-    /// The numbered frames across the window.
-    var numbered: [Int] {
-        let step = step()
-        var frames: [Int] = []
-        var f = Int((first / Double(step)).rounded(.up)) * step
-        while Double(f) <= last {
-            frames.append(f)
-            f += step
+    var body: some View {
+        Menu(TimelineMenus.title(id)) {
+            TimelineMenuContent(id: id, controller: controller, scene: scene)
         }
-        return frames
+        .menuStyle(BlenderMenuStyle())
     }
 }
 
-/// A drag or a tap anywhere on the body moves the playhead there.
+/// A menu's rows as SwiftUI's menu draws them: a heading starts a section, a
+/// submenu is a menu inside it, a toggle shows its tick, a row Blender has
+/// and the app does not is greyed.
+private struct TimelineMenuContent: View {
+    var id: String
+    var controller: TimelineController
+    var scene: BKScene
+
+    var body: some View {
+        let rows = TimelineMenus.rows(id, usePreviewRange: scene.animation.usePreviewRange)
+        ForEach(Array(sections(rows).enumerated()), id: \.offset) { _, section in
+            if let heading = section.heading {
+                Section(heading) { rowViews(section.rows) }
+            } else {
+                rowViews(section.rows)
+            }
+        }
+    }
+
+    private func sections(_ rows: [TimelineMenuRow]) -> [(heading: String?, rows: [TimelineMenuRow])] {
+        var out: [(heading: String?, rows: [TimelineMenuRow])] = [(nil, [])]
+        for row in rows {
+            if row.kind == .heading { out.append((row.title, [])) } else { out[out.count - 1].rows.append(row) }
+        }
+        return out.filter { $0.heading != nil || !$0.rows.isEmpty }
+    }
+
+    @ViewBuilder
+    private func rowViews(_ rows: [TimelineMenuRow]) -> some View {
+        ForEach(Array(rows.enumerated()), id: \.offset) { _, row in
+            switch row.kind {
+            case .separator:
+                Divider()
+            case .heading:
+                EmptyView()
+            case .unavailable:
+                BUnavailable(row.title)
+            case .submenu(let sub):
+                Menu(row.title) {
+                    TimelineMenuContent(id: sub, controller: controller, scene: scene)
+                }
+            case .action(let action):
+                Button(row.title) { controller.perform(action) }
+            case .interface(let name):
+                if controller.isToggle(name) {
+                    Toggle(row.title, isOn: Binding(get: { controller.checked(name) },
+                                                    set: { _ in controller.interface(name) }))
+                } else {
+                    Button(row.title) { controller.interface(name) }
+                }
+            }
+        }
+    }
+}
+
+/// G, S and Shift+D's line, where Blender writes it in the header, with
+/// Cancel and Confirm for a finger. In a view of its own: it changes with
+/// every sample of the drag.
+private struct TimelineModalBar: View {
+    var controller: TimelineController
+    var state: TimelineViewState
+
+    var body: some View {
+        if let header = state.header {
+            HStack(spacing: 8) {
+                Text(verbatim: header)
+                    .font(BTheme.Font.mono(11))
+                    .foregroundStyle(BTheme.text)
+                    .lineLimit(1)
+                if controller.modal != nil {
+                    Button("Cancel") { controller.cancelModal() }
+                        .buttonStyle(.bordered)
+                    Button("Confirm") { controller.confirmModal() }
+                        .buttonStyle(.borderedProminent)
+                }
+            }
+            .font(BTheme.Font.ui(11))
+            .padding(.horizontal, 10)
+            // Over the menus, as Blender's header shows the line in their place.
+            .frame(minWidth: 470, maxHeight: .infinity, alignment: .leading)
+            .background(TimelineColours.back)
+        }
+    }
+}
+
+// MARK: - Body
+
+/// The scrubbing strip along the top, the keys under it and the markers along
+/// the bottom, over the view that takes their touches and keys.
 private struct TimelineBody: View {
     var scene: BKScene
     var driver: TimelineDriver
+    var controller: TimelineController
+    var state: TimelineViewState
 
     var body: some View {
+        let height = TimelineController.scrubHeight + TimelineController.keysHeight
+            + (state.showMarkers ? TimelineController.markersHeight : 0)
         GeometryReader { geo in
-            let window = TimelineWindow(range: scene.frameStart...max(scene.frameEnd, scene.frameStart),
-                                        width: geo.size.width)
+            let window = state.shownWindow(for: scene, width: geo.size.width)
             ZStack(alignment: .topLeading) {
-                TimelineKeyLayer(scene: scene, window: window, scrubHeight: TimelineView.scrubHeight)
-                TimelineScrubNumbers(window: window, height: TimelineView.scrubHeight)
-                TimelinePlayhead(scene: scene, window: window, scrubHeight: TimelineView.scrubHeight)
+                TimelineKeyLayer(scene: scene, controller: controller, state: state, window: window)
+                if state.showMarkers {
+                    TimelineMarkerLayer(scene: scene, state: state, window: window)
+                }
+                TimelineScrubNumbers(scene: scene, state: state, window: window)
+                TimelinePlayhead(scene: scene, state: state, window: window)
+                TimelineInputLayer(controller: controller)
             }
             .frame(width: geo.size.width, height: geo.size.height)
-            .contentShape(Rectangle())
-            .gesture(
-                DragGesture(minimumDistance: 0)
-                    .onChanged { g in driver.scrub(to: window.frame(at: g.location.x)) }
-                    .onEnded { g in
-                        driver.scrub(to: window.frame(at: g.location.x))
-                        driver.flushPendingFrame()
-                    }
-            )
+            .onAppear { place(geo) }
+            .onChange(of: geo.size) { _, _ in place(geo) }
+            .onChange(of: geo.frame(in: .named("bk-layout")).origin) { _, _ in place(geo) }
         }
+        .frame(height: height)
         .accessibilityElement()
         .accessibilityLabel("Timeline")
         .accessibilityValue(Text(verbatim: "Frame \(scene.frameCurrent)"))
@@ -573,26 +644,38 @@ private struct TimelineBody: View {
             }
         }
     }
+
+    private func place(_ geo: GeometryProxy) {
+        controller.bodySize = geo.size
+        // The workspace's own space, which its pop-up menus are drawn in.
+        controller.bodyOrigin = geo.frame(in: .named("bk-layout")).origin
+    }
 }
 
-/// The grid, the range, and a diamond per column of keys. Redrawn when the
-/// keys or the range change, not when the frame does.
+/// The grid, the range, a diamond per column of keys in its type's size and
+/// colours, a move's preview and a box. Redrawn when the keys, the range or
+/// a gesture change, not when the frame does.
 private struct TimelineKeyLayer: View {
     var scene: BKScene
+    var controller: TimelineController
+    var state: TimelineViewState
     var window: TimelineWindow
-    var scrubHeight: CGFloat
 
     var body: some View {
-        let keys = scene.timelineKeys
         let start = scene.frameStart
         let end = scene.frameEnd
         let a = scene.animation
         let preview: (Int, Int)? = a.usePreviewRange ? (a.previewStart, a.previewEnd) : nil
+        let keys = shownKeys()
+        let box = state.box
+        let lines = window.numbered(step: TimelineScrubNumbers.step(window: window, fps: a.fps,
+                                                                     seconds: state.showSeconds))
+        let scrub = TimelineController.scrubHeight
         Canvas { context, size in
             let full = CGRect(origin: .zero, size: size)
             context.fill(Path(full), with: .color(TimelineColours.back))
 
-            for f in window.numbered {
+            for f in lines {
                 let x = window.x(Double(f)).rounded()
                 context.fill(Path(CGRect(x: x - 0.5, y: 0, width: 1, height: size.height)),
                              with: .color(TimelineColours.grid))
@@ -628,37 +711,145 @@ private struct TimelineKeyLayer: View {
                 }
             }
 
-            // The summary: a diamond per column, in the middle of the key area.
-            let y = scrubHeight + (size.height - scrubHeight) / 2
-            let r: CGFloat = 5.5
-            for key in keys {
-                let x = window.x(Double(key.frame))
-                guard x > -r, x < size.width + r else { continue }
-                var diamond = Path()
-                diamond.move(to: CGPoint(x: x, y: y - r))
-                diamond.addLine(to: CGPoint(x: x + r, y: y))
-                diamond.addLine(to: CGPoint(x: x, y: y + r))
-                diamond.addLine(to: CGPoint(x: x - r, y: y))
-                diamond.closeSubpath()
-                context.fill(diamond, with: .color(key.selected ? TimelineColours.keySelected : TimelineColours.key))
-                context.stroke(diamond, with: .color(TimelineColours.keyBorder), lineWidth: 1)
+            // The box being drawn, over the keys' row.
+            if let box {
+                let rect = CGRect(x: min(box.0, box.1), y: scrub, width: abs(box.1 - box.0),
+                                  height: TimelineController.keysHeight)
+                context.fill(Path(rect), with: .color(TimelineColours.box.opacity(0.14)))
+                context.stroke(Path(rect), with: .color(TimelineColours.box), lineWidth: 1)
+            }
+
+            // The summary: a diamond per column, in the middle of the key
+            // row, unselected under selected.
+            let y = scrub + TimelineController.keysHeight / 2
+            for pass in [false, true] {
+                for key in keys where key.selected == pass {
+                    let r: CGFloat = 6 * key.type.size
+                    let x = window.x(Double(key.frame))
+                    guard x > -r, x < size.width + r else { continue }
+                    var diamond = Path()
+                    diamond.move(to: CGPoint(x: x, y: y - r))
+                    diamond.addLine(to: CGPoint(x: x + r, y: y))
+                    diamond.addLine(to: CGPoint(x: x, y: y + r))
+                    diamond.addLine(to: CGPoint(x: x - r, y: y))
+                    diamond.closeSubpath()
+                    context.fill(diamond, with: .color(TimelineColours.key(key.type, selected: key.selected)))
+                    context.stroke(diamond, with: .color(TimelineColours.keyBorder), lineWidth: 1)
+                }
             }
         }
         .allowsHitTesting(false)
     }
+
+    /// The columns, where a drag or G would leave them.
+    private func shownKeys() -> [TimelineKey] {
+        let keys = scene.timelineKeys
+        switch state.preview {
+        case .keys(let raw, let duplicate, let inverted):
+            return TimelinePreview.moved(keys, raw: raw, snap: controller.editor.snap, inverted: inverted,
+                                         duplicate: duplicate)
+        case .scale(let factor, let inverted):
+            return TimelinePreview.scaled(keys, factor: factor, pivot: Double(scene.frameCurrent),
+                                          snap: controller.editor.snap, inverted: inverted)
+        default:
+            return keys
+        }
+    }
 }
 
-/// The scrubbing strip along the top, with its frame numbers.
-private struct TimelineScrubNumbers: View {
+/// The markers along the bottom, as `ED_markers_draw` draws them: the strip,
+/// a dashed line up from each, its triangle — filled when selected — and its
+/// name beside it, raised for the selected one and the one the current frame
+/// is at.
+private struct TimelineMarkerLayer: View {
+    var scene: BKScene
+    var state: TimelineViewState
     var window: TimelineWindow
-    var height: CGFloat
 
     var body: some View {
+        let placed = TimelineMarkerLayout.place(scene.animation.markers, current: scene.frameCurrent)
+        let (moved, duplicate) = movement
+        let strip = TimelineController.markersHeight
+        let scrub = TimelineController.scrubHeight
+        Canvas { context, size in
+            let bottom = size.height
+            context.fill(Path(CGRect(x: 0, y: bottom - strip, width: size.width, height: strip)),
+                         with: .color(TimelineColours.scrubBack))
+            for p in placed {
+                var frames = [(p.marker.frame + (p.marker.selected ? moved : 0), p.marker.selected)]
+                if duplicate && p.marker.selected { frames.append((p.marker.frame, false)) }
+                for (frame, selected) in frames {
+                    let x = window.x(Double(frame)).rounded()
+                    guard x > -200, x < size.width + 20 else { continue }
+                    let colour = TimelineColours.marker(selected: selected)
+                    var line = Path()
+                    line.move(to: CGPoint(x: x, y: scrub))
+                    line.addLine(to: CGPoint(x: x, y: bottom - 15))
+                    context.stroke(line, with: .color(colour), style: StrokeStyle(lineWidth: 1, dash: [3, 3]))
+                    // ICON_MARKER / ICON_MARKER_HLT: a triangle pointing up.
+                    var tri = Path()
+                    tri.move(to: CGPoint(x: x, y: bottom - 15))
+                    tri.addLine(to: CGPoint(x: x + 6, y: bottom - 6))
+                    tri.addLine(to: CGPoint(x: x - 6, y: bottom - 6))
+                    tri.closeSubpath()
+                    if selected {
+                        context.fill(tri, with: .color(colour))
+                    } else {
+                        context.stroke(tri, with: .color(colour), lineWidth: 1.2)
+                    }
+                    let name = p.marker.shownName
+                    guard !name.isEmpty else { continue }
+                    let elevated = p.elevated || selected
+                    let left = x + 9
+                    var end = size.width
+                    if !elevated, let next = p.nameEnd { end = window.x(next + Double(selected ? moved : 0)) - 4 }
+                    guard end - left > 8 else { continue }
+                    let text = context.resolve(Text(verbatim: name).font(BTheme.Font.ui(10)).foregroundStyle(colour))
+                    let y = bottom - strip / 2 - (elevated ? 5 : 0) - 2
+                    context.drawLayer { layer in
+                        layer.clip(to: Path(CGRect(x: left, y: 0, width: end - left, height: size.height)))
+                        layer.draw(text, at: CGPoint(x: left, y: y), anchor: .leading)
+                    }
+                }
+            }
+        }
+        .allowsHitTesting(false)
+    }
+
+    /// A marker drag's frames, and whether it is Shift+D's copies.
+    private var movement: (Int, Bool) {
+        if case .markers(let delta, let duplicate) = state.preview { return (delta, duplicate) }
+        return (0, false)
+    }
+}
+
+/// The scrubbing strip along the top, with its frame numbers — or, with Use
+/// Timecode, the time (`view2d_draw_scale_x`, `frame_to_time_string`).
+private struct TimelineScrubNumbers: View {
+    var scene: BKScene
+    var state: TimelineViewState
+    var window: TimelineWindow
+
+    /// Blender's step: from the scene's rate as the base, at least the grid's
+    /// 45 points and the widest label apart.
+    static func step(window: TimelineWindow, fps: Double, seconds: Bool) -> Int {
+        let base = max(Int(fps.rounded()), 1)
+        let ends = [abs(window.first), abs(window.last)]
+        let labels = ends.map { f in seconds ? Timecode.label(frame: f, step: 1, fps: fps) : "\(Int(f))" }
+        return window.step(base: base, minimumDistance: TimelineGrid.minimumDistance(labels: labels))
+    }
+
+    var body: some View {
+        let fps = scene.animation.fps
+        let seconds = state.showSeconds
+        let step = Self.step(window: window, fps: fps, seconds: seconds)
+        let height = TimelineController.scrubHeight
         Canvas { context, size in
             context.fill(Path(CGRect(x: 0, y: 0, width: size.width, height: height)),
                          with: .color(TimelineColours.scrubBack))
-            for f in window.numbered {
-                context.draw(Text(verbatim: "\(f)")
+            for f in window.numbered(step: step) {
+                let label = seconds ? Timecode.label(frame: Double(f), step: step, fps: fps) : "\(f)"
+                context.draw(Text(verbatim: label)
                                 .font(BTheme.Font.ui(10))
                                 .foregroundStyle(TimelineColours.scrubText),
                              at: CGPoint(x: window.x(Double(f)), y: height / 2))
@@ -669,17 +860,20 @@ private struct TimelineScrubNumbers: View {
     }
 }
 
-/// ANIM_draw_cfra's line, and the playhead box with the frame in it.
+/// ANIM_draw_cfra's line, and the playhead box with the frame — or the time,
+/// with Use Timecode (`get_current_time_str`) — in it.
 private struct TimelinePlayhead: View {
     var scene: BKScene
+    var state: TimelineViewState
     var window: TimelineWindow
-    var scrubHeight: CGFloat
 
     var body: some View {
         let subframe = scene.animation.subframe
         let frame = Double(scene.frameCurrent) + Double(subframe)
         let x = window.x(frame)
-        let label = subframe == 0 ? "\(scene.frameCurrent)" : String(format: "%.1f", frame)
+        let label = state.showSeconds ? Timecode.playhead(frame: frame, fps: scene.animation.fps)
+            : subframe == 0 ? "\(scene.frameCurrent)" : String(format: "%.1f", frame)
+        let scrubHeight = TimelineController.scrubHeight
         GeometryReader { geo in
             if x >= -12, x <= geo.size.width + 12 {
                 Rectangle()
@@ -693,6 +887,7 @@ private struct TimelinePlayhead: View {
                     .padding(.horizontal, 4)
                     .frame(minWidth: 24, minHeight: scrubHeight - 4)
                     .background(RoundedRectangle(cornerRadius: 4).fill(TimelineColours.playhead))
+                    .fixedSize()
                     .position(x: min(max(x, 14), geo.size.width - 14), y: scrubHeight / 2)
             }
         }

@@ -63,15 +63,20 @@ struct ShadingItems: View {
     var body: some View {
         Button("Shade Smooth", systemImage: "circle.righthalf.filled") { shade(true) }
             .disabled(!hasObject)
-        // Greyed out without the library, where it would fail every time: the
-        // device's bpy has none. The subtitle is the reason, since a menu row
-        // on an iPad has no tooltip to give it in.
+        // Greyed out without the library, where it would fail every time. The
+        // app's bpy carries the library since build 59 (it had none before),
+        // so this is the fallback for a bpy staged without it. The subtitle is
+        // the reason, since a menu row on an iPad has no tooltip to give it in
+        // — ONE short line: the iPad's menu does not grow a row for a wrapped
+        // subtitle, and build 58's three-line one ("… — Smooth by Angle below
+        // does not") was drawn over Shade Flat (the user's screenshot,
+        // November 9).
         Button {
             perform(LastOperator.shadeAutoSmooth())
         } label: {
             Text("Shade Auto Smooth")
             if essentialsLibrary == false {
-                Text("Needs Blender's Essentials library — Smooth by Angle below does not")
+                Text("Needs the Essentials library")
             }
         }
         .disabled(!meshInObjectMode || essentialsLibrary == false)

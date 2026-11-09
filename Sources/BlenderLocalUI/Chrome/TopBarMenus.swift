@@ -267,24 +267,34 @@ struct EditMenu: View {
     }
 }
 
-/// Blender's Render menu (`TOPBAR_MT_render`).
+/// Blender's Render menu (`TOPBAR_MT_render`, 5.2.1): Render Image, Render
+/// Animation, View Render and View Animation, each opening the Render panel
+/// for its row (`RenderPanelAction`), as F12, Ctrl+F12, F11 and Ctrl+F11 do.
+/// It was drawn nowhere until November 9, with Render Image its only row.
 struct RenderMenu: View {
-    var onRender: () -> Void = {}
+    var session: BpySession
 
     var body: some View {
-        Menu("Render") {
-            Button("Render Image") { onRender() }
-            BUnavailable("Render Animation")
+        Menu {
+            Button { RenderPanelAction.renderImage.post() } label: {
+                Label("Render Image", systemImage: "camera.aperture")
+            }
+            .disabled(session.isRunning)
+            Button { RenderPanelAction.renderAnimation.post() } label: {
+                Label("Render Animation", systemImage: "film")
+            }
+            .disabled(session.isRunning || !session.usesRealBlender)
             Divider()
             BUnavailable("Render Audio…")
             Divider()
-            BUnavailable("View Render")
-            BUnavailable("View Animation")
-            Divider()
-            BUnavailable("Lock Interface")
-            Divider()
-            Text("Renders with the viewport's PBR pass — no ray tracing, "
-                 + "shadows or global illumination").disabled(true)
+            Button("View Render") { RenderPanelAction.viewRender.post() }
+            Button("View Animation") { RenderPanelAction.viewAnimation.post() }
+                .disabled(!session.usesRealBlender)
+        } label: {
+            Text("Render")
+                .padding(.horizontal, 10)
+                .frame(minWidth: 44, minHeight: 44)
+                .contentShape(Rectangle())
         }
         .menuStyle(BlenderMenuStyle())
     }

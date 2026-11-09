@@ -477,6 +477,11 @@ public enum SceneMirror {
                 // Sent every pass it differs from the drawn mesh's map, so an
                 // object whose modifiers stopped changing it loses it here.
                 old.uvLayout = fresh.uvLayout
+                // The material slots travel on `fresh` (`carryMaterials`),
+                // and a face's slot can change with no vertex moving (Assign),
+                // which the unchanged mesh above does not see.
+                if old.materialLooks != fresh.materialLooks { old.materialLooks = fresh.materialLooks }
+                old.setTriangleSlots(fresh.triangleSlots)
             }
             // The stack travels on `fresh`, which this loop throws away for any
             // object already on screen — so for those the Modifiers panel never
@@ -512,6 +517,9 @@ public enum SceneMirror {
             // before, the Data tab would go on listing a group a script
             // removed, and its buttons would name it.
             if old.meshGroups != fresh.meshGroups { old.meshGroups = fresh.meshGroups }
+            // A Grease Pencil object's layers and drawings (`sync_gpencil`),
+            // which travel on `fresh` too; taken only when they changed.
+            old.takeGreasePencil(from: fresh)
 
             // Per-vertex layers only survive a mesh whose vertex count still
             // matches; a script that subdivided the mesh invalidated them.

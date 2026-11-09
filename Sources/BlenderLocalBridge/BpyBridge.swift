@@ -655,6 +655,41 @@ public final class BpyBridge {
         return outcome
     }
 
+    /// A command whose result the mirroring pass is not needed for: the
+    /// Timeline's key and marker selection, which `_blenderkit_keys` reports
+    /// to the timeline itself, as a tap's object selection skips the pass
+    /// (`select`). One undo step under the command's name, as Blender's
+    /// select operators push one — none when it printed
+    /// `BpyKeys.unchanged` (nothing changed) or failed. The Info log gets
+    /// the operator's call.
+    @discardableResult
+    public func runWithoutMirror(_ command: BlenderCommand) -> Outcome {
+        guard session.usesRealBlender, let scene, !session.isRunning, session.gestureHold == nil else {
+            return run(command)
+        }
+        forgetAdjustable()
+        let before = scene.objects.count
+        let consoleBefore = session.console.count
+        if command.undo != nil { session.prepareBackendChange() }
+        let answer = session.capture(command.body)
+        var error: String?
+        if answer == nil {
+            error = session.console.dropFirst(consoleBefore)
+                .last { $0.kind == .error }?.text
+                .trimmingCharacters(in: .whitespaces) ?? "\(command.undo ?? "The command") did not run."
+        }
+        let outcome = Outcome(python: command.call, succeeded: error == nil, error: error,
+                              objectsBefore: before, objectsAfter: scene.objects.count)
+        lastOutcome = outcome
+        session.logOperator(command.call, output: error.map { [BpyLine(.error, $0)] } ?? [])
+        if let error {
+            reportFailure(command.undo ?? Self.operationName(for: command.call), error)
+        } else if let label = command.undo, answer?.contains(BpyKeys.unchanged) != true {
+            session.recordBackendChange(label)
+        }
+        return outcome
+    }
+
     /// Whether commands reach the real Blender, whose edit mesh a selection
     /// can be pushed into and read back from. False on the simulator's
     /// stand-in, which reads the interface's selection instead.
@@ -904,6 +939,20 @@ public final class BpyBridge {
     public func sculptState() -> SculptState? {
         guard session.usesRealBlender, let text = capture(SculptBpy.stateQuery) else { return nil }
         return SculptState.parse(text)
+    }
+
+    /// Draw Mode's settings and brush (`_blenderkit_gpencil.state`), read
+    /// without a mirroring pass.
+    public func greasePencilState() -> GPDrawState? {
+        guard session.usesRealBlender, let text = capture(GreasePencilBpy.stateQuery) else { return nil }
+        let line = text.split(separator: "\n").last { $0.hasPrefix("{") }.map(String.init) ?? text
+        return GPDrawState(json: line)
+    }
+
+    /// Blender's Essentials Grease Pencil Draw brushes.
+    public func greasePencilBrushes() -> [String] {
+        guard session.usesRealBlender, let text = capture(GreasePencilBpy.brushesQuery) else { return [] }
+        return SculptJSON.last([String].self, in: text) ?? []
     }
 
     /// Blender's Essentials sculpt brushes.
@@ -1721,57 +1770,12 @@ public enum Bpy {
     public static let shadeSmooth = "bpy.ops.object.shade_smooth()"
     public static let shadeFlat   = "bpy.ops.object.shade_flat()"
 
-    /// Give the object a material of its own and set what it shades with.
-    ///
-    /// `object.color` — which is what the Material tab used to set — is a
-    /// viewport display property. Cycles does not read it unless the material
-    /// asks for it through an Object Info node, so a coloured scene rendered
-    /// entirely grey. This writes the Principled BSDF's Base Color, Metallic
-    /// and Roughness, which every renderer reads.
-    ///
-    /// The material is per object and named after it, because a material made
-    /// by `new()` is shared the moment a second object is given the same one,
-    /// and colouring one part would then colour every part made from the same
-    /// primitive.
-    public static func setMaterial(_ name: String, baseColor: SIMD4<Float>,
-                                   metallic: Float, roughness: Float) -> String {
-        let material = "\(name) Material"
-        return """
-        _o = bpy.data.objects[\(quote(name))]
-        _m = bpy.data.materials.get(\(quote(material))) or bpy.data.materials.new(\(quote(material)))
-        _m.use_nodes = True
-        _b = _m.node_tree.nodes.get("Principled BSDF")
-        if _b is not None:
-            _b.inputs["Base Color"].default_value = \(baseColorTuple(baseColor))
-            _b.inputs["Metallic"].default_value = \(String(format: "%.3f", metallic))
-            _b.inputs["Roughness"].default_value = \(String(format: "%.3f", roughness))
-        _m.diffuse_color = \(baseColorTuple(baseColor))
-        if _o.data.materials:
-            _o.data.materials[0] = _m
-        else:
-            _o.data.materials.append(_m)
-        _o.color = \(baseColorTuple(baseColor))
-        """
-    }
-
-    /// sRGB in, linear out.
-    ///
-    /// The colour picker hands back sRGB components — that is what a hex like
-    /// `4E6B3A` means — and every colour Blender shades with is linear. Writing
-    /// the sRGB number straight into Base Color makes everything render lighter
-    /// and flatter than the colour that was picked: 0x4E is 0.306 as sRGB and
-    /// 0.074 as linear, which is more than a factor of four of green.
-    private static func baseColorTuple(_ c: SIMD4<Float>) -> String {
-        String(format: "(%.4f, %.4f, %.4f, 1.0)",
-               linear(c.x), linear(c.y), linear(c.z))
-    }
-
-    /// The sRGB transfer function, inverted — the same curve Blender's own
-    /// `srgb_to_linearrgb` uses, so a hex typed here and the same hex typed
-    /// into Blender give the same render.
-    private static func linear(_ s: Float) -> Float {
-        s <= 0.04045 ? s / 12.92 : pow((s + 0.055) / 1.055, 2.4)
-    }
+    // Properties ▸ Material's writes are MaterialBpy's (MaterialProperties.swift):
+    // the slots, the shared material datablock and every input of its surface,
+    // as Blender's Material tab has them. The app's old picker gave every
+    // selected object a material of its own named after it; Blender's way to
+    // give a selection one material is Copy Material to Selected and Object ▸
+    // Link/Transfer Data ▸ Link Materials, and both are there.
 
     // MARK: modifiers
 

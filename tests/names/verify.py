@@ -56,7 +56,7 @@ print("\nThe toolbar's tools, by Blender's toolbar names")
 
 TOOL_MODE = {"ANY": ["OBJECT"], "EDIT": ["EDIT_MESH"], "SCULPT": ["SCULPT"],
              "TEXTURE_PAINT": ["PAINT_TEXTURE"], "VERTEX_PAINT": ["PAINT_VERTEX"],
-             "WEIGHT_PAINT": ["PAINT_WEIGHT"]}
+             "WEIGHT_PAINT": ["PAINT_WEIGHT"], "PAINT_GREASE_PENCIL": ["PAINT_GREASE_PENCIL"]}
 # The sculpt brushes are brush assets in 5.x, not toolbar tools: the toolbar
 # has one Brush tool, and these are the brushes (Essentials names, held to
 # Blender's asset library by tests/names/blender/verify.py).

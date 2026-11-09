@@ -255,7 +255,10 @@ check("an open stroke is a gesture that holds, in the stroke's words",
 check("Undo and Redo wait for an open stroke", body(runtime, after: "public func performUndo()").contains("gestureHold")
       && body(runtime, after: "public func performRedo()").contains("gestureHold"))
 check("so do scripts, console lines and file opens",
-      body(runtime, after: "public func runScript(", length: 900).contains("gestureHold")
+      // runScript(_:scene:) forwards to the recordsUndo one (the Render
+      // panel's runs record no undo step), which is where the guard is.
+      body(runtime, after: "public func runScript(_ source: String, scene: BKScene, recordsUndo: Bool)",
+           length: 900).contains("gestureHold")
         && body(runtime, after: "public func runConsole(").contains("gestureHold")
         && body(runtime, after: "public func submit(", length: 700).contains("gestureHold")
         && body(runtime, after: "public func openDocument(").contains("gestureHold"))

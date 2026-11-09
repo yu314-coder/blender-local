@@ -85,7 +85,9 @@ struct PropertiesView: View {
             BHeader {
                 Image(systemName: tab.icon)
                     .font(.system(size: 11)).foregroundStyle(tab.accent)
-                Text(scene.active?.name ?? "Properties")
+                // The scene's tabs are the scene's, as Blender's context
+                // path shows: not the active object's.
+                Text(tab.isSceneTab ? "Scene" : (scene.active?.name ?? "Properties"))
                     .font(BTheme.Font.ui(12)).foregroundStyle(BTheme.text)
                 Text(tab.label)
                     .font(BTheme.Font.ui(13)).foregroundStyle(BTheme.textDim)
@@ -95,6 +97,8 @@ struct PropertiesView: View {
             switch tab {
             case .object, .modifiers, .constraints, .data, .material: objectTabs
             case .scene:                                sceneTab
+            case .render, .output, .world:
+                SceneRenderTabs(tab: tab, scene: scene, session: session, bridge: bridge)
             default:                                    EmptyView()
             }
         }
@@ -126,6 +130,7 @@ struct PropertiesView: View {
     @ViewBuilder
     private var objectTabs: some View {
             if let obj = scene.active {
+                ScrollViewReader { scrollProxy in
                 ScrollView {
                     VStack(alignment: .leading, spacing: 0) {
                         if tab == .object {
@@ -244,58 +249,19 @@ struct PropertiesView: View {
                         }
                         }
 
-                        if tab == .material {
-                        // This used to set object.color and log the Python
-                        // rather than run it, so the colour reached neither
-                        // Blender nor a render. object.color is a viewport
-                        // display property in the first place: Cycles ignores
-                        // it unless a material reads it through an Object Info
-                        // node, which is why a scene coloured here still
-                        // rendered entirely grey. These three write the
-                        // Principled BSDF the object actually shades with.
-                        BPanel("Surface") {
-                            HStack {
-                                Text("Base Color")
-                                    .font(BTheme.Font.ui(13)).foregroundStyle(BTheme.textDim)
-                                Spacer()
-                                ColorPicker("", selection: Binding(
-                                    get: {
-                                        Color(.sRGB, red: Double(obj.material.baseColor.x),
-                                              green: Double(obj.material.baseColor.y),
-                                              blue: Double(obj.material.baseColor.z))
-                                    },
-                                    set: { newValue in
-                                        let c = UIColor(newValue).cgColor.components ?? [0.8, 0.8, 0.8, 1]
-                                        let rgb = SIMD4(Float(c[0]),
-                                                        Float(c.count > 2 ? c[1] : c[0]),
-                                                        Float(c.count > 2 ? c[2] : c[0]), 1)
-                                        obj.material.baseColor = rgb
-                                        // Solid shading draws object.color, so
-                                        // keep the two agreeing; writeMaterial
-                                        // sets it on Blender's side too.
-                                        obj.color = rgb
-                                        writeMaterial(obj)
-                                    }), supportsOpacity: false)
-                                    .labelsHidden()
-                                    .frame(width: 40)
-                            }
-                            .frame(height: 24)
-                            Spacer().frame(height: 6)
-                            BNumberField("Metallic",
-                                         value: Binding(get: { obj.material.metallic },
-                                                        set: { obj.material.metallic = min(max($0, 0), 1) }),
-                                         step: 0.01,
-                                         commit: { _ in writeMaterial(obj) })
-                            Spacer().frame(height: 4)
-                            BNumberField("Roughness",
-                                         value: Binding(get: { obj.material.roughness },
-                                                        set: { obj.material.roughness = min(max($0, 0), 1) }),
-                                         step: 0.01,
-                                         commit: { _ in writeMaterial(obj) })
-                            Text("Principled BSDF — what Solid, Material Preview and a render all read")
-                                .font(BTheme.Font.ui(12)).foregroundStyle(BTheme.textDim)
-                                .fixedSize(horizontal: false, vertical: true)
+                        // A Grease Pencil object's material slots are its stroke
+                        // and fill colours (GreasePencilPanels.swift); Blender
+                        // draws its own panels for them (GPENCIL_UL_matslots).
+                        if tab == .material, obj.isGreasePencil {
+                        GreasePencilMaterialPanels(session: session, bridge: bridge, object: obj)
                         }
+
+                        if tab == .material, !obj.isGreasePencil {
+                            // Blender's Material Properties: the slots, the
+                            // slot's material and its Surface, Volume,
+                            // Settings and Viewport Display, read from Blender
+                            // and written through it (MaterialPanels.swift).
+                            MaterialPanels(scene: scene, session: session, bridge: bridge, object: obj)
                         }
 
                         if tab == .data, obj.overlayDisplay != nil {
@@ -307,7 +273,11 @@ struct PropertiesView: View {
                         curveOrLatticePanels(obj, settings)
                         }
 
-                        if tab == .data, obj.overlayDisplay == nil, obj.dataSettings == nil {
+                        if tab == .data, obj.isGreasePencil {
+                        GreasePencilDataPanels(scene: scene, session: session, bridge: bridge, object: obj)
+                        }
+
+                        if tab == .data, obj.overlayDisplay == nil, obj.dataSettings == nil, !obj.isGreasePencil {
                         BPanel("Mesh") {
                             labelled("Name", obj.name)
                             labelled("Source", obj.kind.displayName)
@@ -375,6 +345,21 @@ struct PropertiesView: View {
                         }
                     }
                     .padding(.bottom, 12)
+                }
+                #if DEBUG
+                // `-properties-scroll <id>` scrolls the tab to a panel once it
+                // has drawn (MaterialPanels' `material-surface`,
+                // `material-settings`, `material-viewport`), for a picture of
+                // what is below the fold.
+                .task {
+                    let args = ProcessInfo.processInfo.arguments
+                    guard let i = args.firstIndex(of: "-properties-scroll"), i + 1 < args.count else { return }
+                    for _ in 0..<30 {
+                        try? await Task.sleep(nanoseconds: 1_000_000_000)
+                        scrollProxy.scrollTo(args[i + 1], anchor: .top)
+                    }
+                }
+                #endif
                 }
             } else {
                 VStack {
@@ -505,32 +490,6 @@ struct PropertiesView: View {
     /// rides along with the rest of the modifier's settings in `update`.
     private func setModifierTarget(_ obj: BKObject, _ modifier: Modifier, to name: String) {
         update(obj, modifier) { $0.targetName = name }
-    }
-
-    /// One material per object, named after it, applied to the whole selection.
-    ///
-    /// Per object, because a material made by `bpy.data.materials.new` is
-    /// shared the moment a second object is given it — colouring one wheel
-    /// would colour every object made from the same primitive, including ones
-    /// in a different model.
-    ///
-    /// To the whole selection, because the alternative is colouring four
-    /// wheels one at a time. Blender's own answer is Link Materials
-    /// (Ctrl+L); selecting the parts that should match and setting the colour
-    /// once is the same intent with nothing extra to find. One `run`, so it is
-    /// one undo step however many objects it covers.
-    private func writeMaterial(_ obj: BKObject) {
-        let targets = scene.objects.filter { scene.selection.contains($0.id) && $0.hasEditMode }
-        let names = targets.isEmpty ? [obj.name] : targets.map(\.name)
-        for target in targets where target.id != obj.id {
-            target.material = obj.material
-            target.color = obj.color
-        }
-        bridge?.run(names.map {
-            Bpy.setMaterial($0, baseColor: obj.material.baseColor,
-                            metallic: obj.material.metallic,
-                            roughness: obj.material.roughness)
-        }, undo: names.count > 1 ? "Set Material on \(names.count) Objects" : "Set Material")
     }
 
     /// One modifier, with the settings that kind actually uses — the same
@@ -992,13 +951,17 @@ struct PropertiesView: View {
         .opacity(modifier.showInViewport ? 1 : 0.7)
     }
 
-    /// One Add Modifier row. An Essentials node group needs Blender's asset
-    /// library, which the device's Blender does not have: greyed out then,
-    /// as the 3D View's Shade Auto Smooth is. The simulator's stand-in adds
-    /// only the kinds it models.
+    /// One Add Modifier row. An Essentials node group row (Array, Curve to
+    /// Tube, Scatter on Surface) stays greyed out even now that the app's
+    /// bpy carries the library (build 59): the budget cannot count what
+    /// those groups build ahead of Blender running them (Compare nodes, menu
+    /// switches, a Repeat zone — measured in the app, each was refused after
+    /// Blender had already added it), and a row that fails every time is
+    /// worse than one that says so. The simulator's stand-in adds only the
+    /// kinds it models.
     @ViewBuilder
     private func addModifierButton(_ obj: BKObject, _ row: ModifierCatalog.Row) -> some View {
-        let unavailable = row.asset ? session.essentialsLibrary != true
+        let unavailable = row.asset ? true
             : !session.usesRealBlender && !row.simulatorCanAdd
         Button {
             bridge?.run(Bpy.addModifierRow(row, on: obj.mesh), undo: UndoStep.addModifier)
@@ -1006,7 +969,7 @@ struct PropertiesView: View {
             if let kind = row.kind {
                 Label(row.label, systemImage: kind.icon)
             } else {
-                Text(unavailable && row.asset ? row.label + " (needs the Essentials library)" : row.label)
+                Text(unavailable && row.asset ? row.label + " (not supported yet)" : row.label)
             }
         }
         .disabled(unavailable)

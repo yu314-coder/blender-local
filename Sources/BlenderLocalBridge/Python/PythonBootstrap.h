@@ -107,6 +107,11 @@ int  bk_sync_groups(const char *name, const char *record, int during_pass);
 /// borrowed 3D View's Local View) or "constraints" (the stack of the object
 /// `name` the pass just pushed). 0 when taken.
 int  bk_sync_record(const char *kind, const char *name, const char *record);
+/// `bk_sync_gpencil` hands over a Grease Pencil object's layers, materials
+/// and drawings (`_blenderkit_gpencil.push`): a JSON record and the drawings'
+/// buffers it describes. During a pass onto the object the pass just pushed,
+/// outside one (a frame change) onto the one on screen. 0 when taken.
+int  bk_sync_gpencil(const char *name, const char *record, const void *blob, long length);
 /// `bk_sync_edges` hands over the edges of the mesh just pushed — two vertex
 /// indices each, `count` indices in all — for a mesh with no faces to draw.
 int  bk_sync_edges(const char *name, const unsigned int *edges, int count);
@@ -125,6 +130,13 @@ int  bk_sync_uvs(const char *name, const char *map_name,
 int  bk_sync_shading(const char *name, int domain,
                      const unsigned int *loops, int loop_count,
                      const float *normals, int normal_count);
+/// `bk_sync_materials` hands over the material slots of the mesh just pushed,
+/// as the 3D View colours it: `record` is each slot's look, `|`-joined
+/// (`_blenderkit_material.record`, empty for no slot), and `slots` each
+/// triangle's slot (`count` of them; none when every triangle is slot 0).
+/// During a pass onto the object the pass pushed, outside one onto the one
+/// on screen.
+int  bk_sync_materials(const char *name, const char *record, const int *slots, int count);
 /// `bk_sync_uv_layout` hands over the UV map Blender's UV Editor draws for the
 /// mesh just pushed when that is not the map the pushed (evaluated) mesh
 /// carries: the object's own mesh, before its modifiers — three floats per
@@ -243,6 +255,13 @@ int  bk_anim_set_mesh(const char *name, const float *verts, int vcount,
                       const unsigned int *tris, int tcount,
                       const unsigned int *edges, int ecount);
 void bk_anim_notice(const char *text);
+/// The scene's timeline markers, in the scene's order: names and the names of
+/// the cameras they are bound to ("" for none), each list joined by NUL; a
+/// frame and a selected flag each; and Lock Markers.
+int  bk_anim_set_markers(const unsigned char *names, int names_len,
+                         const unsigned char *cameras, int cameras_len,
+                         const int *frames, const unsigned char *selected, int count,
+                         int lock);
 /// Blender's sculpt mask on one object, one float per vertex of the mesh the
 /// viewport draws; `count` 0 for none. Returns 0, or -1 with no such object.
 int  bk_sculpt_set_mask(const char *name, const float *values, int count);

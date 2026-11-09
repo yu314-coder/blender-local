@@ -17,6 +17,15 @@ import bpy, math, os, sys
 from bpy_extras.object_utils import world_to_camera_view
 from mathutils import Vector
 
+# The render scripts import `_blenderkit_render` (save and restore); the
+# app has the site folder on sys.path, which here also holds the simulator's
+# `bpy` stand-in, so the module is loaded by path.
+import importlib.util as _importlib_util, pathlib as _pathlib
+_SITE = _pathlib.Path(__file__).resolve().parents[3] / "Resources" / "python" / "site"
+_spec = _importlib_util.spec_from_file_location("_blenderkit_render", _SITE / "_blenderkit_render.py")
+sys.modules["_blenderkit_render"] = _importlib_util.module_from_spec(_spec)
+_spec.loader.exec_module(sys.modules["_blenderkit_render"])
+
 args = sys.argv[sys.argv.index("--") + 1:]
 CALLS, WORK = args[0], args[1]
 blocks = {}
@@ -55,21 +64,60 @@ bpy.ops.object.light_add(type='POINT', location=(4, 1, 6))
 bpy.context.object.name = "Light"
 
 print("\n  through the scene's camera")
+# What the render ran with, read as it starts (`render_pre`), and what the
+# scene holds after: a render sets what it asks for and puts it all back
+# (`_blenderkit_render.save`/`restore`), as Blender's F12 changes nothing.
+at_render = []
+def _settings_at_render(render_scene, *_):
+    r = render_scene.render
+    at_render.append({'size': (r.resolution_x, r.resolution_y, r.resolution_percentage), 'engine': r.engine,
+                      'format': r.image_settings.file_format, 'filepath': r.filepath,
+                      'cycles_samples': render_scene.cycles.samples, 'adaptive': render_scene.cycles.use_adaptive_sampling,
+                      'eevee_samples': render_scene.eevee.taa_render_samples, 'device': render_scene.cycles.device})
+bpy.app.handlers.render_pre.append(_settings_at_render)
+scene = bpy.context.scene
+before = {'size': (scene.render.resolution_x, scene.render.resolution_y, scene.render.resolution_percentage),
+          'engine': scene.render.engine, 'filepath': scene.render.filepath,
+          'cycles_samples': scene.cycles.samples, 'eevee_samples': scene.eevee.taa_render_samples,
+          'device': scene.cycles.device, 'frame': scene.frame_current}
 out = os.path.join(WORK, "camera.png")
 run("RENDER_CAMERA", out)
 check("it writes the image", os.path.exists(out) and os.path.getsize(out) > 0)
-scene = bpy.context.scene
-check("at the size asked for", (scene.render.resolution_x, scene.render.resolution_y) == (320, 180),
-      (scene.render.resolution_x, scene.render.resolution_y))
-check("with the engine asked for", scene.render.engine == 'BLENDER_WORKBENCH', scene.render.engine)
+check("at the size asked for", at_render[-1]['size'] == (320, 180, 100), at_render[-1:])
+check("with the engine asked for, as a PNG at the path asked for",
+      at_render[-1]['engine'] == 'BLENDER_WORKBENCH' and at_render[-1]['format'] == 'PNG'
+      and at_render[-1]['filepath'] == out, at_render[-1:])
+check("and the scene's own size, engine and output path are back after it",
+      (scene.render.resolution_x, scene.render.resolution_y, scene.render.resolution_percentage) == before['size']
+      and scene.render.engine == before['engine'] and scene.render.filepath == before['filepath'],
+      (scene.render.resolution_x, scene.render.resolution_y, scene.render.engine, scene.render.filepath))
 check("the scene's camera is still the scene's camera", scene.camera is camera)
 
 run("RENDER_CYCLES", os.path.join(WORK, "cycles.png"))
 check("Cycles gets its samples, not Blender's 4096 default",
-      scene.cycles.samples == 1024, scene.cycles.samples)
-check("and adaptive sampling, so an easy image stops early", scene.cycles.use_adaptive_sampling)
-check("Eevee's samples are set too, whichever engine ran", scene.eevee.taa_render_samples == 256,
-      scene.eevee.taa_render_samples)
+      at_render[-1]['cycles_samples'] == 1024, at_render[-1:])
+check("and adaptive sampling, so an easy image stops early", at_render[-1]['adaptive'])
+check("Eevee's samples are set too, whichever engine ran", at_render[-1]['eevee_samples'] == 256,
+      at_render[-1:])
+check("and the scene's own samples are back after it",
+      scene.cycles.samples == before['cycles_samples'] and scene.eevee.taa_render_samples == before['eevee_samples'],
+      (scene.cycles.samples, scene.eevee.taa_render_samples))
+
+# The Render panel's own request: the scene's size and samples (Output and
+# Render Properties), which it leaves alone.
+scene.render.resolution_percentage = 10
+scene.cycles.samples = 2
+run("RENDER_SCENE_SETTINGS", os.path.join(WORK, "scene-settings.png"))
+check("with no quality and no size given, it renders at the scene's own (1920 x 1080 at 10%, 2 samples)",
+      at_render[-1]['size'] == (1920, 1080, 10) and at_render[-1]['cycles_samples'] == 2,
+      at_render[-1:])
+check("and leaves them as they were", scene.render.resolution_percentage == 10 and scene.cycles.samples == 2,
+      (scene.render.resolution_percentage, scene.cycles.samples))
+scene.render.resolution_percentage = before['size'][2]
+scene.cycles.samples = before['cycles_samples']
+check("Cycles' Device CPU renders on the CPU, and the scene's device is back after",
+      at_render[-1]['device'] == 'CPU' and scene.cycles.device == before['device'],
+      (at_render[-1:], scene.cycles.device))
 
 # The device. Blender leaves compute_device_type at NONE, which renders on the
 # CPU; this is the check that the app turns Metal on. A machine with no Metal
@@ -77,15 +125,18 @@ check("Eevee's samples are set too, whichever engine ran", scene.eevee.taa_rende
 # accepted — but the Metal one has to be chosen where Metal exists.
 prefs = bpy.context.preferences.addons['cycles'].preferences
 metal = [d for d in prefs.devices if d.type == 'METAL']
+run("RENDER_CYCLES", os.path.join(WORK, "cycles.png"))
 reported = open(DEVICE_FILE).read() if os.path.exists(DEVICE_FILE) else ""
 check("the device is reported back to the panel", reported.startswith("Cycles on"), reported)
 if metal:
     check("Cycles is set to Metal and the GPU", prefs.compute_device_type == 'METAL'
-          and scene.cycles.device == 'GPU' and all(d.use for d in metal),
-          (prefs.compute_device_type, scene.cycles.device, [(d.name, d.use) for d in prefs.devices]))
+          and at_render[-1]['device'] == 'GPU' and all(d.use for d in metal),
+          (prefs.compute_device_type, at_render[-1:], [(d.name, d.use) for d in prefs.devices]))
     check("and the panel is told which GPU", "CPU" not in reported, reported)
 else:
-    check("with no Metal device it falls back to the CPU", scene.cycles.device == 'CPU', reported)
+    check("with no Metal device it falls back to the CPU", at_render[-1]['device'] == 'CPU', reported)
+check("the scene's Device is back after the render", scene.cycles.device == before['device'], scene.cycles.device)
+bpy.app.handlers.render_pre.remove(_settings_at_render)
 
 print("\n  from the 3D View")
 before_objects = set(bpy.data.objects.keys())

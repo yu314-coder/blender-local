@@ -198,5 +198,20 @@
   "Annotate Line",
   "Annotate Polygon",
   "Annotate Eraser"
+ ],
+ "PAINT_GREASE_PENCIL": [
+  "Cursor",
+  "Brush",
+  "Erase",
+  "Fill",
+  "Box",
+  "Circle",
+  "Line",
+  "Polyline",
+  "Arc",
+  "Curve",
+  "Trim",
+  "Eyedropper",
+  "Interpolate"
  ]
 }

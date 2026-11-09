@@ -152,6 +152,7 @@ public final class BKObject: Identifiable {
         case "FONT": return "textformat"
         case "ARMATURE": return "figure.stand"
         case "LATTICE": return "grid"
+        case "GREASEPENCIL": return "pencil.and.scribble"
         default: return kind.icon
         }
     }
@@ -339,10 +340,46 @@ public final class BKObject: Identifiable {
     /// Written only by the mirror. Nil for every other type.
     public var dataSettings: ObjectDataSettings?
 
+    /// A Grease Pencil object's layers, material slots and onion settings, as
+    /// the Data and Material tabs and Draw Mode's header show them
+    /// (GreasePencil.swift). Written only by the mirror; nil for every other
+    /// type.
+    public var greasePencilInfo: GreasePencilInfo?
+    /// Its drawings at the current frame and its onion skins, which only the
+    /// renderer reads: not observed, with `greasePencilVersion` bumped when
+    /// they change, as `meshVersion` is for a mesh.
+    @ObservationIgnored public var greasePencilDrawings: GreasePencilDrawings?
+    @ObservationIgnored public var greasePencilVersion = 0
+    /// The record and buffers they were read from, which the next pass's are
+    /// compared with byte for byte (`installGreasePencil`).
+    @ObservationIgnored public var greasePencilSource: (record: String, blob: Data)?
+
     /// A mesh's vertex groups and shape keys, as the Data tab shows them
     /// (MeshGroups.swift). Written only by the mirror; nil in the simulator,
     /// whose stand-in has neither, and for anything that is not a mesh.
     public var meshGroups: MeshGroups?
+
+    /// Each material slot as the 3D View colours it (MaterialSlots.swift):
+    /// its Viewport Display, which Solid draws, and what Material Preview
+    /// shades with. Written by the mirror (`carryMaterials`), and patched in
+    /// place while a colour or a number is being dragged in the Material tab,
+    /// so the view follows the finger before the one commit. Read every frame
+    /// by the renderer, never by a view, hence not observed.
+    @ObservationIgnored public var materialLooks: [MaterialLook] = []
+    /// Each drawn triangle's material slot (`material_index`), or empty when
+    /// every triangle uses the first slot. Replaced only when it differs,
+    /// which moves `materialSlotsVersion`, the renderer's cache key.
+    @ObservationIgnored public private(set) var triangleSlots: [UInt16] = []
+    @ObservationIgnored public private(set) var materialSlotsVersion: Int = 0
+
+    /// Installs Blender's triangle slots; true when they changed.
+    @discardableResult
+    public func setTriangleSlots(_ slots: [UInt16]) -> Bool {
+        guard slots != triangleSlots else { return false }
+        triangleSlots = slots
+        materialSlotsVersion &+= 1
+        return true
+    }
 
     /// Whether Edit Mode edits this object by its control points: a curve or
     /// a lattice. Their Edit Mode is Blender's, and the mesh tools are not
@@ -947,6 +984,15 @@ public final class BKScene {
     }
     public var frameStart: Int = 1
     public var frameEnd: Int = 250
+    /// Draw Mode's settings and brush as Blender holds them, read when the
+    /// mode is entered and whenever the history moves (GreasePencilHeader).
+    public var greasePencilDraw: GPDrawState?
+    /// Draw Mode's Erase tool: the eraser's Mode, Size (in points) and
+    /// Active Layer, the app's own while the tool is in hand.
+    public var greasePencilEraser = GPEraserSettings()
+    /// Whether the timeline is playing (`TimelineDriver.play`): the
+    /// viewport hides Grease Pencil onion skins meanwhile, as Blender does.
+    @ObservationIgnored public var playbackRunning = false
     /// Blender's frame rate, preview range and keying settings, and the keys
     /// on the scene itself. See AnimationTimeline.swift.
     public var animation = SceneAnimation()

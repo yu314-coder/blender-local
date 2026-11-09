@@ -255,6 +255,23 @@ def _push_placeholder(obj, active_name):
     _push_groups(obj)
 
 
+def _push_gpencil(obj, depsgraph):
+    """A Grease Pencil object's layers and drawings (`_blenderkit_gpencil`),
+    after its placeholder: the viewport draws its strokes, the Data tab lists
+    its layers. A failure costs this object's drawings, not the pass. A hidden
+    one is sent without its drawings."""
+    if not hasattr(_blenderkit, 'sync_gpencil'):
+        return
+    try:
+        import _blenderkit_gpencil
+    except ImportError:
+        return
+    try:
+        _blenderkit_gpencil.push(obj, depsgraph, hidden=depsgraph is None)
+    except Exception as error:                      # noqa: BLE001 - the pass goes on
+        print(f"[Blender Local] the strokes of {obj.name} could not be read: {error}")
+
+
 def _push_groups(obj, with_counts=False, during_pass=True):
     """A mesh's vertex groups and shape keys for the Data tab
     (`_blenderkit_groups`). Counted only for the active object, which is the
@@ -644,6 +661,8 @@ def sync(report=False):
     _shown.clear()
     pushed = 0
     material_values = []
+    # One look per material per pass, however many objects share it.
+    material_looks = {}
     active = None
     try:
         active = getattr(bpy.context, "active_object", None)
@@ -673,6 +692,8 @@ def sync(report=False):
                 continue
             if not _drawn(obj) or obj.type not in {"MESH", "CURVE", "SURFACE", "FONT", "META"}:
                 _push_placeholder(obj, active_name)
+                if obj.type == 'GREASEPENCIL':
+                    _push_gpencil(obj, depsgraph if _drawn(obj) else None)
                 continue
             editing = obj.type == 'MESH' and getattr(obj, 'mode', '') == 'EDIT'
             if editing:
@@ -780,6 +801,10 @@ def sync(report=False):
                     _push_shading(obj, mesh, editing)
                 else:
                     _push_shading(obj, None, editing)
+                # Each slot's look, and each triangle's slot: what Solid and
+                # Material Preview colour the surface with.
+                _push_materials(obj, None if (edges is not None or drawn_level) else mesh, editing,
+                                material_looks)
                 # The mesh pushed above is already evaluated, so the stack
                 # that produced it has to travel separately for the panel to
                 # be able to change it.
@@ -912,6 +937,21 @@ def _hidden_flags(elements):
     except (AttributeError, TypeError, RuntimeError):
         return None
     return flags if any(flags) else None
+
+
+def _push_materials(obj, mesh, editing, cache):
+    """Hand the 3D View the object's material slots as it draws them
+    (`_blenderkit_material.push`): each slot's look and, with two slots or
+    more, each triangle's slot. A failure costs the colours of this object,
+    not the pass."""
+    if getattr(_blenderkit, 'sync_materials', None) is None:
+        return
+    try:
+        import _blenderkit_material
+        hidden = _hidden_flags(mesh.polygons) if (editing and mesh is not None) else None
+        _blenderkit_material.push(obj, mesh, editing, hidden, cache)
+    except Exception as error:                      # noqa: BLE001 - the pass goes on
+        print(f"[Blender Local] {obj.name}: its materials could not be read: {error}")
 
 
 def _unhidden_triangles(mesh, tris):

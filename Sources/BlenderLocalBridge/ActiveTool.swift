@@ -28,6 +28,10 @@ public enum ActiveTool: String, CaseIterable, Identifiable {
     case paintDraw, paintBlur, paintAverage, paintSmear
     case gradient, sampleWeight, paintFill, paintClone
 
+    // Grease Pencil Draw Mode (`PAINT_GREASE_PENCIL`'s toolbar, 5.2.1: Draw
+    // and Erase, each with Blender's brushes).
+    case gpDraw, gpErase
+
     public var id: String { rawValue }
 
     /// Tools with behaviour behind them. The rest are drawn disabled, the way
@@ -83,6 +87,11 @@ public enum ActiveTool: String, CaseIterable, Identifiable {
         // Smear waited on "stroke history to smear along". Texture Paint's
         // strokes have it: each dab knows where the last one was.
         case .paintDraw, .paintBlur, .paintAverage, .paintSmear:
+            return true
+        // Draw Mode's Draw and Erase: the stroke made as Blender's draw
+        // operator makes it, which has no exec to call headless
+        // (GreasePencilStroke.swift, `_blenderkit_gpencil`).
+        case .gpDraw, .gpErase:
             return true
         default:
             return false
@@ -187,6 +196,8 @@ public enum ActiveTool: String, CaseIterable, Identifiable {
         case .sampleWeight:  return "Sample Weight"
         case .paintFill:     return "Fill"
         case .paintClone:    return "Clone"
+        case .gpDraw:        return "Brush"
+        case .gpErase:       return "Erase"
         }
     }
 
@@ -240,6 +251,8 @@ public enum ActiveTool: String, CaseIterable, Identifiable {
         case .sampleWeight:  return "eyedropper"
         case .paintFill:     return "drop.fill"
         case .paintClone:    return "doc.on.doc"
+        case .gpDraw:        return "pencil.tip"
+        case .gpErase:       return "eraser"
         }
     }
 
@@ -299,6 +312,10 @@ public enum ActiveTool: String, CaseIterable, Identifiable {
         case .move:   return .rotate
         case .rotate: return .scale
         case .scale:  return .select
+        // In Draw Mode the barrel's double-tap goes between Brush and Erase,
+        // the system's "Switch between current tool and eraser".
+        case .gpDraw: return .gpErase
+        case .gpErase: return .gpDraw
         default:      return .select
         }
     }
@@ -333,6 +350,8 @@ public enum ActiveTool: String, CaseIterable, Identifiable {
             return .vertexPaint
         case .gradient, .sampleWeight:
             return .weightPaint
+        case .gpDraw, .gpErase:
+            return .drawGreasePencil
         case .extrudeRegion, .insetFaces, .bevel, .loopCut, .knife, .polyBuild,
              .spin, .smoothTool, .randomize, .edgeSlide, .shrinkFatten,
              .shear, .ripRegion:
@@ -363,7 +382,8 @@ public enum ActiveTool: String, CaseIterable, Identifiable {
                         .boxMask, .boxHide, .boxFaceSet, .meshFilter, .lineProject]),
          ("Paint",     [.paintDraw, .paintBlur, .paintAverage, .paintSmear,
                         .paintClone, .paintFill, .gradient, .sampleWeight]),
-         ("Measure",   [.annotate, .measure])]
+         ("Measure",   [.annotate, .measure]),
+         ("Grease Pencil", [.gpDraw, .gpErase])]
     }
 
     public static func groups(for mode: InteractionMode) -> [[ActiveTool]] {
@@ -407,6 +427,10 @@ public enum ActiveTool: String, CaseIterable, Identifiable {
         case .texturePaint:
             return [[.paintDraw, .paintBlur, .paintSmear, .paintClone, .paintFill],
                     selection, annotate]
+
+        case .drawGreasePencil:
+            // Blender's Draw Mode toolbar starts Cursor, then Draw and Erase.
+            return [[.cursor], [.gpDraw, .gpErase]]
         }
     }
 
@@ -417,6 +441,7 @@ public enum ActiveTool: String, CaseIterable, Identifiable {
         case .sculpt:                              return .sculptDraw
         case .vertexPaint, .weightPaint, .texturePaint: return .paintDraw
         case .object, .edit:                       return .select
+        case .drawGreasePencil:                    return .gpDraw
         }
     }
 }
@@ -433,7 +458,9 @@ public extension InteractionMode {
     var isBrushMode: Bool {
         switch self {
         case .sculpt, .texturePaint, .vertexPaint, .weightPaint: return true
-        case .object, .edit: return false
+        // Draw Mode is Blender's own, entered and left by its mode menu; its
+        // tools do not take the view into it or out of it.
+        case .object, .edit, .drawGreasePencil: return false
         }
     }
 }

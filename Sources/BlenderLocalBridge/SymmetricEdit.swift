@@ -488,7 +488,7 @@ public enum SymmetryBpy {
     /// undoing a later, unrelated step. So those take a step of their own.
     public static func undoLabel(_ flag: Flag, mode: InteractionMode) -> String? {
         switch mode {
-        case .texturePaint, .vertexPaint, .weightPaint, .object: return flag.label
+        case .texturePaint, .vertexPaint, .weightPaint, .object, .drawGreasePencil: return flag.label
         case .edit, .sculpt:                                     return nil
         }
     }

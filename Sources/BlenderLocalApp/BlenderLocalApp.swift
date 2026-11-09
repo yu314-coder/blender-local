@@ -16,6 +16,8 @@ struct BlenderLocalApp: App {
             BlenderCommands()
             // Blender's frame and keyframe keys. See AnimationCommands.swift.
             AnimationCommands()
+            // Blender's Render menu. See RenderCommands.swift.
+            RenderCommands()
         }
     }
 }

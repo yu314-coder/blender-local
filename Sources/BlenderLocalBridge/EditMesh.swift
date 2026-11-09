@@ -5,6 +5,9 @@ import simd
 /// works on the mesh itself.
 public enum InteractionMode: String, CaseIterable, Identifiable, Sendable {
     case object, edit, sculpt, vertexPaint, weightPaint, texturePaint
+    /// A Grease Pencil object's Draw Mode (`PAINT_GREASE_PENCIL`): its strokes
+    /// drawn with a finger or the Pencil (GreasePencilStroke.swift).
+    case drawGreasePencil
 
     public var id: String { rawValue }
 
@@ -16,6 +19,7 @@ public enum InteractionMode: String, CaseIterable, Identifiable, Sendable {
         case .vertexPaint:  return "Vertex Paint"
         case .weightPaint:  return "Weight Paint"
         case .texturePaint: return "Texture Paint"
+        case .drawGreasePencil: return "Draw Mode"
         }
     }
 
@@ -27,6 +31,7 @@ public enum InteractionMode: String, CaseIterable, Identifiable, Sendable {
         case .vertexPaint:  return "paintbrush.pointed"
         case .weightPaint:  return "scalemass"
         case .texturePaint: return "paintbrush"
+        case .drawGreasePencil: return "pencil.tip"
         }
     }
 
@@ -42,7 +47,9 @@ public enum InteractionMode: String, CaseIterable, Identifiable, Sendable {
         #if BLENDER_LOCAL_ALL_MODES
         return true
         #else
-        return self == .object || self == .edit
+        // Draw Mode too, for a Grease Pencil object: the user asked for it
+        // (2026-11-09: "might need draw mode") for 2D animation.
+        return self == .object || self == .edit || self == .drawGreasePencil
         #endif
     }
 
@@ -55,6 +62,7 @@ public enum InteractionMode: String, CaseIterable, Identifiable, Sendable {
         case .vertexPaint:  return "VERTEX_PAINT"
         case .weightPaint:  return "WEIGHT_PAINT"
         case .texturePaint: return "TEXTURE_PAINT"
+        case .drawGreasePencil: return "PAINT_GREASE_PENCIL"
         }
     }
 
