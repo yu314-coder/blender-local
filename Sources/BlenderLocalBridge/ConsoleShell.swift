@@ -154,6 +154,10 @@ public enum ConsoleShell {
     /// The host, as BenchCode names it: the kind of device, since iOS calls
     /// every device "localhost".
     public static let host: String = {
+        #if DEBUG
+        // App Store screenshots taken on a Mac show an iPad's prompt.
+        if let host = ProcessInfo.processInfo.environment["BLENDERLOCAL_HOST"], !host.isEmpty { return host }
+        #endif
         if ProcessInfo.processInfo.isiOSAppOnMac { return "Mac" }
         var info = utsname()
         uname(&info)

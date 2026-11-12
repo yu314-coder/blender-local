@@ -380,7 +380,7 @@ struct LayoutWorkspace: View {
                             VStack(alignment: .leading, spacing: 0) {
                                 // Blender's view text: User Perspective, then the frame,
                                 // the collection and the active object.
-                                ViewportInfoText(scene: scene, camera: camera)
+                                ViewportInfoText(scene: scene, camera: camera, throughCamera: inCameraView)
                                     .padding(.leading, 14).padding(.top, 10)
                                     .allowsHitTesting(false)
                                 HStack { cutToolBar; pickBar; cursorToolBar; measureToolBar; Spacer(minLength: 0) }

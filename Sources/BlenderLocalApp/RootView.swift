@@ -597,6 +597,32 @@ struct RootView: View {
             // `-help-tour <card>`: the tour open at that card, 3 s in, to be
             // photographed (a card's number counts from 0).
             let args = ProcessInfo.processInfo.arguments
+            // `-window-size <w>x<h>`: on a Mac (Designed for iPad), the window
+            // held at that size in points, for App Store screenshots. A Mac
+            // draws an iPad app at 77%, so 1775x1330 is a 1366x1024 window,
+            // which captures at 2732x2048 (the 12.9-inch iPad's size). The
+            // window only resizes in a build that allows every orientation
+            // and not UIRequiresFullScreen, so build with
+            // INFOPLIST_KEY_UIRequiresFullScreen=NO and all four
+            // INFOPLIST_KEY_UISupportedInterfaceOrientations.
+            if let i = args.firstIndex(of: "-window-size"), i + 1 < args.count {
+                let n = args[i + 1].split(separator: "x").compactMap { Double($0) }
+                if n.count == 2 {
+                    let size = CGSize(width: n[0], height: n[1])
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+                        for case let scene as UIWindowScene in UIApplication.shared.connectedScenes {
+                            scene.sizeRestrictions?.minimumSize = size
+                            scene.sizeRestrictions?.maximumSize = size
+                            scene.requestGeometryUpdate(.Mac(systemFrame: CGRect(origin: .zero, size: size))) { error in
+                                print("[bk] window-size: \(error)")
+                            }
+                            DispatchQueue.main.asyncAfter(deadline: .now() + 2) {
+                                print("[bk] window-size \(scene.coordinateSpace.bounds.size)")
+                            }
+                        }
+                    }
+                }
+            }
             if let i = args.firstIndex(of: "-help-tour"), i + 1 < args.count {
                 if let card = Int(args[i + 1]) {
                     DispatchQueue.main.asyncAfter(deadline: .now() + 3) {

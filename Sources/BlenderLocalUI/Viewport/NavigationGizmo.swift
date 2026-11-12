@@ -97,10 +97,14 @@ struct NavigationGizmo: View {
 struct ViewportInfoText: View {
     var scene: BKScene
     var camera: ViewportCamera
+    /// Looking through the scene camera (Numpad 0), where Blender says
+    /// "Camera Perspective" (or "Camera Orthographic") instead of "User".
+    var throughCamera = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 1) {
-            Text((camera.isOrthographic ? "User Orthographic" : "User Perspective")
+            Text((throughCamera ? "Camera " : "User ")
+                 + (camera.isOrthographic ? "Orthographic" : "Perspective")
                  + (scene.localView != nil ? " (Local)" : ""))
                 .font(BTheme.Font.ui(11))
                 .foregroundStyle(BTheme.text.opacity(0.85))
