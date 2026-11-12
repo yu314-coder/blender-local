@@ -84,7 +84,7 @@ struct HelpStep {
         HelpStep(spot: .history, icon: "arrow.uturn.backward", title: "Undo and Redo",
                  text: "Undo and Redo, and beside them what the last command did."),
         HelpStep(spot: .help, icon: "questionmark.circle", title: "Help",
-                 text: "Opens this tour again whenever you want it."),
+                 text: "Opens this tour again, and is where to send feedback or report a bug."),
     ]
 }
 

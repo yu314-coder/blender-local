@@ -31,6 +31,21 @@ struct PreferencesSheet: View {
                             .foregroundStyle(BTheme.textDim)
                     }
                 }
+                Section {
+                    Button { Feedback.openMail() } label: {
+                        Label("Email Feedback", systemImage: "envelope")
+                    }
+                    Button { Feedback.openGmail() } label: {
+                        Label("Email Feedback with Gmail", systemImage: "paperplane")
+                    }
+                    Button { UIApplication.shared.open(Feedback.issues) } label: {
+                        Label("Report a Bug on GitHub", systemImage: "ladybug")
+                    }
+                } header: {
+                    Text("Feedback")
+                } footer: {
+                    Text("Email goes to \(Feedback.address), with the app's version and your iPad's model and system version added below your message. Bug reports go to the app's GitHub page.")
+                }
                 Section("Testing") {
                     testRow("Test All Features",
                             "Runs every feature on this device and rates each Smooth, OK, Slow, Freeze or Failed, "

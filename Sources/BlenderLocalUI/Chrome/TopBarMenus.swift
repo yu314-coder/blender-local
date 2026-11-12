@@ -340,8 +340,10 @@ struct WindowMenu: View {
     }
 }
 
-/// Blender's Help menu (`TOPBAR_MT_help`). Every entry opens a web page, and
-/// Blender Local does not open web pages, so they are listed and disabled.
+/// Blender's Help menu (`TOPBAR_MT_help`). Blender's entries open its web
+/// pages, which Blender Local does not, so they are listed and disabled.
+/// Report a Bug is the exception: it opens this app's GitHub issues, and Send
+/// Feedback (the app's own) emails the developer (Feedback.swift).
 struct HelpMenu: View {
     var session: BpySession
 
@@ -353,7 +355,7 @@ struct HelpMenu: View {
             BUnavailable("Developer Community")
             BUnavailable("Python API Reference")
             Divider()
-            BUnavailable("Report a Bug")
+            FeedbackMenuItems()
             Divider()
             Button("Save System Info") {
                 session.submit(
@@ -364,7 +366,7 @@ struct HelpMenu: View {
                     scene: BKScene(startupFile: false))
             }
             Divider()
-            Text("Help links open the web; Blender Local works offline")
+            Text("Blender's help pages are on the web; Blender Local works offline")
                 .disabled(true)
         }
         .menuStyle(BlenderMenuStyle())

@@ -121,9 +121,26 @@ struct TopBar: View {
             // The help tour (HelpTour.swift): each part of the screen and how
             // to use it. It opens by itself on the first launch; this brings
             // it back. In Layout, where the parts it shows are.
-            Button {
-                workspace = .layout
-                HelpTour.shared.start()
+            // Its menu also holds Send Feedback and Report a Bug (Feedback.swift),
+            // as Blender's Help menu holds Report a Bug.
+            Menu {
+                Button {
+                    workspace = .layout
+                    HelpTour.shared.start()
+                } label: {
+                    Label("Tour of the Screen", systemImage: "questionmark.circle")
+                }
+                Divider()
+                Menu {
+                    Button("Email (Mail)") { Feedback.openMail() }
+                    Button("Email (Gmail)") { Feedback.openGmail() }
+                    Button("Copy Email Address") { UIPasteboard.general.string = Feedback.address }
+                } label: {
+                    Label("Send Feedback", systemImage: "envelope")
+                }
+                Button { UIApplication.shared.open(Feedback.issues) } label: {
+                    Label("Report a Bug", systemImage: "ladybug")
+                }
             } label: {
                 Image(systemName: "questionmark.circle")
                     .font(.system(size: 17, weight: .medium))
@@ -134,7 +151,7 @@ struct TopBar: View {
             .buttonStyle(.plain)
             .hoverEffect(.highlight)
             .accessibilityLabel("Help")
-            .help("Help: a tour of the screen")
+            .help("Help: a tour of the screen, feedback and bug reports")
             .helpAnchor(.help)
             .fixedSize()
             .layoutPriority(1)
