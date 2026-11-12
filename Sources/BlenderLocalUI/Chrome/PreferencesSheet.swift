@@ -46,6 +46,9 @@ struct PreferencesSheet: View {
                 } footer: {
                     Text("Email goes to \(Feedback.address), with the app's version and your iPad's model and system version added below your message. Bug reports go to the app's GitHub page.")
                 }
+                #if DEBUG
+                // Test All Features and the Self-Test are for development: not
+                // in App Store builds (user, 2026-11-13).
                 Section("Testing") {
                     testRow("Test All Features",
                             "Runs every feature on this device and rates each Smooth, OK, Slow, Freeze or Failed, "
@@ -54,6 +57,7 @@ struct PreferencesSheet: View {
                             "Runs the app's crash-fix checks and vertex-budget refusals, with a report. "
                             + "About a minute.") { showSelfTest = true }
                 }
+                #endif
             }
             .sheet(isPresented: $showFeatureTest) {
                 FeatureTestSheet(scene: scene, session: session, bridge: bridge, workspace: $workspace)

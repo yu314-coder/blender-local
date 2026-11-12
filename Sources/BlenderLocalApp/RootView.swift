@@ -74,6 +74,30 @@ struct RootView: View {
     private func runLaunchOperatorIfRequested() {
         #if DEBUG
         let args = ProcessInfo.processInfo.arguments
+        // `-template <id>` / `-app-template <name>`: File ▸ New ▸ Templates or
+        // Blender's application template, through the call the menu makes.
+        if let t = args.firstIndex(of: "-template"), t + 1 < args.count,
+           let starter = StarterTemplate.all.first(where: { $0.id == args[t + 1] }), let url = starter.url {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
+                let outcome = bridge?.run(Bpy.starterScene(script: url))
+                NotificationCenter.default.post(name: StarterTemplate.didLoad, object: nil)
+                print("[bk] template \(starter.id): succeeded=\(outcome?.succeeded ?? false) "
+                      + "objects=\(scene.objects.count) error=\(outcome?.error ?? "none")")
+                fflush(stdout)
+            }
+            return
+        }
+        if let t = args.firstIndex(of: "-app-template"), t + 1 < args.count {
+            let name = args[t + 1]
+            DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
+                let outcome = bridge?.run(Bpy.newScene(appTemplate: name))
+                NotificationCenter.default.post(name: StarterTemplate.didLoad, object: nil)
+                print("[bk] app-template \(name): succeeded=\(outcome?.succeeded ?? false) "
+                      + "objects=\(scene.objects.count) error=\(outcome?.error ?? "none")")
+                fflush(stdout)
+            }
+            return
+        }
         // `-mesh <name>` performs a mesh operator through the same call the
         // menu makes, which is the only way to exercise that path without a
         // menu to tap.

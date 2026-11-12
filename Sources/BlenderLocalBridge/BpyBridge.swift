@@ -2481,6 +2481,32 @@ public enum Bpy {
     public static let newScene = pricedLoad("bpy.ops.wm.read_homefile(load_ui=False)",
                                             words: "File ▸ New's startup file")
 
+    /// File ▸ New ▸ 2D Animation and Storyboarding: Blender's own application
+    /// templates (`bl_app_templates_system`), built into Blender.
+    public static func newScene(appTemplate: String) -> String {
+        pricedLoad("bpy.ops.wm.read_homefile(load_ui=False, app_template=\(pyString(appTemplate)))",
+                   words: "File ▸ New's \(appTemplate.replacingOccurrences(of: "_", with: " ")) template")
+    }
+
+    /// File ▸ New ▸ Templates: Blender's startup file, then a starter scene's
+    /// script (Resources/python/templates) builds the scene with bpy.
+    public static func starterScene(script: URL) -> String {
+        let dir = pyString(script.deletingLastPathComponent().path)
+        let file = pyString(script.path)
+        return newScene + """
+
+        import sys as _bk_t_sys
+        if \(dir) not in _bk_t_sys.path:
+            _bk_t_sys.path.insert(0, \(dir))
+        with open(\(file), encoding="utf-8") as _bk_t_f:
+            exec(compile(_bk_t_f.read(), \(file), "exec"), {"__name__": "__main__"})
+        """
+    }
+
+    private static func pyString(_ s: String) -> String {
+        "'" + s.replacingOccurrences(of: "\\", with: "\\\\").replacingOccurrences(of: "'", with: "\\'") + "'"
+    }
+
     /// The launch's open of the recovery file that changed after the app wrote
     /// it (`RecoveryRecord`), priced.
     public static func changedRecovery(_ call: String) -> String {

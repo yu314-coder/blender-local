@@ -35,6 +35,10 @@ PYVER=$(ls -1 "$CODESIGNING_FOLDER_PATH/python/lib" | head -1)
 mkdir -p "$CODESIGNING_FOLDER_PATH/python/site"
 rsync -a --delete --exclude '__pycache__' --exclude '*.pyc' \
     "$SRCROOT/Resources/python/site/" "$CODESIGNING_FOLDER_PATH/python/site/"
+# File ▸ New ▸ Templates: the starter scenes, each a bpy script.
+mkdir -p "$CODESIGNING_FOLDER_PATH/python/templates"
+rsync -a --delete --exclude '__pycache__' --exclude '*.pyc' \
+    "$SRCROOT/Resources/python/templates/" "$CODESIGNING_FOLDER_PATH/python/templates/"
 
 # Two things CPython ships that this app cannot use, removed from the bundle
 # rather than from the xcframework — the vendored copy stays whole, so a future

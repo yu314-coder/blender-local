@@ -99,6 +99,21 @@ for version in "$SITE"/bpy/[0-9]*.[0-9]*; do
     echo "  Essentials sculpt, vertex and weight brushes staged into $(basename "$version")/datafiles/assets"
 done
 
+# File ▸ New ▸ 2D Animation and Storyboarding: Blender's own application
+# templates. The bpy above ships each template's __init__.py but not its
+# startup.blend, so read_homefile(app_template=…) fell back to the General
+# scene. These two (from Blender 5.2.1, GPL like the rest of Blender) are the
+# ones the app offers; see Resources/BlenderAssets/README.md.
+for version in "$SITE"/bpy/[0-9]*.[0-9]*; do
+    templates="$version/scripts/startup/bl_app_templates_system"
+    [ -d "$templates" ] || continue
+    for t in 2D_Animation Storyboarding; do
+        mkdir -p "$templates/$t"
+        cp -f "$ESSENTIALS_SRC/app_templates/$t/startup.blend" "$templates/$t/"
+    done
+    echo "  2D Animation and Storyboarding startup files staged into $(basename "$version")"
+done
+
 # numpy travels with bpy.
 #
 # Blender's own idiom for reading geometry is `foreach_get` into a buffer, and

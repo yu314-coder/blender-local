@@ -547,6 +547,15 @@ struct LayoutWorkspace: View {
         .onReceive(NotificationCenter.default.publisher(for: RenderPanelAction.notification)) { note in
             if let action = RenderPanelAction(note) { openRender(action) }
         }
+        .onReceive(NotificationCenter.default.publisher(for: StarterTemplate.didLoad)) { _ in
+            // After the mirror has the new scene: its camera, else everything.
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) {
+                cameraView = nil
+                viewBeforeCamera = nil
+                lookThroughCamera()
+                if !inCameraView { camera.frameAll(scene.objects) }
+            }
+        }
         .onReceive(NotificationCenter.default.publisher(for: ImageToModelImport.didCreate)) { _ in
             shading = .material
             _ = camera.frameSelected(in: scene)

@@ -35,11 +35,19 @@ struct FileMenu: View {
         Menu {
             Menu("New") {
                 Button("General") { newScene() }
-                BUnavailable("2D Animation")
+                Button("2D Animation") { newScene(appTemplate: "2D_Animation") }
                 BUnavailable("Sculpting")
-                BUnavailable("Storyboarding")
+                Button("Storyboarding") { newScene(appTemplate: "Storyboarding") }
                 BUnavailable("VFX")
                 BUnavailable("Video Editing")
+                Divider()
+                // Starter scenes of the app's own (StarterTemplate), built
+                // with bpy on the iPad: nothing is downloaded.
+                Menu("Templates") {
+                    ForEach(StarterTemplate.all) { t in
+                        Button { newScene(starter: t) } label: { Label(t.title, systemImage: t.symbol) }
+                    }
+                }
             }
             Button("Open…") { importing = nil; choosingFile = true }
                 .disabled(session.isRunning)
@@ -210,6 +218,18 @@ struct FileMenu: View {
         bridge.run(Bpy.newScene)
     }
 
+    private func newScene(appTemplate: String) {
+        guard let bridge, !session.isRunning else { return }
+        bridge.run(Bpy.newScene(appTemplate: appTemplate))
+        NotificationCenter.default.post(name: StarterTemplate.didLoad, object: nil)
+    }
+
+    private func newScene(starter: StarterTemplate) {
+        guard let bridge, !session.isRunning, let url = starter.url else { return }
+        bridge.run(Bpy.starterScene(script: url))
+        NotificationCenter.default.post(name: StarterTemplate.didLoad, object: nil)
+    }
+
     /// Blender prompts for a path; without a document browser this picks the
     /// next free numbered name in Documents.
     private func save(named name: String? = nil) {
@@ -371,4 +391,29 @@ struct HelpMenu: View {
         }
         .menuStyle(BlenderMenuStyle())
     }
+}
+
+
+/// File ▸ New ▸ Templates: starter scenes, each a bpy script in the bundle's
+/// python/templates (Resources/python/templates in the repository).
+struct StarterTemplate: Identifiable {
+    let id: String        // the script's file name, without .py
+    let title: String
+    let symbol: String
+
+    /// Posted after a template loads: the 3D View looks through its camera,
+    /// so the scene opens framed the way it was made.
+    static let didLoad = Notification.Name("BlenderLocal.starterTemplateDidLoad")
+
+    var url: URL? {
+        Bundle.main.resourceURL?.appendingPathComponent("python/templates/\(id).py")
+    }
+
+    static let all: [StarterTemplate] = [
+        StarterTemplate(id: "Classroom", title: "Classroom", symbol: "graduationcap"),
+        StarterTemplate(id: "Studio_Showcase", title: "Studio Showcase", symbol: "camera.aperture"),
+        StarterTemplate(id: "Bouncing_Ball", title: "Bouncing Ball (Animation)", symbol: "circle.circle"),
+        StarterTemplate(id: "Low_Poly_Landscape", title: "Low-Poly Landscape", symbol: "mountain.2"),
+        StarterTemplate(id: "Product_Turntable", title: "Product Turntable (Animation)", symbol: "arrow.triangle.2.circlepath"),
+    ]
 }
