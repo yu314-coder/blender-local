@@ -62,13 +62,12 @@ targets:
       - package: SwiftTerm
     settings:
       base:
-        # iPad only. The interface is laid out for an iPad (touch-sized panels,
-        # a top bar of Blender menus, side editors) and has no iPhone layout, so
-        # an iPhone would get a cramped iPad screen, and App Review tests a
-        # universal app on an iPhone too. Set here, on the target: XcodeGen's
-        # iOS application preset sets "1,2" on the target, which overrides the
-        # project-level value. Add "1" back with an iPhone layout.
-        TARGETED_DEVICE_FAMILY: "2"
+        # iPhone and iPad (user, 2026-11-13). On an iPhone, or any narrow
+        # window, the Outliner and Properties open as a drawer over the 3D
+        # View and the top bar tightens (compact size classes). Set on the
+        # target: XcodeGen's iOS application preset sets it there, which
+        # overrides a project-level value.
+        TARGETED_DEVICE_FAMILY: "1,2"
         PRODUCT_BUNDLE_IDENTIFIER: euleryu.blenderkit
         # Automatic signing, so Xcode can create the profile for
         # euleryu.blenderkit. Set the team in Signing & Capabilities once;

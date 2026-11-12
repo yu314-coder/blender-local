@@ -82,21 +82,27 @@ struct TopBar: View {
     @State private var savedFiles: [URL] = []
     /// Preferences, from the gear or File ▸ Preferences….
     @State private var showPreferences = false
+    /// An iPhone or a narrow window: tighter spacing, and the run status
+    /// (also in the console) leaves its room to the menus.
+    @Environment(\.horizontalSizeClass) private var hSize
+    private var compact: Bool { hSize == .compact }
 
     var body: some View {
-        HStack(spacing: 12) {
+        HStack(spacing: compact ? 4 : 12) {
             HStack(spacing: 0) {
                 FileMenu(scene: scene, session: session, bridge: bridge, savedFiles: $savedFiles,
                          showPreferences: $showPreferences)
                     .helpAnchor(.fileMenu)
+                    .fixedSize()
                 // Blender's Render menu, after File as in its top bar.
                 RenderMenu(session: session)
+                    .fixedSize()
             }
             .frame(maxWidth: .infinity, alignment: .leading)
             Picker("Workspace", selection: $workspace) {
-                Text("Scripting").tag(Workspace.scripting)
+                Text(compact ? "Script" : "Scripting").tag(Workspace.scripting)
                 Text(Workspace.layout.rawValue).tag(Workspace.layout)
-            }.pickerStyle(.segmented).frame(maxWidth: 300)
+            }.pickerStyle(.segmented).frame(maxWidth: compact ? 172 : 300)
                 .helpAnchor(.workspaces)
             // Undo, Redo and what the last run did, the same on both tabs.
             //
@@ -112,9 +118,11 @@ struct TopBar: View {
                 historyButton("Redo", icon: "arrow.uturn.forward", enabled: canRedo) {
                     session.performRedo()
                 }
-                Rectangle().fill(BTheme.outline).frame(width: 1, height: 18)
-                    .padding(.horizontal, 8)
-                RunStatusPill(session: session)
+                if !compact {
+                    Rectangle().fill(BTheme.outline).frame(width: 1, height: 18)
+                        .padding(.horizontal, 8)
+                    RunStatusPill(session: session)
+                }
             }
             .helpAnchor(.history)
             .frame(maxWidth: .infinity, alignment: .trailing)
@@ -172,7 +180,7 @@ struct TopBar: View {
             .fixedSize()
             .layoutPriority(1)
         }
-        .padding(.horizontal, 12).frame(height: 48)
+        .padding(.horizontal, compact ? 6 : 12).frame(height: 48)
         .background(BTheme.topbar)
         .overlay(alignment: .bottom) {
             Rectangle().fill(BTheme.editorOutline).frame(height: BTheme.Metric.hairline)

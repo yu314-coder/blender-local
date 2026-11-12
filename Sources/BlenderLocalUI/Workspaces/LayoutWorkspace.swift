@@ -50,7 +50,12 @@ struct LayoutWorkspace: View {
     @State private var showsTransform = false
     /// The Outliner and the Properties editor beside the 3D View
     /// (`editorsDock`), open as Blender opens them; kept across launches.
-    @AppStorage("bl_editors_shown") private var showsEditors = true
+    @AppStorage("bl_editors_shown") private var showsEditors = UIDevice.current.userInterfaceIdiom != .phone
+    /// An iPhone (or a narrow window): the editors open as a drawer over the
+    /// 3D View instead of taking a column or a row of it.
+    @Environment(\.horizontalSizeClass) private var hSize
+    @Environment(\.verticalSizeClass) private var vSize
+    private var compact: Bool { hSize == .compact || vSize == .compact }
     /// The header's width, its content's, and whether it is scrolled to its
     /// end (`headerRow`).
     @State private var headerWidth: CGFloat = 1_000
@@ -501,12 +506,26 @@ struct LayoutWorkspace: View {
                                 reportBanner(report)
                             }
                         }.foregroundStyle(BTheme.text)
-                        if showsEditors {
+                        if showsEditors && !compact {
                             editorsDock(wide: wide, height: geo.size.height)
                                 .frame(width: wide ? min(360, geo.size.width * 0.36) : nil,
                                        height: wide ? nil : geo.size.height * 0.42)
                         }
                     }
+                    .overlay(alignment: .trailing) {
+                        if showsEditors && compact {
+                            // A drawer from the right edge, over the view; the
+                            // header's editors button closes it.
+                            editorsDock(wide: true, height: geo.size.height)
+                                .frame(width: min(340, geo.size.width * 0.86))
+                                .background(BTheme.topbar)
+                                .clipShape(RoundedRectangle(cornerRadius: 10))
+                                .shadow(color: .black.opacity(0.5), radius: 14)
+                                .padding(.vertical, 6).padding(.trailing, 6)
+                                .transition(.move(edge: .trailing))
+                        }
+                    }
+                    .animation(.easeOut(duration: 0.2), value: showsEditors)
                 }
             }
             // The Timeline's own menus (T, R, V, X, Shift+S, its right-click)
