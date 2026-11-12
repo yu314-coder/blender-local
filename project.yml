@@ -118,6 +118,10 @@ targets:
 
         INFOPLIST_KEY_NSCameraUsageDescription: "Blender Local does not use the camera. This declaration is required because the bundled FFmpeg media library, used for video encoding, also contains camera-capture code that this app never calls."
         INFOPLIST_KEY_NSMicrophoneUsageDescription: "Blender Local does not use the microphone. This declaration is required because the bundled FFmpeg media library, used for audio in video encoding, also contains audio-capture code that this app never calls."
+        # A render shared with "Save Image" or "Save Video" in the share sheet is
+        # written to Photos from this process, and iOS ends an app that does that
+        # without this key.
+        INFOPLIST_KEY_NSPhotoLibraryAddUsageDescription: "Blender Local adds a render to your photo library only when you choose Save Image or Save Video."
     postCompileScripts:
       - name: Stage Python
         basedOnDependencyAnalysis: false
