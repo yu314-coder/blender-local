@@ -784,6 +784,38 @@ else
 fi
 
 # ============================================================
+# Step 3b: ITMS-91061. Python's _ssl and _hashlib link OpenSSL statically,
+# which Apple lists as a commonly used third-party SDK ("BoringSSL /
+# openssl_grpc"): every framework carrying it must ship a privacy manifest,
+# or App Review rejects the build after upload (build 64 was). OpenSSL
+# itself collects nothing, so the manifest is the empty one. Signed here,
+# since Step 4 only re-signs frameworks whose binaries it changed.
+# ============================================================
+_PI_FIXED=0
+while IFS= read -r -d '' fw; do
+    exe=$(/usr/libexec/PlistBuddy -c "Print :CFBundleExecutable" "$fw/Info.plist" 2>/dev/null)
+    [ -n "$exe" ] && [ -f "$fw/$exe" ] || continue
+    if strings - "$fw/$exe" 2>/dev/null | grep -qiE "OpenSSL [0-9]|BoringSSL|openssl_grpc"; then
+        cat > "$fw/PrivacyInfo.xcprivacy" <<'PIEOF'
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>NSPrivacyTracking</key><false/>
+    <key>NSPrivacyTrackingDomains</key><array/>
+    <key>NSPrivacyCollectedDataTypes</key><array/>
+    <key>NSPrivacyAccessedAPITypes</key><array/>
+</dict>
+</plist>
+PIEOF
+        codesign --force --sign "$IDENT" --timestamp=none "$fw" 2>/dev/null || true
+        _PI_FIXED=$((_PI_FIXED + 1))
+        echo "  privacy manifest -> $(basename "$fw")"
+    fi
+done < <(find "$FW" -maxdepth 1 -name "*.framework" -type d -print0 2>/dev/null)
+echo "  privacy manifests added to $_PI_FIXED OpenSSL framework(s)"
+
+# ============================================================
 # Step 4: re-sign everything modified
 # ============================================================
 while IFS='|' read -r base new_load fw_dir new_bin; do

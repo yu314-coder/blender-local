@@ -71,6 +71,23 @@ if [ -d "$BPYDIR" ]; then
     [ -n "$FOUND" ] || { echo "the app would run real bpy but report the shim"; exit 1; }
 fi
 
+# ITMS-91061: the OpenSSL-bearing frameworks (_ssl, _hashlib) must carry a
+# privacy manifest, or App Review rejects the build after upload (build 64).
+APPDIR="$ARCHIVE/Products/Applications/BlenderLocal.app"
+echo "== OpenSSL privacy manifests =="
+MISSING=0
+for fw in "$APPDIR"/Frameworks/*.framework; do
+    exe=$(/usr/libexec/PlistBuddy -c "Print :CFBundleExecutable" "$fw/Info.plist" 2>/dev/null) || continue
+    [ -f "$fw/$exe" ] || continue
+    # grep -c, not -q: under pipefail, -q quitting early makes strings die of SIGPIPE and the test read false.
+    hits=$(strings - "$fw/$exe" 2>/dev/null | grep -ciE "OpenSSL [0-9]|BoringSSL|openssl_grpc" || true)
+    if [ "${hits:-0}" -gt 0 ]; then
+        if [ -f "$fw/PrivacyInfo.xcprivacy" ]; then echo "  ok      $(basename "$fw")"
+        else echo "  MISSING $(basename "$fw")"; MISSING=1; fi
+    fi
+done
+[ "$MISSING" = 0 ] || { echo "an OpenSSL framework has no PrivacyInfo.xcprivacy"; exit 1; }
+
 # By standing instruction, the content check runs on every push, and it runs on
 # the built binary rather than on the source: a DEBUG launch argument is only
 # absent if `strings` cannot find it in what ships. The same pass looks for
