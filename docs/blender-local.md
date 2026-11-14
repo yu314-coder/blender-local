@@ -1,5 +1,47 @@
 # Blender Local — the app
 
+## November 13: version 1.0 to App Review — templates, feedback, iPhone, privacy manifests
+
+The changes that went into the App Store submission of version 1.0:
+
+- **File ▸ New.** 2D Animation and Storyboarding open Blender's own
+  application templates. The iOS `bpy` ships them without their
+  `startup.blend`, so `stage-blender.sh` copies Blender 5.2.1's in
+  (`Resources/BlenderAssets/app_templates`). File ▸ New ▸ Templates adds
+  Classroom, Studio Showcase, Bouncing Ball, Low-Poly Landscape and Product
+  Turntable, each a bpy script run on the device
+  (`Resources/python/templates`, shared helpers in `_common.py`); the 3D View
+  then looks through the template's camera. DEBUG hooks: `-template <id>`,
+  `-app-template <name>`.
+- **Camera Perspective.** Looking through the scene camera, the 3D View's text
+  says "Camera Perspective" (or Orthographic), as Blender does, not "User".
+- **Send Feedback and Report a Bug.** The ? button is a menu: Tour of the
+  Screen, Send Feedback (Mail or Gmail, with the app's version and the
+  device's model and system under the message, or the address copied) and
+  Report a Bug (this repository's GitHub issues). Preferences has them under
+  Feedback, and Blender's Help menu lists them too, Report a Bug by Blender's
+  name (`Chrome/Feedback.swift`).
+- **No test buttons in release.** Preferences' Testing section (Test All
+  Features, Self-Test) is DEBUG only.
+- **Photos.** The share sheet's Save Image and Save Video write to the photo
+  library from the app's process, which iOS refuses without
+  `NSPhotoLibraryAddUsageDescription`; `project.yml` now sets it.
+- **iPhone.** The app briefly shipped iPad only (XcodeGen's iOS application
+  preset sets `TARGETED_DEVICE_FAMILY` "1,2" on the target, which overrode the
+  project's "2", so it had to be set on the target). It is universal again, with
+  a compact layout: in a compact size class the Outliner and Properties open as
+  a drawer over the 3D View and start closed on an iPhone; the top bar keeps
+  File and Render whole, says Script for Scripting and leaves the run status to
+  the console. Checked on an iPhone simulator and at phone sizes on the Mac
+  with the real bpy.
+- **ITMS-91061.** An upload went INVALID_BINARY because the OpenSSL frameworks
+  (`_ssl`, `_hashlib`) had no privacy manifest. `wrap-loose-dylibs.sh` now
+  writes one into each, and `push-appstore.sh` refuses to upload without them.
+- **Mac screenshots.** DEBUG `-window-size <w>x<h>` holds the Mac window at an
+  exact size (1775x1330 gives 2732x2048 captures; it needs a build with
+  `UIRequiresFullScreen=NO` and all four orientations), and
+  `BLENDERLOCAL_HOST` names the terminal prompt's host.
+
 ## November 9 (build 60): Draw Mode is always in the mode menu
 
 The user on build 59: "the mode is not avaliable to select". Two causes: the

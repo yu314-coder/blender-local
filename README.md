@@ -5,7 +5,7 @@
 <h1 align="center">Blender Local</h1>
 
 <p align="center">
-  A Blender-style 3D app for iPad, built on the real Blender: the <code>bpy</code> module, bundled inside the app.
+  A Blender-style 3D app for iPad (and iPhone), built on the real Blender: the <code>bpy</code> module, bundled inside the app.
 </p>
 
 ---
@@ -54,8 +54,22 @@ stand-in plays Blender's part for UI testing. Device and Mac
 
 ## What it does
 
-**Help**: the ? in the top bar opens a tour that lights each part of the
-screen and says how to use it. It opens by itself the first time.
+**Help**: the ? in the top bar opens a menu: Tour of the Screen (a tour that
+lights each part of the screen and says how to use it; it opens by itself the
+first time), Send Feedback (an email with the app's version and the device
+below the message) and Report a Bug (this repository's issues). Preferences
+has the same three under Feedback.
+
+**New files**: File ▸ New has Blender's General, 2D Animation and
+Storyboarding (Blender's own application templates and their startup files),
+and starter Templates built on the device by a bpy script: Classroom, Studio
+Showcase, Bouncing Ball, Low-Poly Landscape and Product Turntable. A template
+opens looking through its camera, and the 3D View's text says Camera
+Perspective, as Blender's does.
+
+**iPhone**: in a compact width (an iPhone, or a narrow window) the Outliner and
+Properties open as a drawer over the 3D View instead of taking a column of it,
+and the top bar is tightened to fit.
 
 **Layout** (the 3D Viewport)
 - Add meshes, curves, lattices, Grease Pencil, empties, cameras, lights and text.
@@ -155,6 +169,7 @@ management, resolution, frame rate, frame range and file format.
 
 **Files**
 - `.blend` save and open.
+- Save Image and Save Video put a render in Photos (the app asks first).
 - Import and export of glTF, OBJ, USD, STL, PLY, FBX and Alembic.
 - The app's Documents folder appears in the Files app.
 
@@ -164,8 +179,10 @@ Every feature has host test suites (`scripts/run-*-tests.sh`) and checks that
 run in desktop Blender 5.2.1 with the app's context
 (`scripts/run-*-blender-check.sh`): its undo stack, `gpu.init()`, and the main
 thread's window. Changes are also run in the real app on a Mac, as Designed for
-iPad, through DEBUG launch hooks. Release builds are scanned so that no hook
-ships (`scripts/scan-app.py`).
+iPad, through DEBUG launch hooks (`-window-size <w>x<h>` holds the window at an
+exact size for App Store screenshots). Release builds are scanned so that no
+hook ships (`scripts/scan-app.py`), and `push-appstore.sh` checks that every
+bundled OpenSSL framework carries a privacy manifest before it uploads.
 
 ## Build
 
