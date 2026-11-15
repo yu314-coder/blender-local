@@ -163,6 +163,12 @@ def settings():
             'time_limit': _number(cycles.time_limit),
             'use_denoising': bool(cycles.use_denoising), 'denoiser': cycles.denoiser,
             'denoisers': _choices(cycles, 'denoiser'),
+            # Blender's Denoise panel: Passes, Prefilter, Quality.
+            'denoising_input_passes': getattr(cycles, 'denoising_input_passes', None),
+            'denoising_prefilter': getattr(cycles, 'denoising_prefilter', None),
+            'denoising_prefilters': _choices(cycles, 'denoising_prefilter') if hasattr(cycles, 'denoising_prefilter') else [],
+            'denoising_quality': getattr(cycles, 'denoising_quality', None),
+            'denoising_qualities': _choices(cycles, 'denoising_quality') if hasattr(cycles, 'denoising_quality') else [],
             'max_bounces': cycles.max_bounces,
         }
     eevee = getattr(scene, 'eevee', None)

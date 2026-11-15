@@ -166,6 +166,24 @@ struct SceneRenderTabs: View {
                 SettingMenu(label: "Denoiser", choices: c.denoisers, selected: c.denoiser) {
                     write(RenderSettingsBpy.set("cycles.denoiser", choice: $0), undo: "Denoiser")
                 }
+                // As in Blender's Denoise panel: Prefilter only when the
+                // denoiser is given albedo or normals, and both only for
+                // OpenImageDenoise. On the CPU, where this build denoises,
+                // Prefilter is most of the time a render takes after its
+                // last sample: Accurate runs the denoiser three times.
+                if c.denoiser == "OPENIMAGEDENOISE" {
+                    if let prefilter = c.denoisingPrefilter, let choices = c.denoisingPrefilters, !choices.isEmpty,
+                       c.denoisingInputPasses != "RGB" {
+                        SettingMenu(label: "Prefilter", choices: choices, selected: prefilter) {
+                            write(RenderSettingsBpy.set("cycles.denoising_prefilter", choice: $0), undo: "Prefilter")
+                        }
+                    }
+                    if let quality = c.denoisingQuality, let choices = c.denoisingQualities, !choices.isEmpty {
+                        SettingMenu(label: "Quality", choices: choices, selected: quality) {
+                            write(RenderSettingsBpy.set("cycles.denoising_quality", choice: $0), undo: "Quality")
+                        }
+                    }
+                }
             }
         }
         BPanel("Light Paths") {

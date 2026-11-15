@@ -110,9 +110,26 @@ struct RenderingWorkspace: View {
     /// read out of it.
     @State private var progress: String?
     @State private var progressFraction: Double?
+    /// The last progress line and when it came, to tell denoising from a
+    /// slow sample (`RenderingWorkspaceProgress.denoising`).
+    @State private var lastProgressLine = ""
+    @State private var lastProgressAt = Date()
+    /// The first sample's count and time, for the estimate.
+    @State private var sampleClock: (done: Int, at: Date)?
     /// Render Animation's frame in hand.
     @State private var animationFrame: RenderAnimationFrame?
     @State private var cancelling = false
+    /// Blender's render slots: Slot 1 to 8, each the last render made in it
+    /// and its stats, for comparing one render with another.
+    @State private var slot = 0
+    @State private var slotResults: [Int: (image: TextureImage, stats: String)] = [:]
+    /// The stats line for the slot shown, once its render has finished.
+    @State private var finishedStats: String?
+    /// Blender's stats while a render runs: the app's memory now and its
+    /// highest since the render began, and the progress in Blender's words.
+    @State private var renderMemory: (now: UInt64, peak: UInt64) = (0, 0)
+    @State private var statsProgress = ""
+    @State private var statsRemaining: String?
     /// The render on disk, for the share sheet.
     @State private var savedURL: URL?
     /// Which result the panel shows: the still (View Render) or the animation
@@ -155,7 +172,8 @@ struct RenderingWorkspace: View {
                             version: scene.renderVersion,
                             emptyMessage: emptyMessage,
                             headerContent: AnyView(header),
-                            emptyAction: nil)
+                            emptyAction: nil,
+                            stats: blenderStats)
             }
             // Render Image and Render Animation in a bar of their own: in the
             // header beside the chips they pushed the sheet's contents past
@@ -171,16 +189,52 @@ struct RenderingWorkspace: View {
         .onChange(of: session.isRunning) { _, running in
             if !running && rendering && renderPath != nil { finishBlenderRender() }
         }
+        // The viewport behind the panel draws only what changes while the
+        // render has the GPU (`ViewportRenderer.renderInProgress`).
+        .onChange(of: rendering) { _, now in ViewportRenderer.renderInProgress = now }
+        .onDisappear { ViewportRenderer.renderInProgress = false }
         .onReceive(Timer.publish(every: 0.4, on: .main, in: .common).autoconnect()) { _ in
             guard rendering else { return }
+            if let memory = MemoryFootprint.now() {
+                renderMemory = (memory.current, max(renderMemory.peak, memory.current))
+            }
             if renderingAnimation,
                let text = try? String(contentsOf: Self.framesReport, encoding: .utf8) {
                 animationFrame = RenderAnimationFrame(text)
             }
             if let line = try? String(contentsOf: Self.progressReport, encoding: .utf8), !line.isEmpty {
+                let now = Date()
+                if line != lastProgressLine { lastProgressLine = line; lastProgressAt = now }
                 let read = RenderingWorkspaceProgress.read(line)
-                progress = read.text
-                progressFraction = read.fraction
+                if !renderingAnimation, engine == .cycles,
+                   RenderingWorkspaceProgress.denoising(after: line, quiet: now.timeIntervalSince(lastProgressAt),
+                                                        denoises: settings?.cycles?.useDenoising == true) {
+                    progress = RenderingWorkspaceProgress.denoisingText + "…"
+                    progressFraction = 1
+                    statsProgress = RenderingWorkspaceProgress.denoisingText
+                    statsRemaining = nil
+                } else if let samples = RenderingWorkspaceProgress.samples(in: line) {
+                    // The estimate from the panel's own clock, not Cycles'.
+                    if samples.done < 1 || (sampleClock.map { samples.done < $0.done } ?? false) {
+                        sampleClock = nil
+                    } else if sampleClock == nil {
+                        sampleClock = (samples.done, now)
+                    }
+                    var text = "Sample \(samples.done) of \(samples.total)"
+                    statsProgress = "Sample \(samples.done)/\(samples.total)"
+                    statsRemaining = nil
+                    if let start = sampleClock, let left = RenderingWorkspaceProgress.estimate(
+                        done: samples.done, total: samples.total, start: start, now: now) {
+                        text += " · \(left) left"
+                        statsRemaining = left
+                    }
+                    progress = text
+                    progressFraction = read.fraction
+                } else {
+                    progress = read.text
+                    progressFraction = read.fraction
+                    statsProgress = read.text
+                }
             }
             #if DEBUG
             debugProgress()
@@ -191,6 +245,12 @@ struct RenderingWorkspace: View {
         .onAppear {
             if !session.usesRealBlender { fromView = true }
             readSettings()
+            if !rendering, let interrupted = RenderInterrupted.take() {
+                problem = interrupted
+                #if DEBUG
+                print("[bk-render] note on opening: \(interrupted)"); fflush(stdout)
+                #endif
+            }
             open(opening)
         }
         .onReceive(NotificationCenter.default.publisher(for: RenderPanelAction.notification)) { note in
@@ -277,6 +337,7 @@ struct RenderingWorkspace: View {
 
     private var headerRow: some View {
         HStack(spacing: 6) {
+            slotMenu
             sourceMenu
             if session.usesRealBlender, let settings {
                 Menu {
@@ -408,6 +469,44 @@ struct RenderingWorkspace: View {
         } label: {
             chip(usesCamera ? (scene.sceneCamera?.name ?? "Camera") : "3D Viewport")
         }
+    }
+
+    /// Blender's Image ▸ Slot: eight slots, each keeping its last render.
+    private var slotMenu: some View {
+        Menu {
+            ForEach(0..<8, id: \.self) { index in
+                Button { show(slot: index) } label: {
+                    Label("Slot \(index + 1)" + (slotResults[index] == nil ? "" : "  ·  rendered"),
+                          systemImage: index == slot ? "checkmark" : "")
+                }
+            }
+        } label: { chip("Slot \(slot + 1)") }
+        .disabled(rendering)
+        .accessibilityLabel("Render slot \(slot + 1)")
+    }
+
+    private func show(slot index: Int) {
+        // A render made before the slots existed belongs to the slot shown.
+        if slotResults[slot] == nil, let current = scene.renderResult {
+            slotResults[slot] = (current, finishedStats ?? "")
+        }
+        slot = index
+        let kept = slotResults[index]
+        scene.renderResult = kept?.image
+        scene.renderVersion &+= 1
+        finishedStats = kept?.stats
+        savedName = nil
+        showsAnimation = false
+    }
+
+    /// The stats line over the image: live while a render runs, the slot's
+    /// own once it has finished.
+    private var blenderStats: String? {
+        if rendering && !renderingAnimation, let startedAt {
+            return RenderStatsLine.text(frame: scene.frameCurrent, seconds: Date().timeIntervalSince(startedAt),
+                                        remaining: statsRemaining, memory: renderMemory, progress: statsProgress)
+        }
+        return finishedStats
     }
 
     private func chip(_ text: String) -> some View {
@@ -614,12 +713,35 @@ struct RenderingWorkspace: View {
         device = nil
         progress = nil
         progressFraction = nil
+        lastProgressLine = ""
+        sampleClock = nil
+        finishedStats = nil
+        statsProgress = ""
+        statsRemaining = nil
+        renderMemory = MemoryFootprint.now().map { ($0.current, $0.current) } ?? (0, 0)
         rendering = true
         startedAt = Date()
         if animation { player?.pause() }
+        RenderInterrupted.begin(engine == .cycles
+            ? "Cycles on the \(settings.cycles?.device == "CPU" ? "CPU" : "GPU") at \(size.width)×\(size.height)"
+            : "\(engine.label) at \(size.width)×\(size.height)")
         // No undo step: the render puts back what it set (`_blenderkit_render`).
         session.runScript(request.python, scene: scene, recordsUndo: false)
         if !session.isRunning { finishBlenderRender() }
+    }
+
+    /// Cycles ran out of its lean share: once per launch the render runs
+    /// again with the full one (`CyclesMemory`); when even that is not
+    /// enough, the panel says what needs less instead of Cycles' own words.
+    private func retriesWithMoreMemory(animation: Bool) -> Bool {
+        guard CyclesMemory.isOutOfMemory(problem) else { return false }
+        guard CyclesMemory.widen() else {
+            problem = CyclesMemory.outOfMemoryMessage
+            return false
+        }
+        problem = nil
+        DispatchQueue.main.async { render(animation: animation) }
+        return true
     }
 
     /// Where the render script writes the device it used, how far along it
@@ -655,6 +777,7 @@ struct RenderingWorkspace: View {
 
     private func finishBlenderRender() {
         let animation = renderingAnimation
+        RenderInterrupted.end()
         defer {
             rendering = false
             renderPath = nil
@@ -675,7 +798,11 @@ struct RenderingWorkspace: View {
         // as a sentence, and a traceback's last line is the exception.
         if let failure = session.lastRun?.error {
             problem = session.lastRun?.errorMessage ?? failure
+            if retriesWithMoreMemory(animation: false) { return }
             problemWantsCamera = usesCamera && scene.sceneCamera == nil
+            #if DEBUG
+            debugRetryWithCamera()
+            #endif
             return
         }
         guard let url = renderPath, let image = UIImage(contentsOfFile: url.path)?.cgImage else {
@@ -696,6 +823,11 @@ struct RenderingWorkspace: View {
         result.replace(with: pixels)
         scene.renderResult = result
         scene.renderVersion &+= 1
+        let total = settings?.samples.map { "Sample \($0)/\($0)" } ?? ""
+        finishedStats = RenderStatsLine.text(frame: scene.frameCurrent, seconds: lastSeconds ?? 0,
+                                             remaining: nil, memory: renderMemory,
+                                             progress: engine == .workbench ? "" : total)
+        slotResults[slot] = (result, finishedStats ?? "")
         showsAnimation = false
         savedName = "Saved as \(url.lastPathComponent) in Files ▸ Blender Local ▸ Renders."
         savedURL = url
@@ -715,6 +847,7 @@ struct RenderingWorkspace: View {
         #endif
         if let failure = session.lastRun?.error, result?.frames ?? 0 == 0 {
             problem = session.lastRun?.errorMessage ?? failure
+            if retriesWithMoreMemory(animation: true) { return }
             problemWantsCamera = scene.sceneCamera == nil
             return
         }
@@ -758,6 +891,23 @@ struct RenderingWorkspace: View {
             print("[bk-render] Cancel pressed during frame \(frame.index) of \(frame.total)")
             fflush(stdout)
             cancelAnimation()
+        }
+    }
+
+    /// `-render-add-camera`: a render that failed for want of a camera gets
+    /// the note's Add Camera, then Render Image again, as a person would.
+    private func debugRetryWithCamera() {
+        print("[bk-render] problem: \(problem ?? "") · wants camera \(problemWantsCamera)")
+        fflush(stdout)
+        guard ProcessInfo.processInfo.arguments.contains("-render-add-camera"), problemWantsCamera else { return }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1) {
+            print("[bk-render] Add Camera pressed"); fflush(stdout)
+            addCamera()
+            DispatchQueue.main.asyncAfter(deadline: .now() + 2) {
+                print("[bk-render] Render Image pressed again · camera \(scene.sceneCamera?.name ?? "none")")
+                fflush(stdout)
+                render(animation: false)
+            }
         }
     }
 

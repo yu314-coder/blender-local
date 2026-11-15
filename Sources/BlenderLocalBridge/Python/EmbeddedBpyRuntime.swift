@@ -340,6 +340,8 @@ public final class EmbeddedBpyRuntime: BpyRuntime {
                     .joined(separator: ":")
                 setenv("PXR_PLUGINPATH_NAME", plugins, 0)
             }
+            Self.keepCyclesKernelsInCaches(fm)
+            CyclesMemory.fit()
         }
 
         // site-packages precedes the shim, so the real bpy wins when present
@@ -358,6 +360,45 @@ public final class EmbeddedBpyRuntime: BpyRuntime {
         guard rc == 0 else { throw StartupError.initFailed(rc) }
         version = String(cString: bk_python_version())
         bk_install_pump_request()
+    }
+
+    /// Where Cycles keeps the Metal kernels it compiles: Library/Caches.
+    ///
+    /// Cycles writes them under `$XDG_CACHE_HOME/cycles`, else
+    /// `$HOME/.cache/cycles`, the container's root — which iOS backs up (about
+    /// 100 MB of kernels in the user's iCloud backup) and which nothing
+    /// pinned: a launch that inherited XDG_CACHE_HOME pointed it outside the
+    /// sandbox, and the refused write is not an error Cycles sees. Apple's
+    /// `-[MTLBinaryArchive serializeToURL:]` aborts the app inside Metal
+    /// (pointer being freed was not allocated), on the first Cycles GPU render
+    /// of a new scene — reproduced on this M4, macOS 27.0, 6 s after launch.
+    /// So the cache is set here, before bpy loads; kernels already built at
+    /// the old place move along (one rename, nothing recompiles); and when
+    /// the folder cannot be written, or the disk is nearly full, Cycles is
+    /// told not to write kernel archives at all — kernels then compile again
+    /// each launch, which is slow but never a crash.
+    static func keepCyclesKernelsInCaches(_ fm: FileManager) {
+        guard let caches = fm.urls(for: .cachesDirectory, in: .userDomainMask).first else { return }
+        setenv("XDG_CACHE_HOME", caches.path, 1)
+        let kernels = caches.appendingPathComponent("cycles")
+        let old = URL(fileURLWithPath: NSHomeDirectory()).appendingPathComponent(".cache/cycles")
+        if !fm.fileExists(atPath: kernels.path), fm.fileExists(atPath: old.path) {
+            try? fm.createDirectory(at: caches, withIntermediateDirectories: true)
+            try? fm.moveItem(at: old, to: kernels)
+        }
+        var writable = false
+        let probe = caches.appendingPathComponent(".blenderlocal-cycles-probe")
+        do {
+            try fm.createDirectory(at: caches, withIntermediateDirectories: true)
+            try Data([0]).write(to: probe)
+            try? fm.removeItem(at: probe)
+            writable = true
+        } catch {}
+        let free = (try? caches.resourceValues(forKeys: [.volumeAvailableCapacityForImportantUsageKey]))?
+            .volumeAvailableCapacityForImportantUsage ?? Int64.max
+        if !writable || free < 512_000_000 {
+            setenv("CYCLES_METAL_DISABLE_BINARY_ARCHIVES", "1", 1)
+        }
     }
 
     /// The console's first lines: BenchCode's shell, what to type first, and

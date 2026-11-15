@@ -98,6 +98,9 @@ struct ViewportKeyActions {
     var essentialsLibrary: Bool?
     var frameAll: () -> Void
     var frameSelected: () -> Void
+    /// View ▸ Align View ▸ Center View to Cursor (Alt+Home): the view's
+    /// pivot onto the 3D cursor, its distance and angle kept.
+    var centerViewToCursor: () -> Void
     var view: (ViewportCamera.Viewpoint) -> Void
     /// Blender's numpad 0: look through the scene's camera. Nil when the scene
     /// has none, which is what greys the item out.
@@ -604,7 +607,7 @@ struct BlenderCommands: Commands {
             // and ⌘A here would shadow the Mac's Select All in an app where
             // plain A is already Select All.
             ObjectTransformItems(state: v.objectTransform,
-                                 setOrigin: v.setOrigin, apply: v.applyTransform)
+                                 setOrigin: v.setOrigin, apply: v.applyTransform, perform: v.perform)
             Divider()
             // Blender's shading group, then QuadriFlow, which Blender keeps
             // under Object Data ▸ Remesh.

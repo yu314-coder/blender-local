@@ -1504,9 +1504,10 @@ public enum Bpy {
         return "bpy.ops.object.origin_set(\(arguments))"
     }
 
-    /// The rows of Blender's Ctrl+A menu this offers.
+    /// The rows of Blender's Ctrl+A menu that `object.transform_apply`
+    /// runs, in its order (VIEW3D_MT_object_apply, 5.2.1).
     public enum AppliedTransform: String, CaseIterable, Identifiable, Sendable {
-        case all, location, rotation, scale
+        case location, rotation, scale, all, rotationScale
 
         public var id: String { rawValue }
 
@@ -1516,6 +1517,7 @@ public enum Bpy {
             case .location: return "Location"
             case .rotation: return "Rotation"
             case .scale:    return "Scale"
+            case .rotationScale: return "Rotation & Scale"
             }
         }
 
@@ -1525,6 +1527,7 @@ public enum Bpy {
             case .location: return (true, false, false)
             case .rotation: return (false, true, false)
             case .scale:    return (false, false, true)
+            case .rotationScale: return (false, true, true)
             }
         }
 

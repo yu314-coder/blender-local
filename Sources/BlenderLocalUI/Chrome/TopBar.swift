@@ -118,9 +118,12 @@ struct TopBar: View {
                 historyButton("Redo", icon: "arrow.uturn.forward", enabled: canRedo) {
                     session.performRedo()
                 }
+                Rectangle().fill(BTheme.outline).frame(width: 1, height: 18)
+                    .padding(.horizontal, compact ? 2 : 8)
+                // Memory, over the last minute (MemoryGauge).
+                MemoryGauge(compact: compact)
+                    .padding(.trailing, compact ? 0 : 6)
                 if !compact {
-                    Rectangle().fill(BTheme.outline).frame(width: 1, height: 18)
-                        .padding(.horizontal, 8)
                     RunStatusPill(session: session)
                 }
             }
@@ -330,17 +333,17 @@ struct RunStatusPill: View {
                     .foregroundStyle(BTheme.text)
                     .lineLimit(1)
                 Text(String(format: "%.1f s", session.runElapsed))
-                    .font(BTheme.Font.mono(11)).foregroundStyle(BTheme.textDim)
+                    .font(BTheme.Font.mono(11)).foregroundStyle(BTheme.textDim).fixedSize()
             } else if let run = session.lastRun {
                 Circle().fill(run.succeeded ? BTheme.textDim : BTheme.error)
                     .frame(width: 6, height: 6)
                 if run.succeeded {
                     Text("Ran \(run.lines) line\(run.lines == 1 ? "" : "s")")
                         .foregroundStyle(BTheme.text)
-                    Text(run.timing).font(BTheme.Font.mono(11)).foregroundStyle(BTheme.textDim)
+                    Text(run.timing).font(BTheme.Font.mono(11)).foregroundStyle(BTheme.textDim).fixedSize()
                 } else if let line = run.errorLine {
                     Text("Stopped at line \(line)").foregroundStyle(BTheme.error)
-                    Text(run.timing).font(BTheme.Font.mono(11)).foregroundStyle(BTheme.textDim)
+                    Text(run.timing).font(BTheme.Font.mono(11)).foregroundStyle(BTheme.textDim).fixedSize()
                 } else {
                     // "Nothing to run — the editor is empty." and its kind:
                     // no line to point at, so the sentence is the status.

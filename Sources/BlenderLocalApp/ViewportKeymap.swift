@@ -48,6 +48,11 @@ struct ViewportKey {
             v.snap(.cursorToWorldOrigin)
             v.frameAll()
         },
+        // `view3d.view_center_cursor`: the pivot moves to the cursor, the
+        // distance and the angle stay.
+        ViewportKey(chord: "alt+home", title: "Center View to Cursor", menu: .view, when: navigable) {
+            $0.centerViewToCursor()
+        },
         // `view3d.view_orbit` by Blender's 15° step (Preferences ▸ Navigation
         // ▸ Orbit Angle): Orbit Left moves the eye to the left (measured, 5.2.1:
         // from Front the eye went to (−0.259, −0.966, 0)), Orbit Up up.
@@ -460,6 +465,7 @@ struct ViewportKey {
         case "space": return .space
         case "tab": return .tab
         case "delete": return .deleteForward
+        case "home": return .home
         default:
             guard let c = character(key)?.first else { return nil }
             return KeyEquivalent(c)
@@ -485,6 +491,7 @@ struct ViewportKey {
         case "f11": input = UIKeyCommand.f11
         case "f12": input = UIKeyCommand.f12
         case "delete": input = UIKeyCommand.inputDelete
+        case "home": input = UIKeyCommand.inputHome
         default:
             guard let c = character(key) else { return nil }
             input = c

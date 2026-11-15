@@ -1021,6 +1021,10 @@ public extension LastOperator {
         case splitSelection, edgeSplitEdges, edgeSplitVertices
         case unsubdivide, beautifyFaces
         case limitedDissolve, deleteLoose, fillHoles
+        // The misses audit of November 14: the rest of Blender's Clean Up
+        // menu (VIEW3D_MT_edit_mesh_clean, 5.2.1), each measured in desktop
+        // 5.2.1 with the app's context (tests/objectops/blender).
+        case decimateGeometry, degenerateDissolve, makePlanarFaces, splitNonPlanar, splitConcave
         // Round 4, group 6: the rest of the rows round 3's review found only
         // the Operator Search reached (critic section 4, items 9 and 14),
         // each measured in desktop 5.2.1 with the app's context
@@ -1107,6 +1111,11 @@ public extension LastOperator {
             case .limitedDissolve:    return "Limited Dissolve"
             case .deleteLoose:        return "Delete Loose"
             case .fillHoles:          return "Fill Holes"
+            case .decimateGeometry:   return "Decimate Geometry"
+            case .degenerateDissolve: return "Degenerate Dissolve"
+            case .makePlanarFaces:    return "Make Planar Faces"
+            case .splitNonPlanar:     return "Split Non-Planar Faces"
+            case .splitConcave:       return "Split Concave Faces"
             // `get_rna_type().name` in 5.2.1 (and in the 5.3 source the app's
             // bpy is built from): one Merge for its five types, one Delete for
             // its five, and the macros by their own names.
@@ -1270,7 +1279,8 @@ public extension LastOperator {
                                            .setNormalsFromFaces, .pointNormals, .smoothNormals]
                 case .average:     return [.averageCustomNormal, .averageFaceArea, .averageCornerAngle]
                 case .shading:     return [.shadeSmoothFaces, .shadeFlatFaces]
-                case .cleanUp:     return [.deleteLoose, .limitedDissolve, .fillHoles]
+                case .cleanUp:     return [.deleteLoose, .decimateGeometry, .degenerateDissolve, .limitedDissolve,
+                                           .makePlanarFaces, .splitNonPlanar, .splitConcave, .fillHoles]
                 case .delete:      return [.deleteVertices, .deleteEdges, .deleteFaces, .deleteEdgesFaces,
                                            .deleteOnlyFaces, .dissolveVerts, .dissolveEdges, .dissolveFaces,
                                            .limitedDissolve, .collapseEdgesFaces, .deleteEdgeLoops]
@@ -1393,6 +1403,11 @@ public extension LastOperator {
             case .limitedDissolve:    return "bpy.ops.mesh.dissolve_limited"
             case .deleteLoose:        return "bpy.ops.mesh.delete_loose"
             case .fillHoles:          return "bpy.ops.mesh.fill_holes"
+            case .decimateGeometry:   return "bpy.ops.mesh.decimate"
+            case .degenerateDissolve: return "bpy.ops.mesh.dissolve_degenerate"
+            case .makePlanarFaces:    return "bpy.ops.mesh.face_make_planar"
+            case .splitNonPlanar:     return "bpy.ops.mesh.vert_connect_nonplanar"
+            case .splitConcave:       return "bpy.ops.mesh.vert_connect_concave"
             case .mergeAtCursor, .mergeCollapse, .mergeAtFirst, .mergeAtLast: return "bpy.ops.mesh.merge"
             case .deleteVertices, .deleteEdges, .deleteFaces, .deleteEdgesFaces, .deleteOnlyFaces:
                 return "bpy.ops.mesh.delete"
@@ -1701,6 +1716,27 @@ public extension LastOperator {
 
                 if not any(_bk_me.total_edge_sel for _bk_me in _bk_meshes):
                     raise RuntimeError('\(rowName) fills the holes the selected edges go round: select an edge first')
+                """
+            case .decimateGeometry, .degenerateDissolve:
+                let what = self == .decimateGeometry
+                    ? "collapses edges of the selected geometry"
+                    : "dissolves the zero-length edges and zero-area faces in the selection"
+                return Self.editMeshes + """
+
+                if not any(_bk_me.total_vert_sel for _bk_me in _bk_meshes):
+                    raise RuntimeError('\(rowName) \(what): select something first')
+                """
+            case .makePlanarFaces, .splitNonPlanar, .splitConcave:
+                let what: String
+                switch self {
+                case .makePlanarFaces: what = "flattens the selected faces"
+                case .splitNonPlanar:  what = "splits the selected faces that are not flat"
+                default:               what = "splits the selected concave faces"
+                }
+                return Self.editMeshes + """
+
+                if not any(_bk_me.total_face_sel for _bk_me in _bk_meshes):
+                    raise RuntimeError('\(rowName) \(what): select a face first')
                 """
             case .beautifyFaces, .extrudeIndividual:
                 let what = self == .beautifyFaces
@@ -2278,6 +2314,33 @@ public extension LastOperator {
                 return [
                     Parameter(key: "sides", label: "Sides", kind: .integer,
                               value: 4, softMin: 0, softMax: 100, step: 0.05)]
+            // 5.2.1's RNA (`get_rna_type()`). Decimate's vertex-group rows
+            // are left out: its panel shows them only with Vertex Group on.
+            case .decimateGeometry:
+                return [
+                    Parameter(key: "ratio", label: "Ratio", kind: .float,
+                              value: 1, softMin: 0, softMax: 1, step: 0.004),
+                    Self.toggle("use_symmetry", "Symmetry", false),
+                    Parameter(key: "symmetry_axis", label: "Axis",
+                              kind: .choice([Parameter.Option("X", "X"), Parameter.Option("Y", "Y"),
+                                             Parameter.Option("Z", "Z")]),
+                              value: 1, softMin: 0, softMax: 2, step: 0.02)]
+            case .degenerateDissolve:
+                return [
+                    Parameter(key: "threshold", label: "Merge Distance", kind: .float,
+                              value: 0.0001, softMin: 0.00001, softMax: 10, step: 0.0005)]
+            case .makePlanarFaces:
+                return [
+                    Parameter(key: "factor", label: "Factor", kind: .float,
+                              value: 1, softMin: 0, softMax: 1, step: 0.004),
+                    Parameter(key: "repeat", label: "Iterations", kind: .integer,
+                              value: 1, softMin: 1, softMax: 200, step: 0.05)]
+            case .splitNonPlanar:
+                return [
+                    Parameter(key: "angle_limit", label: "Max Angle", kind: .float,
+                              value: 5 * .pi / 180, softMin: 0, softMax: .pi, step: 0.005, unit: .degrees)]
+            case .splitConcave:
+                return []
 
             // Round 4, group 6. Every label, default and soft range below is
             // 5.2.1's RNA (`get_rna_type()`), each property also in the 5.3

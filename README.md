@@ -153,6 +153,13 @@ the Metal GPU, EEVEE or Workbench — the animation as an MP4 (H.264 or HEVC) or
 numbered frames, with progress, Cancel and playback in the app. The Render,
 Output and World tabs hold Blender's settings: samples, denoising, film, color
 management, resolution, frame rate, frame range and file format.
+The Image Editor shows Blender's render stats over the image (Frame, Time,
+Remaining, Mem and Peak, Sample) and keeps earlier renders in Slots.
+
+**Memory**: a graph of the app's memory over the last minute sits on the top
+bar; tap it for Now, Peak and the iPad's limit. Cycles on the GPU sizes itself
+to that limit and takes more only when a scene needs it, and the denoiser works
+in tiles, so a render that would not fit says so instead of closing the app.
 
 **More**
 - UV editing: unwrap, Smart UV Project, seams and packing.

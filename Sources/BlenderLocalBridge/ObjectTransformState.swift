@@ -182,6 +182,7 @@ struct ObjectTransformState {
         case .location: return hasLocation
         case .rotation: return hasRotation
         case .scale:    return hasScale
+        case .rotationScale: return hasRotation || hasScale
         }
     }
 

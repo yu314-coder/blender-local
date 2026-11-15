@@ -195,6 +195,7 @@ struct ObjectMenuMoreItems: View {
         ObjectRelationsMenu(state: state, perform: perform)
         ObjectModifiersMenu(state: state, perform: perform)
         ObjectConstraintsMenu(state: state, perform: perform)
+        ObjectTrackMenu(state: state, perform: perform)
         LinkTransferDataMenu(state: state, perform: perform)
     }
 }
@@ -268,6 +269,8 @@ struct ObjectRelationsMenu: View {
 
     var body: some View {
         Menu("Relations") {
+            Button("Make Instance Face") { perform(.makeInstanceFace()) }
+            Divider()
             Menu("Make Single User") {
                 ForEach(LastOperator.SingleUser.allCases, id: \.self) { row in
                     Button(row.label) { perform(.makeSingleUser(row)) }
@@ -286,8 +289,32 @@ struct ObjectModifiersMenu: View {
     var body: some View {
         Menu("Modifiers") {
             Button("Copy Modifiers to Selected Objects") { perform(.copyModifiersToSelected()) }
+                .disabled(!state.canJoin)
+            Divider()
+            Button("Clear Object Modifiers") { perform(.clearObjectModifiers()) }
         }
-        .disabled(!state.canJoin)
+        .disabled(!state.canDuplicate)
+    }
+}
+
+/// Object ▸ Track (VIEW3D_MT_object_track, 5.2.1): `object.track_set`'s
+/// three types, then `object.track_clear`'s two.
+struct ObjectTrackMenu: View {
+    var state: ObjectRelationState
+    var perform: (LastOperator) -> Void
+
+    var body: some View {
+        Menu("Track") {
+            ForEach(LastOperator.trackTypes, id: \.identifier) { type in
+                Button(type.label) { perform(.makeTrack(type.identifier)) }
+                    .disabled(!state.canJoin)
+            }
+            Divider()
+            ForEach(LastOperator.trackClearTypes, id: \.identifier) { type in
+                Button(type.label) { perform(.clearTrack(type.identifier)) }
+            }
+        }
+        .disabled(!state.canDuplicate)
     }
 }
 

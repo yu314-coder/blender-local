@@ -32,7 +32,10 @@ let placed: [(LastOperator.Mesh, LastOperator.Mesh.Group, String)] = [
     (.limitedDissolve, .cleanUp, "Limited Dissolve"), (.deleteLoose, .cleanUp, "Delete Loose"),
     (.fillHoles, .cleanUp, "Fill Holes"), (.unsubdivide, .edge, "Un-Subdivide"),
     (.beautifyFaces, .face, "Beautify Faces"), (.bevelVertices, .vertex, "Bevel Vertices"),
-    (.extrudeIndividual, .extrude, "Extrude Individual Faces")]
+    (.extrudeIndividual, .extrude, "Extrude Individual Faces"),
+    (.decimateGeometry, .cleanUp, "Decimate Geometry"), (.degenerateDissolve, .cleanUp, "Degenerate Dissolve"),
+    (.makePlanarFaces, .cleanUp, "Make Planar Faces"), (.splitNonPlanar, .cleanUp, "Split Non-Planar Faces"),
+    (.splitConcave, .cleanUp, "Split Concave Faces")]
 for (m, group, label) in placed {
     check("\(label) is in \(group.rawValue), offered outside Edit Mode too",
           m.group == group && m.menuLabel == label && !m.editModeOnly,

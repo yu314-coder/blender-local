@@ -443,8 +443,7 @@ def _push_uvs(obj, mesh, editing):
         return
     try:
         layers = mesh.uv_layers
-        loops = array('I', [0]) * (3 * len(mesh.loop_triangles))
-        mesh.loop_triangles.foreach_get('loops', loops)
+        loops = _triangle_loops(mesh)
     except AttributeError:
         # The simulator's stand-in: its projections already put the UVs on
         # the Swift mesh, and it has no loops to send.
@@ -583,8 +582,7 @@ def _push_shading(obj, mesh, editing):
         if domain == 0:
             push(obj.name, 0, b'', b'')
             return
-        loops = array('I', [0]) * (3 * len(mesh.loop_triangles))
-        mesh.loop_triangles.foreach_get('loops', loops)
+        loops = _triangle_loops(mesh)
         if editing:
             # The same triangles `sync_push` sent: hidden faces are left out.
             loops = _unhidden_triangles(mesh, loops)
@@ -598,7 +596,38 @@ def _push_shading(obj, mesh, editing):
 
 def _seams(mesh, editing):
     """The vertex pairs of the mesh's seam edges; hidden ones left out while
-    editing, as their faces are."""
+    editing, as their faces are.
+
+    The flags come from the mesh's ``uv_seam`` attribute, one bool array
+    (0.01 ms for a 1M-triangle mesh in desktop 5.2.1, into a bool buffer;
+    the edges' own ``use_seam`` is read an edge at a time, 46 ms, on every
+    pass), and the seams are picked out in NumPy, not a loop over every
+    edge in Python."""
+    try:
+        import numpy as np
+
+        attrs = mesh.attributes
+        seam = attrs.get('uv_seam')
+        if seam is None or seam.domain != 'EDGE':
+            if hasattr(attrs, 'get') and hasattr(mesh.edges, 'foreach_get'):
+                return array('I')   # no seam has ever been marked
+            raise AttributeError('uv_seam')
+        count = len(mesh.edges)
+        flags = np.empty(count, dtype=bool)
+        seam.data.foreach_get('value', flags)
+        if not flags.any():
+            return array('I')
+        if editing:
+            hidden = _hidden_flags(mesh.edges)
+            if hidden is not None:
+                flags &= np.frombuffer(hidden, dtype=np.int8) == 0
+        ends = np.empty(2 * count, dtype=np.uint32)
+        mesh.edges.foreach_get('vertices', ends)
+        seams = array('I')
+        seams.frombytes(ends.reshape(count, 2)[flags].tobytes())
+        return seams
+    except Exception:
+        pass
     try:
         flags = array('b', [0]) * len(mesh.edges)
         mesh.edges.foreach_get('use_seam', flags)
@@ -727,14 +756,11 @@ def sync(report=False):
                     pushed += 1
                     continue
 
-                co = array("f", [0.0]) * (nverts * 3)
-                mesh.vertices.foreach_get("co", co)
+                co = _vertex_positions(mesh, nverts)
                 _finite_or_zero(co, obj.name, "vertex coordinates")
-                normals = array("f", [0.0]) * (nverts * 3)
-                mesh.vertices.foreach_get("normal", normals)
+                normals = _vertex_normals(mesh, nverts)
                 _finite_or_zero(normals, obj.name, "normal components")
-                tris = array("I", [0]) * (ntris * 3)
-                mesh.loop_triangles.foreach_get("vertices", tris)
+                tris = _triangle_vertices(mesh, ntris)
                 if editing:
                     tris = _unhidden_triangles(mesh, tris)
                     ntris = len(tris) // 3
@@ -817,6 +843,7 @@ def sync(report=False):
                 # groups are counted as Edit Mode has them.
                 _push_groups(obj, with_counts=obj.name == active_name)
             finally:
+                _corners.clear()
                 # to_mesh() allocates; without this the depsgraph leaks a mesh
                 # per object per sync.
                 try:
@@ -932,6 +959,21 @@ def _hidden_flags(elements):
     """Each element's `hide`, or None when nothing is hidden or the mesh has no
     such flag (the simulator's stand-in)."""
     try:
+        # Blender 5.2 keeps `.hide_poly` & co. out of `mesh.attributes`, so
+        # this is the element-wise read; into a bool buffer it is ~1.3x the
+        # byte array's speed (31 against 44 ms, 1M faces, desktop 5.2.1).
+        import numpy as np
+
+        found = np.empty(len(elements), dtype=bool)
+        elements.foreach_get('hide', found)
+        if not found.any():
+            return None
+        flags = array('b')
+        flags.frombytes(found.view(np.int8).tobytes())
+        return flags
+    except Exception:
+        pass
+    try:
         flags = array('b', [0]) * len(elements)
         elements.foreach_get('hide', flags)
     except (AttributeError, TypeError, RuntimeError):
@@ -954,6 +996,89 @@ def _push_materials(obj, mesh, editing, cache):
         print(f"[Blender Local] {obj.name}: its materials could not be read: {error}")
 
 
+def _vertex_positions(mesh, count):
+    """The vertex positions, ``array('f')``: the ``position`` attribute, one
+    array (0.18 ms for 500,000 vertices in desktop 5.2.1), where the mesh has
+    it; each vertex's ``co`` (8 ms) elsewhere — the same numbers."""
+    co = array("f", [0.0]) * (count * 3)
+    try:
+        layer = mesh.attributes.get("position")
+        if layer is not None and layer.domain == 'POINT' and layer.data_type == 'FLOAT_VECTOR':
+            layer.data.foreach_get("vector", co)
+            return co
+    except (AttributeError, TypeError, RuntimeError):
+        pass
+    mesh.vertices.foreach_get("co", co)
+    return co
+
+
+def _vertex_normals(mesh, count):
+    """The vertex normals, ``array('f')``: ``vertex_normals`` (one array, 0.14
+    ms for 500,000 vertices in desktop 5.2.1) where it is, each vertex's
+    ``normal`` (12 ms) elsewhere — the same numbers."""
+    normals = array("f", [0.0]) * (count * 3)
+    try:
+        mesh.vertex_normals.foreach_get("vector", normals)
+    except (AttributeError, TypeError, RuntimeError):
+        mesh.vertices.foreach_get("normal", normals)
+    return normals
+
+
+# The mesh being mirrored's triangle corners, read once for the triangles,
+# the UV map and the shading; cleared after each object.
+_corners = {}
+
+
+def _mesh_key(mesh):
+    try:
+        return mesh.as_pointer()
+    except Exception:
+        return id(mesh)
+
+
+def _triangle_loops(mesh):
+    """The loop (corner) behind each triangle corner, ``array('I')`` (its own
+    type: copied whole, 0.3 ms for a 1M-triangle mesh in desktop 5.2.1).
+    Read once per mesh a pass, for the triangles, the UV map and the
+    shading."""
+    key = ('loops', _mesh_key(mesh))
+    loops = _corners.get(key)
+    if loops is None:
+        loops = array('I', [0]) * (3 * len(mesh.loop_triangles))
+        mesh.loop_triangles.foreach_get('loops', loops)
+        _corners[key] = loops
+    return loops
+
+
+def _triangle_vertices(mesh, ntris):
+    """Each triangle's vertex indices, ``array('I')``: the vertex at each
+    triangle corner's loop (`.corner_vert`, one array Blender keeps whole).
+    The same numbers as ``loop_triangles.foreach_get('vertices')``, which
+    Blender works out a triangle at a time: 21 ms for a 1M-triangle mesh in
+    desktop 5.2.1, against 0.3 ms for the loops this reuses and 0.24 ms for
+    the corners. The simulator's stand-in mesh has neither, and is read the
+    way it always was."""
+    try:
+        import numpy as np
+
+        corner_vert = mesh.attributes.get('.corner_vert')
+        if corner_vert is not None and corner_vert.domain == 'CORNER':
+            loops = _triangle_loops(mesh)
+            # int32, as Blender stores it: foreach_get copies the array whole
+            # only into a buffer of its own type (0.24 ms for a 1M-triangle
+            # mesh in desktop 5.2.1; 45 ms into uint32, element by element).
+            verts = np.empty(len(mesh.loops), dtype=np.int32)
+            corner_vert.data.foreach_get('value', verts)
+            tris = array('I')
+            tris.frombytes(verts[np.frombuffer(loops, dtype=np.uint32)].astype(np.uint32).tobytes())
+            return tris
+    except Exception:
+        pass
+    tris = array("I", [0]) * (ntris * 3)
+    mesh.loop_triangles.foreach_get("vertices", tris)
+    return tris
+
+
 def _unhidden_triangles(mesh, tris):
     """The triangles of the faces edit mode shows: Blender draws no hidden face.
 
@@ -967,6 +1092,26 @@ def _unhidden_triangles(mesh, tris):
     if hidden is None:
         return tris
     ntris = len(tris) // 3
+    try:
+        import numpy as np
+
+        key = ('shown', _mesh_key(mesh))
+        shown = _corners.get(key)
+        if shown is None:
+            # Which triangles show, worked out once per mesh a pass (this runs
+            # for the triangles, the UV map's corners and the shading's), from
+            # the triangle→face array Blender keeps in one piece, not each
+            # triangle's `polygon_index` and a loop over every triangle.
+            faces = np.empty(ntris, dtype=np.int32)
+            mesh.loop_triangle_polygons.foreach_get('value', faces)
+            flags = np.frombuffer(hidden, dtype=np.int8)
+            shown = _corners[key] = np.flatnonzero(flags[faces] == 0)
+        kept = np.frombuffer(tris, dtype=np.uint32).reshape(ntris, 3)[shown]
+        out = array('I')
+        out.frombytes(kept.tobytes())
+        return out
+    except Exception:
+        pass
     faces = array('I', [0]) * ntris
     mesh.loop_triangles.foreach_get('polygon_index', faces)
     kept = array('I')

@@ -38,6 +38,13 @@ public struct RenderSettings: Decodable, Equatable, Sendable {
         public var useDenoising: Bool
         public var denoiser: String
         public var denoisers: [Choice]
+        /// Blender's Denoise ▸ Prefilter and Quality (OpenImageDenoise);
+        /// nil where the module has none (the simulator's shim).
+        public var denoisingInputPasses: String?
+        public var denoisingPrefilter: String?
+        public var denoisingPrefilters: [Choice]?
+        public var denoisingQuality: String?
+        public var denoisingQualities: [Choice]?
         public var maxBounces: Int
     }
 

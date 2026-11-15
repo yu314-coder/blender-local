@@ -1196,6 +1196,215 @@ for o in bpy.data.objects:
     o.constraints.clear()
 history("PUSH", "None")
 refused("Clear Object Constraints with none is refused", "CON_CLEAR", "none of them has one")
+# --------------------------------------------------------------------------
+# The misses audit of November 14: the Object menu's rows Blender has that
+# the app did not.
+def child():
+    """Cube parented to Other at (5, 3, 1) with the usual parent inverse,
+    Cube selected and active."""
+    two()
+    cube, other = bpy.data.objects['Cube'], bpy.data.objects['Other']
+    cube.parent = other
+    cube.matrix_parent_inverse = other.matrix_world.inverted()
+    select("Cube")
+    history("PUSH", "Child")
+
+
+def local(name):
+    o = bpy.data.objects[name]
+    return [round(v, 4) for v in (*o.location, *o.delta_location, *o.rotation_euler, *o.delta_rotation_euler,
+                                  *o.scale, *o.delta_scale)]
+
+
+against("Clear ▸ Origin", "CLEAR_ORIGIN", lambda: ops.object.origin_clear(), child)
+child()
+run("CLEAR_ORIGIN")
+check("Clear Origin put the cube on Other's origin",
+      [round(v, 4) for v in bpy.data.objects['Cube'].matrix_world.translation] == [5.0, 3.0, 1.0],
+      list(bpy.data.objects['Cube'].matrix_world.translation))
+two()
+refused("Clear Origin with no parent is refused (Blender: FINISHED, nothing done)", "CLEAR_ORIGIN", "has a parent")
+for mode in ("LOC", "ROT", "SCALE", "ALL"):
+    two()
+    bpy.data.objects['Cube'].location = (1, 2, 3)
+    history("PUSH", "Moved")
+    run("DELTAS_" + mode)
+    ours = local('Cube')
+    two()
+    bpy.data.objects['Cube'].location = (1, 2, 3)
+    ops.object.transforms_to_deltas(mode=mode)
+    check("Apply ▸ %s to Deltas: the same channels as Blender's own call" % mode, ours == local('Cube'),
+          (ours, local('Cube')))
+two()
+bpy.data.objects['Cube'].location = (1, 2, 3)
+history("PUSH", "Moved")
+run("DELTAS_LOC")
+check("Location to Deltas: location 0, delta (1, 2, 3)", local('Cube')[:6] == [0, 0, 0, 1, 2, 3], local('Cube'))
+two()
+bpy.data.objects['Cube'].location = (1, 2, 3)
+history("PUSH", "Moved")
+run("DELTAS_KEEP")
+check("the panel's Reset Values off keeps the location too", local('Cube')[:6] == [1, 2, 3, 1, 2, 3], local('Cube'))
+two()
+select()
+refused("Transforms to Deltas with nothing selected is refused (Blender: CANCELLED)", "DELTAS_ALL",
+        "none is selected")
+
+
+def animated():
+    two()
+    cube = bpy.data.objects['Cube']
+    cube.location = (0, 0, 0)
+    cube.keyframe_insert("location", frame=1)
+    cube.location = (2, 0, 0)
+    cube.keyframe_insert("location", frame=10)
+    select("Cube")
+    history("PUSH", "Animated")
+
+
+animated()
+error, _ = run("ANIM_DELTAS")
+check("Animated Transforms to Deltas runs on a keyframed cube", error is None, error)
+fc = bpy.data.objects['Cube'].animation_data.action
+paths = sorted({f.data_path for f in getattr(fc, 'fcurves', [])} |
+               {f.data_path for l in getattr(fc, 'layers', []) for st in l.strips
+                for b in st.channelbags for f in b.fcurves})
+check("its keys now drive delta_location", paths == ["delta_location"], paths)
+two()
+refused("Animated Transforms to Deltas with no animation is refused", "ANIM_DELTAS", "none of the selected")
+
+
+def constrained():
+    two()
+    bpy.data.objects['Cube'].constraints.clear()
+    c = bpy.data.objects['Cube'].constraints.new('COPY_LOCATION')
+    c.target = bpy.data.objects['Other']
+    select("Cube")
+    history("PUSH", "Constrained")
+
+
+against("Apply ▸ Visual Transform", "VISUAL_TRANSFORM", lambda: ops.object.visual_transform_apply(), constrained)
+constrained()
+run("VISUAL_TRANSFORM")
+check("Visual Transform wrote the constraint's place into the cube's location",
+      [round(v, 4) for v in bpy.data.objects['Cube'].location] == [5.0, 3.0, 1.0],
+      list(bpy.data.objects['Cube'].location))
+two()
+select()
+refused("Visual Transform with nothing selected is refused (Blender: CANCELLED)", "VISUAL_TRANSFORM",
+        "none is selected")
+against("Apply ▸ Visual Geometry to Objects", "VISUAL_OBJECTS", lambda: ops.object.visual_geometry_to_objects(),
+        lambda: (two(), select("Cube")))
+two()
+select()
+refused("Visual Geometry to Objects with nothing selected is refused (Blender: poll failed)", "VISUAL_OBJECTS",
+        "none is selected")
+
+
+def instancer_verts():
+    two()
+    cube = bpy.data.objects['Cube']
+    cube.instance_type = 'VERTS'
+    bpy.data.objects['Other'].parent = cube
+    select("Cube")
+    history("PUSH", "Instancer")
+
+
+for block, parent in (("MAKE_REAL", False), ("MAKE_REAL_PARENT", True)):
+    against("Apply ▸ Make Instances Real" + (", the panel's Parent" if parent else ""), block,
+            lambda p=parent: ops.object.duplicates_make_real(use_base_parent=p), instancer_verts)
+instancer_verts()
+n = len(bpy.data.objects)
+shown = sum(1 for i in bpy.context.evaluated_depsgraph_get().object_instances
+            if i.is_instance and i.parent is not None and i.parent.original.name == 'Cube')
+run("MAKE_REAL")
+check("Make Instances Real made an object of each of the %d instances the cube shows" % shown,
+      shown >= 8 and len(bpy.data.objects) == n + shown, (n, shown, len(bpy.data.objects)))
+two()
+refused("Make Instances Real with nothing instanced is refused (Blender: FINISHED, nothing done)", "MAKE_REAL",
+        "they show none")
+instancer_verts()
+blocks["MAKE_REAL"] = blocks["MAKE_REAL"].replace(blocks["INSTANCES_REAL_LIMIT"].strip(), "4")
+refused("Make Instances Real over its limit is refused before anything is made", "MAKE_REAL",
+        "more than 4 objects")
+against("Apply ▸ Parent Inverse", "PARENT_INVERSE", lambda: ops.object.parent_inverse_apply(), child)
+child()
+run("PARENT_INVERSE")
+check("Parent Inverse left the identity as the cube's parent inverse",
+      all(round(v, 4) == (1.0 if i % 5 == 0 else 0.0)
+          for i, v in enumerate(c for row in bpy.data.objects['Cube'].matrix_parent_inverse for c in row)))
+two()
+refused("Parent Inverse with no parent is refused (Blender: FINISHED, nothing done)", "PARENT_INVERSE",
+        "has a parent")
+against("Relations ▸ Make Instance Face", "DUPLI_FACE", lambda: ops.object.make_dupli_face(),
+        lambda: (two(), select("Cube")))
+two()
+select("Cube")
+run("DUPLI_FACE")
+check("Make Instance Face made Cube_dupli, instancing faces",
+      'Cube_dupli' in bpy.data.objects and bpy.data.objects['Cube_dupli'].instance_type == 'FACES',
+      sorted(bpy.data.objects.keys()))
+two()
+select()
+refused("Make Instance Face with nothing selected is refused (Blender: FINISHED, nothing done)", "DUPLI_FACE",
+        "none is selected")
+against("Modifiers ▸ Clear Object Modifiers", "MODS_CLEAR", lambda: ops.object.modifiers_clear(), two)
+two()
+run("MODS_CLEAR")
+check("the cube's Bevel is gone", len(bpy.data.objects['Cube'].modifiers) == 0)
+two()
+bpy.data.objects['Cube'].modifiers.clear()
+history("PUSH", "None")
+refused("Clear Object Modifiers with none is refused", "MODS_CLEAR", "none of them has one")
+two()
+bpy.context.view_layer.objects.active = None
+refused("Clear Object Modifiers with no active object is refused (Blender: poll failed)", "MODS_CLEAR",
+        "none is active")
+for t, ctype in (("DAMPTRACK", "DAMPED_TRACK"), ("TRACKTO", "TRACK_TO"), ("LOCKTRACK", "LOCKED_TRACK")):
+    against("Track ▸ " + t, "TRACK_" + t, lambda t=t: ops.object.track_set(type=t), two)
+    two()
+    run("TRACK_" + t)
+    check("Track ▸ %s gave Other a %s aimed at the cube" % (t, ctype),
+          [(c.type, c.target.name if c.target else None) for c in bpy.data.objects['Other'].constraints]
+          == [(ctype, "Cube")], [(c.type, c.target) for c in bpy.data.objects['Other'].constraints])
+two()
+select("Cube")
+refused("Track with only the active selected is refused (Blender: FINISHED, nothing done)", "TRACK_TRACKTO",
+        "no other object is selected")
+
+
+def tracked():
+    two()
+    c = bpy.data.objects['Other'].constraints.new('TRACK_TO')
+    c.target = bpy.data.objects['Cube']
+    select("Other")
+    history("PUSH", "Tracked")
+
+
+for t in ("CLEAR", "CLEAR_KEEP_TRANSFORM"):
+    against("Track ▸ " + t, "UNTRACK_" + t, lambda t=t: ops.object.track_clear(type=t), tracked)
+tracked()
+run("UNTRACK_CLEAR")
+check("Clear Track removed Other's Track To", len(bpy.data.objects['Other'].constraints) == 0)
+two()
+refused("Clear Track with no tracking constraint is refused (Blender: FINISHED, nothing done)", "UNTRACK_CLEAR",
+        "none of them has one")
+for block, call in (("CLEAR_ORIGIN", lambda: ops.object.origin_clear('EXEC_DEFAULT', True)),
+                    ("DELTAS_ALL", lambda: ops.object.transforms_to_deltas('EXEC_DEFAULT', True)),
+                    ("VISUAL_TRANSFORM", lambda: ops.object.visual_transform_apply('EXEC_DEFAULT', True)),
+                    ("PARENT_INVERSE", lambda: ops.object.parent_inverse_apply('EXEC_DEFAULT', True)),
+                    ("MODS_CLEAR", lambda: ops.object.modifiers_clear('EXEC_DEFAULT', True)),
+                    ("TRACK_TRACKTO", lambda: ops.object.track_set('EXEC_DEFAULT', True, type='TRACKTO')),
+                    ("UNTRACK_CLEAR", lambda: ops.object.track_clear('EXEC_DEFAULT', True))):
+    two()
+    if block == "UNTRACK_CLEAR":
+        tracked()
+    if block in ("CLEAR_ORIGIN", "PARENT_INVERSE"):
+        child()
+    call()
+    check("Blender's own step for %s is %s" % (block, blocks[block + "_UNDO"]),
+          active_step() == blocks[block + "_UNDO"], active_step())
+
 # The redo panel: the step put back and the call again with the panel's
 # value, as `readjustThroughUndo` does.
 two()

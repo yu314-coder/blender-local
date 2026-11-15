@@ -76,7 +76,9 @@ func dump() {
     let rows: [LastOperator.Mesh] = [.bevelVertices, .extrudeIndividual, .splitSelection,
                                      .edgeSplitEdges, .edgeSplitVertices, .unsubdivide,
                                      .beautifyFaces, .limitedDissolve, .deleteLoose, .fillHoles,
-                                     .bevel, .inset, .extrude]
+                                     .bevel, .inset, .extrude,
+                                     .decimateGeometry, .degenerateDissolve, .makePlanarFaces,
+                                     .splitNonPlanar, .splitConcave]
     for m in rows {
         performed("MESH_" + m.rawValue, .mesh(m, spinningAround: .zero))
     }
@@ -86,6 +88,7 @@ func dump() {
         performed(name, op)
     }
     variant("MESH_unsubdivide_1", .unsubdivide, "iterations", 1)
+    variant("MESH_decimateGeometry_half", .decimateGeometry, "ratio", 0.5)
     variant("MESH_fillHoles_3", .fillHoles, "sides", 3)
     variant("MESH_fillHoles_0", .fillHoles, "sides", 0)
     variant("MESH_edgeSplitEdges_VERT", .edgeSplitEdges, "type", 1)

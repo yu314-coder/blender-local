@@ -123,6 +123,32 @@ func dump() {
     singleAll["type"] = 1
     performed("SINGLE_ALL", singleAll)
     performed("MODCOPY", .copyModifiersToSelected())
+    // The misses audit of November 14: Clear ▸ Origin, Apply's rows after
+    // Rotation & Scale, Make Instance Face, Clear Object Modifiers, Track.
+    performed("CLEAR_ORIGIN", .clearOrigin())
+    for row in LastOperator.deltaRows {
+        performed("DELTAS_\(row.mode)", .transformsToDeltas(mode: row.mode))
+    }
+    var keep = LastOperator.transformsToDeltas(mode: "LOC")
+    keep["reset_values"] = 0
+    performed("DELTAS_KEEP", keep)
+    performed("ANIM_DELTAS", .animatedTransformsToDeltas())
+    performed("VISUAL_TRANSFORM", .visualTransformApply())
+    performed("VISUAL_OBJECTS", .visualGeometryToObjects())
+    performed("MAKE_REAL", .makeInstancesReal())
+    var realParent = LastOperator.makeInstancesReal()
+    realParent["use_base_parent"] = 1
+    performed("MAKE_REAL_PARENT", realParent)
+    performed("PARENT_INVERSE", .parentInverseApply())
+    performed("DUPLI_FACE", .makeInstanceFace())
+    performed("MODS_CLEAR", .clearObjectModifiers())
+    for type in LastOperator.trackTypes {
+        performed("TRACK_\(type.identifier)", .makeTrack(type.identifier))
+    }
+    for type in LastOperator.trackClearTypes {
+        performed("UNTRACK_\(type.identifier)", .clearTrack(type.identifier))
+    }
+    emit("INSTANCES_REAL_LIMIT", String(LastOperator.instancesRealLimit))
     performed("RANDOMIZE", .randomizeTransform())
     var randomize = LastOperator.randomizeTransform()
     randomize["loc.x"] = 2

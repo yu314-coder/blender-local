@@ -716,7 +716,7 @@ names = blocks["OBJECT_OP_UNDO_NAMES"].split("\n")
 origin_label = bpy.ops.object.origin_set.get_rna_type().name
 apply_label = bpy.ops.object.transform_apply.get_rna_type().name
 check(f"Set Origin's six rows: {origin_label!r}", names[:6] == [origin_label] * 6, names[:6])
-check(f"Apply's four rows: {apply_label!r}", names[6:] == [apply_label] * 4, names[6:])
+check(f"Apply's five rows: {apply_label!r}", names[6:] == [apply_label] * 5, names[6:])
 
 
 print("\nwhich objects each operator acts on, type by type")
@@ -939,7 +939,8 @@ SCENARIOS["active_unselected"] = active_unselected
 SCENARIOS["no_active"] = no_active
 
 ROWS = {"all": (True, True, True), "location": (True, False, False),
-        "rotation": (False, True, False), "scale": (False, False, True)}
+        "rotation": (False, True, False), "scale": (False, False, True),
+        "rotationScale": (False, True, True)}
 BAKED_BY_APPLY = lambda o: o.type not in {'CAMERA', 'SPEAKER', 'LIGHT_PROBE', 'VOLUME', 'LIGHT'} \
     or (o.type == 'LIGHT' and o.data.type == 'AREA')
 records = []

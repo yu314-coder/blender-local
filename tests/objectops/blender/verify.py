@@ -788,6 +788,78 @@ mesh_row("Inset Individual on four faces of a grid: 65", "MESH_inset_individual"
          (65, 116, 52), "Inset Faces")
 mesh_row("Inset (a region) on the same four faces: 57", "MESH_inset", four_faces, (57, 100, 44), "Inset Faces")
 
+# The misses audit of November 14: the rest of Blender's Clean Up menu, each
+# held to Blender's own call on the same mesh in Edit Mode.
+def wavy_quads():
+    """A 7 × 7 grid whose quads are bent, everything selected."""
+    obj = grid()
+    for v in obj.data.vertices:
+        v.co.z = 0.3 * math.sin(3 * v.co.x) * math.cos(2 * v.co.y)
+    history("PUSH", "Wavy")
+    selecting(obj, everything)
+    return obj
+
+
+def doubled_grid():
+    """The grid with a zero-length edge: one corner vertex moved onto its
+    neighbour."""
+    obj = grid()
+    obj.data.vertices[0].co = obj.data.vertices[1].co.copy()
+    history("PUSH", "Doubled")
+    selecting(obj, everything)
+    return obj
+
+
+def concave_face():
+    """One five-sided concave face (an arrowhead), selected."""
+    fresh()
+    me = bpy.data.meshes.new("Arrow")
+    me.from_pydata([(0, 0, 0), (2, 0, 0), (2, 2, 0), (1, 0.5, 0), (0, 2, 0)], [], [(0, 1, 2, 3, 4)])
+    obj = bpy.data.objects.new("A", me)
+    bpy.context.collection.objects.link(obj)
+    bpy.context.view_layer.objects.active = obj
+    obj.select_set(True)
+    history("PUSH", "Setup")
+    selecting(obj, everything)
+    return obj
+
+
+def blenders_own(scene, call):
+    obj = scene()
+    bpy.ops.object.mode_set(mode='EDIT')
+    call()
+    bpy.ops.object.mode_set(mode='OBJECT')
+    return counts(obj), sorted(tuple(round(c, 4) for c in v.co) for v in obj.data.vertices)
+
+
+for label, block, scene, call, undo in (
+        ("Decimate Geometry", "MESH_decimateGeometry", whole_grid, lambda: bpy.ops.mesh.decimate(), "Decimate Geometry"),
+        ("Decimate Geometry at Ratio 0.5", "MESH_decimateGeometry_half", whole_grid,
+         lambda: bpy.ops.mesh.decimate(ratio=0.5), "Decimate Geometry"),
+        ("Degenerate Dissolve", "MESH_degenerateDissolve", doubled_grid, lambda: bpy.ops.mesh.dissolve_degenerate(),
+         "Degenerate Dissolve"),
+        ("Make Planar Faces", "MESH_makePlanarFaces", wavy_quads, lambda: bpy.ops.mesh.face_make_planar(),
+         "Make Planar Faces"),
+        ("Split Non-Planar Faces", "MESH_splitNonPlanar", wavy_quads, lambda: bpy.ops.mesh.vert_connect_nonplanar(),
+         "Split Non-Planar Faces"),
+        ("Split Concave Faces", "MESH_splitConcave", concave_face, lambda: bpy.ops.mesh.vert_connect_concave(),
+         "Split Concave Faces")):
+    before = counts(scene())
+    theirs = blenders_own(scene, call)
+    obj = scene()
+    error = perform(block, undo)
+    ours = (counts(obj), sorted(tuple(round(c, 4) for c in v.co) for v in obj.data.vertices))
+    check("Clean Up ▸ %s: the same mesh as Blender's own call (%s → %s)" % (label, before, theirs[0]),
+          error is None and ours == theirs, (error, ours[0], theirs[0]))
+    check("Clean Up ▸ %s — left in object mode" % label, obj.mode == 'OBJECT', obj.mode)
+check("Decimate at 0.5 halves the grid's faces", blenders_own(whole_grid, lambda: bpy.ops.mesh.decimate(ratio=0.5))[0][2] < 36)
+check("Split Non-Planar Faces splits the bent quads",
+      blenders_own(wavy_quads, lambda: bpy.ops.mesh.vert_connect_nonplanar())[0][2] > 36)
+check("Split Concave Faces splits the arrowhead",
+      blenders_own(concave_face, lambda: bpy.ops.mesh.vert_connect_concave())[0][2] > 1)
+check("Degenerate Dissolve removes the zero-length edge",
+      blenders_own(doubled_grid, lambda: bpy.ops.mesh.dissolve_degenerate())[0][0] < 49)
+
 print("\nthe rows that act on a selection refuse an empty one, and change nothing")
 for block, words in [("MESH_limitedDissolve", "select something first"),
                      ("MESH_splitSelection", "select something first"),
@@ -799,7 +871,12 @@ for block, words in [("MESH_limitedDissolve", "select something first"),
                      ("MESH_extrudeIndividual", "select a face first"),
                      ("MESH_deleteLoose", "nothing selected is loose"),
                      ("MESH_bevelVertices", "select some first"),
-                     ("MESH_bevel", "select some first")]:
+                     ("MESH_bevel", "select some first"),
+                     ("MESH_decimateGeometry", "select something first"),
+                     ("MESH_degenerateDissolve", "select something first"),
+                     ("MESH_makePlanarFaces", "select a face first"),
+                     ("MESH_splitNonPlanar", "select a face first"),
+                     ("MESH_splitConcave", "select a face first")]:
     obj = grid()
     selecting(obj, nothing)
     refused(block + " with nothing selected", block, words)

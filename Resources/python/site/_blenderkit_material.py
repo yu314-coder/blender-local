@@ -932,6 +932,31 @@ def triangle_slots(mesh, editing, hidden_flags=None):
     hidden faces left out in Edit Mode, as `_unhidden_triangles` leaves them."""
     from array import array
     count = len(mesh.loop_triangles)
+    try:
+        # Each face's slot (the `material_index` attribute) through the
+        # triangle→face array, both read whole: the triangles' own
+        # `material_index` and `polygon_index` are worked out a triangle at a
+        # time, and the faces' `material_index` a face at a time (16 ms for
+        # a 1M-triangle mesh in desktop 5.2.1, against 0.03 ms).
+        import numpy as np
+
+        faces = np.empty(count, dtype=np.int32)
+        mesh.loop_triangle_polygons.foreach_get('value', faces)
+        face_slots = np.zeros(len(mesh.polygons), dtype=np.int32)
+        layer = mesh.attributes.get('material_index')
+        if layer is not None and layer.domain == 'FACE':
+            # One int32 array; absent, every face is slot 0.
+            layer.data.foreach_get('value', face_slots)
+        elif layer is not None:
+            mesh.polygons.foreach_get('material_index', face_slots)
+        found = face_slots[faces]
+        if editing and hidden_flags is not None:
+            found = found[np.frombuffer(hidden_flags, dtype=np.int8)[faces] == 0]
+        slots = array('i')
+        slots.frombytes(found.astype(np.int32).tobytes())
+        return slots
+    except Exception:
+        pass
     slots = array('i', [0]) * count
     mesh.loop_triangles.foreach_get('material_index', slots)
     if editing and hidden_flags is not None:

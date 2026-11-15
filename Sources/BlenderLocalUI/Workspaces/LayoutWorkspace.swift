@@ -2123,6 +2123,7 @@ struct LayoutWorkspace: View {
             essentialsLibrary: session.essentialsLibrary,
             frameAll: { camera.frameAll(scene.objects) },
             frameSelected: { camera.frameSelected(in: scene) },
+            centerViewToCursor: { camera.target = scene.cursor },
             view: { camera.snap(to: $0) },
             lookThroughCamera: cameraToLookThrough == nil ? nil : { lookThroughCamera() },
             aimCameraAtView: cameraToAlign == nil ? nil : { aimCameraAtView() },
@@ -3472,7 +3473,7 @@ struct LayoutWorkspace: View {
     /// Blender keeps them. These rows were in More, mixed with the view's,
     /// and Delete was its last row (the user, November 3: "hard to del
     /// things"). Each row is one the app already ran from More, the Mac menu
-    /// bar or a key; a row Blender has and the app cannot run (Bend, Track,
+    /// bar or a key; a row Blender has and the app cannot run (Bend,
     /// Quick Effects) is left out, as the key menus leave theirs.
     private var objectMenu: some View {
         Menu {
@@ -3495,9 +3496,11 @@ struct LayoutWorkspace: View {
                 ForEach(ClearTransform.allCases, id: \.self) { what in
                     Button(what.label) { performObjectRow(LastOperator.clear(what)) }
                 }
+                Divider()
+                Button("Origin") { performObjectRow(LastOperator.clearOrigin()) }
             }
             .disabled(scene.selection.isEmpty || session.isRunning)
-            ApplyTransformMenu(state: objectTransform, apply: applyTransform)
+            ApplyTransformMenu(state: objectTransform, apply: applyTransform, perform: performObjectRow)
             snapActionsMenu
             Divider()
             Button("Duplicate Objects", systemImage: "plus.square.on.square") { duplicateSelected() }
@@ -3516,6 +3519,7 @@ struct LayoutWorkspace: View {
             ObjectParentMenu(state: objectRelations, perform: performObjectRow)
             ObjectModifiersMenu(state: objectRelations, perform: performObjectRow)
             ObjectConstraintsMenu(state: objectRelations, perform: performObjectRow)
+            ObjectTrackMenu(state: objectRelations, perform: performObjectRow)
             LinkTransferDataMenu(state: objectRelations, perform: performObjectRow)
             Divider()
             ShadingItems(meshInObjectMode: canEdit && !session.isRunning,
@@ -3993,6 +3997,10 @@ struct LayoutWorkspace: View {
                                  enabled: cameraToAlign != nil) {
                             aimCameraAtView()
                         }
+                        // View ▸ Align View ▸ Center View to Cursor.
+                        moreTile("Center View to Cursor", icon: "scope") {
+                            camera.target = scene.cursor
+                        }
                         moreTile("Remove from Local View", icon: "minus.circle",
                                  enabled: scene.localView != nil && !session.isRunning) {
                             bridge?.run(LocalViewBpy.removeFrom)
@@ -4357,7 +4365,7 @@ struct LayoutWorkspace: View {
         // The other two object-level operations Blender keeps on this
         // menu, above the destructive ones.
         ObjectTransformItems(state: objectTransform,
-                             setOrigin: setOrigin, apply: applyTransform)
+                             setOrigin: setOrigin, apply: applyTransform, perform: performObjectRow)
         Divider()
         // Blender's Object menu order: Duplicate Objects, Duplicate
         // Linked and Join, then Parent and Convert further down.

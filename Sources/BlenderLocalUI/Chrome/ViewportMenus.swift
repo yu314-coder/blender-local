@@ -407,11 +407,26 @@ enum ViewportMenu: String, CaseIterable {
     /// `VIEW3D_MT_object_apply`, the rows `object.transform_apply` covers here.
     @MainActor private static func apply(_ v: ViewportKeyActions) -> [PopupItem] {
         let state = v.objectTransform
-        let order: [Bpy.AppliedTransform] = [.location, .rotation, .scale, .all]
-        return order.map { what in
+        let order: [Bpy.AppliedTransform] = [.location, .rotation, .scale, .all, .rotationScale]
+        var rows: [PopupItem] = order.map { what in
             .action(what.title, enabled: state.offers(what),
                     note: what == .scale ? state.activeScaleText : nil) { v.applyTransform(what) }
         }
+        // The rows after them, in Blender's order (ApplyMoreRows).
+        let ok = v.objectRelations.canDuplicate && !v.isRunning
+        rows.append(.separator)
+        for row in LastOperator.deltaRows {
+            rows.append(.action(row.label, enabled: ok) { v.perform(.transformsToDeltas(mode: row.mode)) })
+        }
+        rows.append(.action("Animated Transforms to Deltas", enabled: ok) { v.perform(.animatedTransformsToDeltas()) })
+        rows.append(.separator)
+        rows.append(.action("Visual Transform", enabled: ok) { v.perform(.visualTransformApply()) })
+        rows.append(.action("Visual Geometry to Mesh", enabled: ok) { v.perform(.convert(to: .mesh)) })
+        rows.append(.action("Visual Geometry to Objects", enabled: ok) { v.perform(.visualGeometryToObjects()) })
+        rows.append(.action("Make Instances Real", enabled: ok) { v.perform(.makeInstancesReal()) })
+        rows.append(.separator)
+        rows.append(.action("Parent Inverse", enabled: ok) { v.perform(.parentInverseApply()) })
+        return rows
     }
 
     /// Ctrl+P's Set Parent To: what `object.parent_set`'s invoke offers for

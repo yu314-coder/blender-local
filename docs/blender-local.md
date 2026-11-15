@@ -1,5 +1,138 @@
 # Blender Local — the app
 
+## November 15 (evening): denoising in tiles, a memory graph, Blender's render stats and slots
+
+- **OIDN denoises in tiles**: the bundled bpy's OIDN now splits anything over 1 M pixels (it was 2160×2160) — `blender_ios/patch_oidn_tile.py`, two instructions in `oidn::UNetFilter::init`, and the same change in OIDN's source for the next rebuild. 1920×1080, Accurate + High: peak 2,783 → 2,197 MB, the image within 1/255 of untiled (96.3 dB), time unchanged within the Mac's load.
+- **A memory graph on the top bar**: the app's footprint (what iPadOS measures) over the last minute, green → orange → red against the app's limit; tap for now, peak and limit (`MemoryGauge`).
+- **Blender's render stats over the Render Result**: "Frame:1 | Time:00:04.28 | Remaining:0:03 | Mem:1736.89M, Peak:1736.89M | Sample 65/128" while it renders, the finished line after (Mem is the app's footprint).
+- **Render slots**: Slot 1–8 in the Render Result's header, each keeping its last render and stats, as Blender's Image ▸ Slot.
+- The Image Editor no longer copies the whole image into a new CGImage each time it redraws (8 MB at 1080p, every 0.4 s while a render ran).
+
+## November 15 (later): Cycles fits the iPad's memory
+
+1.1 (2) still closed on the iPad for: add a cube, Render Image (no camera), Add Camera, Render Image. The Mac never crashed on it, but it measured why: Cycles sizes its GPU path states to the Metal working set and doubles them while half is free, never asking what iPadOS lets the app use. One cube at 1920×1080 peaked at **7,866 MB**. iPadOS ends an app long before that on an 8 GB iPad.
+
+- **Cycles' share is set at launch** (`CyclesMemory`): a quarter of the app's budget (what it may still allocate plus what it holds), as Blender's own `CYCLES_METAL_WORKING_SET_PERCENT`. With a 4 GB budget the same render peaked at 2,970 MB and took 13.9 s, against 21.0 s unlimited — fewer states cost no speed. A scene that needs more gets Cycles' own "Out of memory" message in the Render panel instead of the app closing.
+- **Lean first, more when a scene needs it**: Cycles starts each launch with at most 768 MB (a quarter of the budget when that is less). 360 MB of states rendered as fast as 900 MB; 180 MB took 2.4× as long. A scene that runs out gets Cycles' "Out of memory" and the render repeats by itself with the full quarter for the rest of the launch (a 1 GB texture: out of memory at 4 %, rendered at 8 % in 7.4 s). Still not enough: the panel says what needs less.
+- **What is left**: at 1080p with Blender's default Accurate prefilter, OIDN takes ~1.15 GB and most of the time (Fast: ~0.8 GB). Cycles never sets OIDN's `maxMemoryMB`, so OIDN denoises the image as one tile; tiling it needs a Blender rebuild.
+- **A render that ended the app is named at the next launch**: the panel says "Blender Local closed during the last render (Cycles on the GPU at 1920×1080)" and what needs less memory (`RenderInterrupted`).
+- The first Cycles render after an install still compiles kernels: 5 min 25 s on the M4 for that cube, most of it two kernels. The panel says so while it happens.
+
+## November 15: a render that cannot crash in Metal, and a smoother Render panel
+
+**The crash.** BlenderLocal-2026-11-13-013617 and a fresh repro (6 s after
+launch, first Cycles GPU render of a new scene) aborted inside Apple's
+`-[MTLBinaryArchive serializeToURL:]` — "pointer being freed was not
+allocated" — on Cycles' kernel-compile thread. Cycles keeps its compiled
+Metal kernels in `$XDG_CACHE_HOME/cycles`, else `$HOME/.cache/cycles`. The
+test launches inherited `XDG_CACHE_HOME=/Volumes/D/ai_cache` from the shell,
+the sandbox refused the write (`sandbox_extension_issue_file failed`), and
+Metal aborted instead of returning the error. On a device `$HOME/.cache` is
+the container's root, which iOS backs up (~100 MB of kernels). Now
+`EmbeddedBpyRuntime.keepCyclesKernelsInCaches` sets `XDG_CACHE_HOME` to
+Library/Caches before bpy loads, moves kernels already built (one rename,
+no recompile), and sets `CYCLES_METAL_DISABLE_BINARY_ARCHIVES=1` when the
+folder cannot be written or under 512 MB is free. 16 renders of new
+scenes in two launches with the bad variable still set: no crash.
+
+**Smoother rendering** (Render panel, 1280 × 720, 1024 samples, M4):
+
+- The viewport behind the panel drew 60 fps through the render, each frame
+  waiting in `-[CAMetalLayer nextDrawable]` on the main thread while Cycles
+  had the GPU. `ViewportRenderer.renderInProgress`: while a render runs it
+  draws when the view moves or resizes, otherwise four times a second.
+- Cycles sends no stats line while it denoises: the panel sat on
+  "0:00 left" for the 4–15 s OpenImageDenoise takes **on the CPU** (this
+  bpy has OIDN's CPU device only; its Metal device module is not built).
+  It now reads "Denoising…" (`RenderingWorkspaceProgress.denoising`).
+- The time left came from Cycles' "Remaining", which counts kernel loading
+  and scene sync as sampling time: 57:42 after the first sample, 0:48 at
+  the 128th with 6.6 s left. It is now the panel's own, from the rate the
+  samples arrive at since the first (`RenderingWorkspaceProgress.estimate`).
+- Render Properties ▸ Sampling ▸ Denoise has Blender's **Prefilter** and
+  **Quality**. On the CPU, Accurate (Blender's default) runs the denoiser
+  three times; desktop 5.2.1, 640 × 360, OIDN on the CPU, against a
+  1024-sample reference:
+
+  | samples | Accurate + High | Fast + High | Fast + Balanced |
+  | --- | --- | --- | --- |
+  | 16 | 49.05 dB, 2.73 s | 47.54 dB, 2.14 s | 47.54 dB, 1.48 s |
+  | 128 | 53.97 dB, 8.26 s | 52.80 dB, 5.86 s | 52.80 dB, 5.03 s |
+
+  The scene's own values are used, as Blender's F12 does; nothing is changed
+  behind the user's back.
+
+Still slow, not changed: OpenImageIO builds its default colour config (a
+second parse of the OCIO YAML, ~1.3 s on a loaded Mac) at the first PNG
+save of a launch; the PNG itself is Blender's compression 15.
+
+## November 14: the viewport mirror reads each mesh array whole
+
+After every operation `_blenderkit_sync.sync()` reads each mesh out of bpy
+for the Metal viewport. `foreach_get` copies an array in one go only when
+the buffer has the type Blender stores it as, and only for arrays Blender
+keeps whole; otherwise it goes element by element. Several of the pass's
+reads were the slow kind. Measured on a 1M-triangle mesh in desktop 5.2.1:
+
+| read | before | now |
+| --- | --- | --- |
+| triangle vertices | `loop_triangles` `vertices`, 21 ms | `loops` (0.3 ms, read once and shared with the UV map and the shading) through `.corner_vert` (0.24 ms) |
+| vertex positions | `vertices.co`, 8 ms | `position` attribute, 0.18 ms |
+| vertex normals | `vertices.normal`, 12 ms | `vertex_normals`, 0.14 ms |
+| seams | `edges.use_seam`, 46 ms, then a loop over every edge in Python | `uv_seam` attribute, 0.01 ms, picked out in NumPy |
+| hidden faces (Edit Mode) | `polygons.hide` into bytes, 44 ms, and a loop over every triangle in Python, up to three times a pass | `polygons.hide` into a bool buffer, 31 ms, once a pass, in NumPy; Blender 5.2 keeps `.hide_poly` out of `mesh.attributes`, so there is no whole-array read |
+| material slots | each triangle's `material_index` | the `material_index` attribute through `loop_triangle_polygons` |
+
+A whole pass on that mesh: 177 ms → 12.8 ms; a subdivided grid in Edit Mode
+with hidden faces, three materials and seams: 32.6 → 6.1 ms; 60 small
+objects: about the same (4.9 → 4.5 ms). Every call the pass makes to the app
+is byte-for-byte the same as before (old and new run on the same scenes in
+desktop 5.2.1). The attribute names are in the app's own Blender 5.3 too. The
+simulator's stand-in mesh has none of them and is read the old way.
+
+## November 14: the Object menu's missing rows, Clean Up's, and Center View to Cursor
+
+A misses audit held Blender 5.2.1's own menus (`VIEW3D_MT_*`, dumped from
+`bpy.types`) to the app's, row by row. The Object menu's gaps, each now
+Blender's operator through `perform` (its redo panel, its undo step by the
+operator's name), in Blender's order and with its separators
+(`ObjectMenuRowsMore.swift`):
+
+- **Clear ▸ Origin** (`object.origin_clear`): a child moves onto its parent's
+  origin. Refused, in a sentence, when no selected object has a parent
+  (Blender: FINISHED, nothing done).
+- **Apply ▸ Rotation & Scale**, then Location, Rotation, Scale and All
+  Transforms **to Deltas** (Mode and Reset Values in the panel), **Animated
+  Transforms to Deltas**, **Visual Transform**, **Visual Geometry to Mesh**
+  (Convert To Mesh, as Blender's row is), **Visual Geometry to Objects**,
+  **Make Instances Real** (Parent, Keep Hierarchy; refused before anything is
+  made when the selection shows no instances or more than 5,000) and **Parent
+  Inverse**. Ctrl+A's menu has the same rows.
+- **Relations ▸ Make Instance Face**, **Modifiers ▸ Clear Object Modifiers**.
+- **Track**: Damped Track, Track to and Lock Track Constraint (the other
+  selected objects aimed at the active one), Clear Track, and Clear and Keep
+  Transformation.
+- **Edit Mode ▸ Mesh ▸ Clean Up**: Decimate Geometry (Ratio, Symmetry, Axis),
+  Degenerate Dissolve (Merge Distance), Make Planar Faces (Factor,
+  Iterations), Split Non-Planar Faces (Max Angle) and Split Concave Faces, in
+  Blender's order around Delete Loose, Limited Dissolve and Fill Holes; each
+  refuses an empty selection, and each gave the same mesh, vertex for vertex,
+  as Blender's own call (`run-objectops-blender-check.sh`).
+- **View ▸ Align View ▸ Center View to Cursor** (Alt+Home, and a tile in More's
+  View): the view's pivot onto the 3D cursor, its distance and angle kept.
+
+`scripts/run-relations-blender-check.sh` runs each row's Swift-made Python in
+desktop Blender 5.2.1 with the app's undo, against Blender's own call on the
+same scene, each refusal with nothing changed, and Blender's own undo step
+names; `run-3dview-blender-check.sh` and `run-names-blender-check.sh` cover
+Apply's fifth row.
+
+Still not offered, by design or for later: Object ▸ Rigid Body, Quick Effects,
+Animation's bake rows, Asset and Library Override; Relations ▸ Make Local
+(nothing is linked on the device); Add ▸ Armature, Force Field, Speaker, Light
+Probe, Point Cloud, Volume and Collection Instance; View ▸ Frame Camera Bounds,
+Clipping and Render Region, Fly and Walk Navigation, Quad View.
+
 ## November 13: version 1.0 to App Review — templates, feedback, iPhone, privacy manifests
 
 The changes that went into the App Store submission of version 1.0:

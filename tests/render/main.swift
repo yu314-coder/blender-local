@@ -133,6 +133,35 @@ do {
           && stage.text.hasPrefix("Loading render kernels"), "\(stage)")
     check("a count beyond the total cannot overfill the bar",
           RenderingWorkspaceProgress.read("Sample 200/128").fraction == 1)
+
+    // Cycles sends nothing while it denoises: the panel says so once the
+    // samples are all but done and the line has gone quiet.
+    let last = "Remaining: 00:00.12 | Mem: 812M | Sample 1008/1024"
+    check("denoising: the last batch, quiet for a second, with Denoise on",
+          RenderingWorkspaceProgress.denoising(after: last, quiet: 1.2, denoises: true))
+    check("not before the line has been quiet for a while",
+          !RenderingWorkspaceProgress.denoising(after: last, quiet: 0.4, denoises: true))
+    check("not with Denoise off",
+          !RenderingWorkspaceProgress.denoising(after: last, quiet: 5, denoises: false))
+    check("not halfway through, however slow the samples",
+          !RenderingWorkspaceProgress.denoising(after: "Remaining: 00:40.00 | Sample 512/1024", quiet: 5, denoises: true))
+    check("not on a stage line",
+          !RenderingWorkspaceProgress.denoising(after: "Loading render kernels", quiet: 5, denoises: true))
+    check("98 % of the samples, with no estimate, counts",
+          RenderingWorkspaceProgress.denoising(after: "Sample 1004/1024", quiet: 1, denoises: true))
+
+    // The estimate from the panel's own clock: 100 samples in 2 s since the
+    // first leaves 924 at 50 a second, 18.48 s, shown rounded up.
+    let t0 = Date(timeIntervalSince1970: 1000)
+    let estimate = RenderingWorkspaceProgress.estimate(done: 100, total: 1024, start: (0, t0),
+                                                       now: t0.addingTimeInterval(2))
+    check("an estimate from the sampling rate the panel saw", estimate == "0:19", estimate ?? "nil")
+    check("none until a second of sampling has been seen",
+          RenderingWorkspaceProgress.estimate(done: 10, total: 1024, start: (1, t0),
+                                              now: t0.addingTimeInterval(0.5)) == nil)
+    let long = RenderingWorkspaceProgress.estimate(done: 2, total: 4096, start: (1, t0),
+                                                   now: t0.addingTimeInterval(3))
+    check("hours past the hour", long == "3:24:42", long ?? "nil")
     check("an hour left reads as an hour",
           RenderingWorkspaceProgress.read("Remaining: 01:04:09.10 | Sample 2/4096").text
           == "Sample 2 of 4096 · 1:04:09 left",
@@ -264,6 +293,41 @@ do {
           == "bpy.data.objects[\"Point\"].data.type = \"SUN\"")
     check("a camera's focal length", Bpy.setObjectData("Camera", "lens", 35)
           == "bpy.data.objects[\"Camera\"].data.lens = 35.0000")
+}
+
+print("\n== Cycles' share of memory, and a render that ended the app ==")
+do {
+    let gb: UInt64 = 1 << 30
+    // An iPad-sized budget against a working set larger than it.
+    check("a 5 GB budget against a 5.3 GB working set gives Cycles a quarter of the budget",
+          CyclesMemory.workingSetPercent(budget: 5 * gb, workingSet: 5 * gb + 300 << 20) == 23)
+    check("a 3 GB budget on this Mac's 19 GB working set: 3 %",
+          CyclesMemory.workingSetPercent(budget: 3 * gb, workingSet: 19 * gb) == 3)
+    check("never below 1 %", CyclesMemory.workingSetPercent(budget: 100 << 20, workingSet: 64 * gb) == 1)
+    check("never above Cycles' own 90 %", CyclesMemory.workingSetPercent(budget: 64 * gb, workingSet: 4 * gb) == 90)
+    check("no budget (macOS): Cycles' own sizing", CyclesMemory.workingSetPercent(budget: 0, workingSet: 19 * gb) == nil)
+    let ipad = CyclesMemory.shares(budget: 5 * gb, workingSet: 5 * gb + 300 << 20)
+    check("on a 5 GB budget the lean share is 768 MB of the working set, the full one a quarter of the budget",
+          ipad?.lean == 14 && ipad?.full == 23, "\(String(describing: ipad))")
+    let small = CyclesMemory.shares(budget: 2 * gb, workingSet: 5 * gb)
+    check("a budget whose quarter is under 768 MB has one share", small?.lean == small?.full && small?.full == 10,
+          "\(String(describing: small))")
+    check("Cycles' out-of-memory error is recognised",
+          CyclesMemory.isOutOfMemory("Out of memory - couldn't allocate integrator state")
+          && !CyclesMemory.isOutOfMemory("This scene has no camera."))
+    let message = RenderInterrupted.message("Cycles on the GPU at 1920×1080")
+    check("the note names the render and what needs less memory",
+          message.contains("during the last render (Cycles on the GPU at 1920×1080)")
+          && message.contains("lower Resolution %"), message)
+}
+
+print("\n== Blender's render stats line ==")
+do {
+    check("Blender's clock", RenderStatsLine.clock(13.026) == "00:13.02" && RenderStatsLine.clock(3725.5) == "01:02:05.50",
+          RenderStatsLine.clock(13.026) + " " + RenderStatsLine.clock(3725.5))
+    let line = RenderStatsLine.text(frame: 1, seconds: 13.02, remaining: "0:05",
+                                    memory: (2841 << 20, 2969 << 20), progress: "Sample 65/128")
+    check("the line reads as Blender's", line == "Frame:1 | Time:00:13.02 | Remaining:0:05 | Mem:2841.00M, Peak:2969.00M | Sample 65/128", line)
 }
 
 print(failures == 0 ? "\nALL PASS" : "\n\(failures) FAILED")

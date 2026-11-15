@@ -603,7 +603,43 @@ final class ViewportRenderer: NSObject, MTKViewDelegate {
 
     func mtkView(_ view: MTKView, drawableSizeWillChange size: CGSize) {}
 
+    /// True while the Render panel renders (`RenderingWorkspace`).
+    ///
+    /// The viewport draws at 60 fps whatever changes, and while Cycles or
+    /// Eevee has the GPU each of those frames waits for a drawable in
+    /// `-[CAMetalLayer nextDrawable]` on the main thread — the interface's
+    /// hitches during a render (sampled in the app on an M4, November 15).
+    /// So while a render runs a frame is drawn only when what it shows can
+    /// have moved — the view orbited or zoomed, the drawable resized — and
+    /// otherwise four times a second, which keeps everything else on screen
+    /// too (the scene cannot be edited while Blender renders: the runtime is
+    /// busy with the render).
+    static var renderInProgress = false
+
+    private struct ThrottleKey: Equatable {
+        var view: simd_float4x4
+        var width: CGFloat, height: CGFloat
+    }
+    private var lastThrottleKey: ThrottleKey?
+    private var lastThrottledDraw: CFTimeInterval = 0
+
+    /// Whether this frame can be left out while a render runs.
+    private func skipsWhileRendering(_ view: MTKView) -> Bool {
+        guard Self.renderInProgress else {
+            lastThrottleKey = nil
+            return false
+        }
+        let key = ThrottleKey(view: camera.viewMatrix,
+                              width: view.drawableSize.width, height: view.drawableSize.height)
+        let now = CACurrentMediaTime()
+        if key == lastThrottleKey, now - lastThrottledDraw < 0.25 { return true }
+        lastThrottleKey = key
+        lastThrottledDraw = now
+        return false
+    }
+
     func draw(in view: MTKView) {
+        if skipsWhileRendering(view) { return }
         guard let drawable = view.currentDrawable,
               let descriptor = view.currentRenderPassDescriptor,
               let commands = queue.makeCommandBuffer(),
