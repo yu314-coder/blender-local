@@ -204,7 +204,7 @@ struct ScriptingWorkspace: View {
             Button { showFiles.toggle() } label: {
                 HStack(spacing: 4) {
                     Image(systemName: "doc.on.doc").font(.system(size: 11))
-                    Text(document.name).font(BTheme.Font.ui(11)).lineLimit(1)
+                    Text(verbatim: document.name).font(BTheme.Font.ui(11)).lineLimit(1)
                     Image(systemName: "chevron.down").font(.system(size: 7))
                 }
                 .foregroundStyle(BTheme.text)
@@ -314,7 +314,7 @@ struct ScriptingWorkspace: View {
                     } label: {
                         HStack {
                             Image(systemName: "doc.text").font(.system(size: 10))
-                            Text(url.deletingPathExtension().lastPathComponent)
+                            Text(verbatim: url.deletingPathExtension().lastPathComponent)
                                 .font(BTheme.Font.ui(11))
                             Spacer()
                         }

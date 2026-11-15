@@ -14,7 +14,7 @@ struct OutlinerObjectData: View {
             HStack(spacing: 5) {
                 Image(systemName: display.outlinerDataIcon)
                     .font(.system(size: 10)).foregroundStyle(BTheme.textDim)
-                Text(name)
+                Text(verbatim: name)
                     .font(BTheme.Font.ui(11))
                     .foregroundStyle(BTheme.text)
                     .lineLimit(1)

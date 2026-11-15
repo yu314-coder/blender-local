@@ -103,12 +103,12 @@ struct ViewportInfoText: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 1) {
-            Text((throughCamera ? "Camera " : "User ")
-                 + (camera.isOrthographic ? "Orthographic" : "Perspective")
-                 + (scene.localView != nil ? " (Local)" : ""))
+            Text(verbatim: Translation.iface((throughCamera ? "Camera " : "User ")
+                                             + (camera.isOrthographic ? "Orthographic" : "Perspective"))
+                 + (scene.localView != nil ? " (" + Translation.iface("Local") + ")" : ""))
                 .font(BTheme.Font.ui(11))
                 .foregroundStyle(BTheme.text.opacity(0.85))
-            Text(Self.selectedName(scene))
+            Text(verbatim: Self.selectedName(scene))
                 .font(BTheme.Font.ui(11))
                 .foregroundStyle(BTheme.text.opacity(0.85))
         }
@@ -118,7 +118,7 @@ struct ViewportInfoText: View {
     static func selectedName(_ scene: BKScene) -> String {
         var text = "(\(scene.frameCurrent))"
         if scene.mode == .object {
-            text += " " + (scene.collections?.active?.name ?? "Scene Collection")
+            text += " " + Translation.dataName(scene.collections?.active?.name ?? "Scene Collection")
             if scene.active != nil { text += " |" }
         }
         if let active = scene.active { text += " " + active.name }

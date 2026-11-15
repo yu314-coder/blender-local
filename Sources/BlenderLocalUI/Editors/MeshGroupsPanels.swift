@@ -132,7 +132,7 @@ struct MeshGroupsPanels: View {
                 HStack(spacing: 5) {
                     Image(systemName: "person.2.crop.square.stack")
                         .font(.system(size: 10)).foregroundStyle(BTheme.textDim)
-                    Text(group.name).font(BTheme.Font.ui(13))
+                    Text(verbatim: group.name).font(BTheme.Font.ui(13))
                         .foregroundStyle(active ? BTheme.title : BTheme.text)
                         .lineLimit(1)
                     Spacer()
@@ -249,7 +249,7 @@ struct MeshGroupsPanels: View {
                 HStack(spacing: 5) {
                     Image(systemName: "point.3.connected.trianglepath.dotted")
                         .font(.system(size: 10)).foregroundStyle(BTheme.textDim)
-                    Text(key.name).font(BTheme.Font.ui(13))
+                    Text(verbatim: key.name).font(BTheme.Font.ui(13))
                         .foregroundStyle(active ? BTheme.title : BTheme.text)
                         .lineLimit(1)
                     Spacer(minLength: 2)

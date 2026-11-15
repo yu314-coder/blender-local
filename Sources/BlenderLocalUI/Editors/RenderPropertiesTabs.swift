@@ -451,7 +451,7 @@ struct SceneRenderTabs: View {
         if let w = s.world {
             HStack(spacing: 6) {
                 Image(systemName: "globe.americas").font(.system(size: 12)).foregroundStyle(BTheme.textDim)
-                Text(w.name).font(BTheme.Font.ui(13)).foregroundStyle(BTheme.text)
+                Text(verbatim: w.name).font(BTheme.Font.ui(13)).foregroundStyle(BTheme.text)
                 Spacer()
             }
             .padding(.horizontal, 14).padding(.vertical, 8)

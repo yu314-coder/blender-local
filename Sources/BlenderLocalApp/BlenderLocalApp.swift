@@ -2,6 +2,11 @@ import SwiftUI
 
 @main
 struct BlenderLocalApp: App {
+    init() {
+        // The interface language's table, before the first view asks for text.
+        Translation.load()
+    }
+
     var body: some Scene {
         WindowGroup {
             RootView()

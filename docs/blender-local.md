@@ -1,5 +1,52 @@
 # Blender Local — the app
 
+## November 15 (night): the interface in nine languages
+
+A review from China (5 stars) asked for more languages: "不然不会用，太难用了"
+(otherwise I can't use it). The interface now follows Blender's Preferences ▸
+Interface ▸ Translation ▸ Language: Automatic (the iPad's language, or the one
+set for the app in Settings), English, Chinese (Simplified), Chinese
+(Traditional), Japanese, Korean, Spanish, French, German and Russian, with
+Blender's own names for them.
+
+- **Where the words come from.** `scripts/l10n/extract.py` collects every UI
+  string in `Sources/` (literals, `"…" + "…"` sentences joined, `\(…)` as
+  `%@`, messages raised from generated Python, and `l10n/computed.json` for
+  labels the code builds from parts) into `l10n/keys.json`.
+  `scripts/l10n/build.py` writes `Resources/Localization/<lang>.lproj/
+  Localizable.strings`: first the app's own translations (`l10n/<lang>.json`),
+  then Blender's catalog for that language from the bpy the app ships (5.3,
+  operator context first). Blender's catalogs alone cover about 1,700 of the
+  ~2,970 strings; the rest are the app's sentences. What neither has is in
+  `l10n/missing/<lang>.json` (code and identifiers only, now).
+- **Where they are looked up.** Most text reaches SwiftUI as `String` from
+  data (menus, rows, buttons), so `Localization.swift` adds `Text(String)`,
+  `Button`, `Label`, `Toggle`, `Section`, `Menu`, `Picker`, `TextField`,
+  `CommandMenu`, `.navigationTitle` and `.help` overloads. They are more
+  specific than SwiftUI's generic `StringProtocol` ones, so every call in the
+  app translates with no change at the call site. Text with a value in it is
+  matched against the `%@` patterns ("Ran 12 lines" → "已运行 12 行"), the
+  value itself translated when the table knows it.
+- **Names stay names.** Objects, materials, layers, files and other data show
+  through `Text(verbatim:)`, as Blender never translates a datablock's name;
+  `Translation.dataName` translates only the names Blender gives things that
+  are not data (the Scene Collection).
+- **Changing language redraws in place.** The lookup reads an `@Observable`
+  language, so every view that showed text redraws when it changes; nothing
+  is rebuilt and the Blender session is untouched.
+- **Corrections to Blender's catalogs** go in `l10n/<lang>.json` (it wins):
+  Preferences' "Translation" is the language sense, not the transform one;
+  German's catalog had dozens of wrong entries ("Select Bigger" as "select
+  camera"), corrected there.
+- **Not translated:** Blender's own messages from Python (reports, errors)
+  stay English, as the app matches some of them ("out of memory"); a menu's
+  accelerator letter is not underlined in another language (the key still
+  works).
+- **Tests:** `scripts/run-l10n-tests.sh` checks every table keeps its values
+  and line breaks and the lookup's patterns, names and numbers. DEBUG
+  `-preferences` opens Preferences at launch; `-BLInterfaceLanguage zh-Hans`
+  starts in a language (UserDefaults' argument domain).
+
 ## November 15 (evening): denoising in tiles, a memory graph, Blender's render stats and slots
 
 - **OIDN denoises in tiles**: the bundled bpy's OIDN now splits anything over 1 M pixels (it was 2160×2160) — `blender_ios/patch_oidn_tile.py`, two instructions in `oidn::UNetFilter::init`, and the same change in OIDN's source for the next rebuild. 1920×1080, Accurate + High: peak 2,783 → 2,197 MB, the image within 1/255 of untiled (96.3 dB), time unchanged within the Mac's load.

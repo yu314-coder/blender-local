@@ -127,7 +127,7 @@ struct BodyTextSheet: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
-            Text(object.name).font(BTheme.Font.ui(13, weight: .medium)).foregroundStyle(BTheme.text)
+            Text(verbatim: object.name).font(BTheme.Font.ui(13, weight: .medium)).foregroundStyle(BTheme.text)
             if case .text(let settings)? = object.dataSettings {
                 BodyTextField(bridge: bridge, object: object, current: settings.body, autofocus: true,
                               ended: dismiss)
@@ -256,7 +256,7 @@ struct EmptyDataPanels: View {
             Spacer()
             ForEach(choices, id: \.0) { id, name in
                 Button { if id != selected { image(key, "'\(id)'", undo: label) } } label: {
-                    Text(name).font(BTheme.Font.ui(13))
+                    Text(verbatim: name).font(BTheme.Font.ui(13))
                         .foregroundStyle(id == selected ? Color.white : BTheme.textDim)
                         .padding(.horizontal, 6).frame(height: BTheme.Metric.touchField)
                         .background(id == selected ? BTheme.select : BTheme.widget)

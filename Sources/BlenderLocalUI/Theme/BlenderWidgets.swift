@@ -382,7 +382,7 @@ public struct BOutlinerRow: View {
                 Image(systemName: icon)
                     .font(.system(size: 11))
                     .foregroundStyle(selected ? BTheme.active : BTheme.textDim)
-                Text(name)
+                Text(verbatim: name)
                     .font(BTheme.Font.ui(12))
                     .foregroundStyle(selected ? BTheme.active : BTheme.text)
                 Spacer(minLength: 0)

@@ -158,7 +158,7 @@ struct GreasePencilHeader: View {
                         }
                     } label: {
                         if index == info.activeLayer { Label(layer.name, systemImage: "checkmark") }
-                        else { Text(layer.name) }
+                        else { Text(verbatim: layer.name) }
                     }
                 }
             }

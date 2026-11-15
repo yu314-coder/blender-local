@@ -196,9 +196,10 @@ struct TopBar: View {
         .onReceive(NotificationCenter.default.publisher(for: .openPreferences)) { _ in showPreferences = true }
         #if DEBUG
         // `-self-test` and `-feature-test` open Preferences at launch
-        // (`SelfTestLaunch`, `FeatureTestLaunch`).
+        // (`SelfTestLaunch`, `FeatureTestLaunch`); `-preferences` only opens it.
         .onAppear {
-            guard SelfTestLaunch.requested || FeatureTestLaunch.requested else { return }
+            guard SelfTestLaunch.requested || FeatureTestLaunch.requested
+                    || ProcessInfo.processInfo.arguments.contains("-preferences") else { return }
             DispatchQueue.main.asyncAfter(deadline: .now() + 3) { showPreferences = true }
         }
         #endif
@@ -338,11 +339,11 @@ struct RunStatusPill: View {
                 Circle().fill(run.succeeded ? BTheme.textDim : BTheme.error)
                     .frame(width: 6, height: 6)
                 if run.succeeded {
-                    Text("Ran \(run.lines) line\(run.lines == 1 ? "" : "s")")
-                        .foregroundStyle(BTheme.text)
+                    Text(run.lines == 1 ? "Ran 1 line" : "Ran \(run.lines) lines")
+                        .foregroundStyle(BTheme.text).lineLimit(1).fixedSize()
                     Text(run.timing).font(BTheme.Font.mono(11)).foregroundStyle(BTheme.textDim).fixedSize()
                 } else if let line = run.errorLine {
-                    Text("Stopped at line \(line)").foregroundStyle(BTheme.error)
+                    Text("Stopped at line \(line)").foregroundStyle(BTheme.error).lineLimit(1).fixedSize()
                     Text(run.timing).font(BTheme.Font.mono(11)).foregroundStyle(BTheme.textDim).fixedSize()
                 } else {
                     // "Nothing to run — the editor is empty." and its kind:

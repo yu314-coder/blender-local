@@ -401,7 +401,7 @@ struct MaterialPanels: View {
                     send(MaterialBpy.browse(listed.name, object: object.name, editing: state.editing))
                 } label: {
                     Label {
-                        Text(listed.name)
+                        Text(verbatim: listed.name)
                     } icon: {
                         Image(uiImage: Swatch.image(listed.swatch))
                     }

@@ -504,7 +504,7 @@ struct PropertiesView: View {
             HStack(spacing: 5) {
                 Image(systemName: modifier.kind.icon)
                     .font(.system(size: 10)).foregroundStyle(BTheme.textDim)
-                Text(modifier.name)
+                Text(verbatim: modifier.name)
                     .font(BTheme.Font.ui(11, weight: .medium)).foregroundStyle(BTheme.text)
                     .lineLimit(1)
                 if modifier.kind == .other || modifier.name != modifier.kind.displayName {

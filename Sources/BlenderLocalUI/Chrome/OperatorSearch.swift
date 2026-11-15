@@ -95,7 +95,7 @@ struct OperatorSearch: View {
                                     .font(BTheme.Font.ui(12))
                                     .foregroundStyle(BTheme.text)
                                 Spacer()
-                                Text(entry.path)
+                                Text(verbatim: entry.path)
                                     .font(BTheme.Font.mono(10))
                                     .foregroundStyle(BTheme.textDim)
                             }
@@ -800,7 +800,7 @@ struct BlenderDataBrowser: View {
                             Image(systemName: "chevron.compact.right").foregroundStyle(BTheme.textDim)
                         }
                         Button { if crumb.path != path { navigate(crumb.path) } } label: {
-                            Text(crumb.name)
+                            Text(verbatim: crumb.name)
                                 .font(BTheme.Font.ui(12, weight: i == crumbs.count - 1 ? .semibold : .regular))
                                 .foregroundStyle(i == crumbs.count - 1 ? BTheme.text : BTheme.textDim)
                                 .padding(.horizontal, 6)
@@ -968,7 +968,7 @@ struct BlenderDataBrowser: View {
         Button { navigate(child.path) } label: {
             HStack(spacing: 10) {
                 VStack(alignment: .leading, spacing: 1) {
-                    Text(child.name).font(BTheme.Font.ui(13)).foregroundStyle(BTheme.text)
+                    Text(verbatim: child.name).font(BTheme.Font.ui(13)).foregroundStyle(BTheme.text)
                     Text(detail(child)).font(BTheme.Font.ui(11)).foregroundStyle(BTheme.textDim)
                 }
                 .lineLimit(1)

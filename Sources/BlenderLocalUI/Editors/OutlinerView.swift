@@ -250,7 +250,7 @@ struct OutlinerView: View {
                         if !now, renamingCollection == entry.id { commitCollectionRename(entry) }
                     }
             } else {
-                Text(entry.name)
+                Text(verbatim: Translation.dataName(entry.name))
                     .font(BTheme.Font.ui(Touch.text))
                     .foregroundStyle(excluded || entry.hidden ? BTheme.textDim : BTheme.text)
                     .lineLimit(1)
@@ -398,7 +398,7 @@ struct OutlinerView: View {
                 // `MESH|hidden|notlocal|layerhidden` and was drawn ungreyed.
                 let dimmed = !obj.visible
                     && (!obj.outsideLocalView || obj.hiddenInViewLayer || obj.disabledInViewports)
-                Text(obj.name)
+                Text(verbatim: obj.name)
                     .font(BTheme.Font.ui(Touch.text))
                     .foregroundStyle(scene.selection.contains(obj.id) ? BTheme.title
                                      : excluded ? BTheme.textDim.opacity(0.6)
@@ -584,7 +584,7 @@ struct OutlinerView: View {
         HStack(spacing: 5) {
             Image(systemName: icon)
                 .font(.system(size: Touch.icon - 2)).foregroundStyle(BTheme.textDim)
-            Text(name)
+            Text(verbatim: Translation.dataName(name))
                 .font(BTheme.Font.ui(Touch.text))
                 .foregroundStyle(selected ? BTheme.title : BTheme.text)
                 .lineLimit(1)

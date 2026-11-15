@@ -445,7 +445,7 @@ struct LayoutWorkspace: View {
                                         Rectangle()
                                             .strokeBorder(BTheme.active.opacity(0.9), lineWidth: 1)
                                             .frame(width: fitted.width, height: fitted.height)
-                                        Text(cameraView.name)
+                                        Text(verbatim: cameraView.name)
                                             .font(BTheme.Font.ui(10)).foregroundStyle(BTheme.active)
                                             .padding(.horizontal, 5).padding(.vertical, 2)
                                             .background(BTheme.header.opacity(0.85))
@@ -3409,7 +3409,7 @@ struct LayoutWorkspace: View {
                         .font(BTheme.Font.ui(11)).foregroundStyle(BTheme.textDim)
                 } else {
                     let count = scene.knifePath?.points.count ?? 0
-                    Text(count == 0 ? "Tap points on the mesh." : "\(count) point\(count == 1 ? "" : "s")")
+                    Text(count == 0 ? "Tap points on the mesh." : (count == 1 ? "1 point" : "\(count) points"))
                         .font(BTheme.Font.ui(11)).foregroundStyle(BTheme.textDim)
                     Toggle("Cut Through", isOn: Binding(get: { scene.knifeCutThrough },
                                                         set: { scene.knifeCutThrough = $0 }))

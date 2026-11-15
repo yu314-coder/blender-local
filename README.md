@@ -161,6 +161,14 @@ bar; tap it for Now, Peak and the iPad's limit. Cycles on the GPU sizes itself
 to that limit and takes more only when a scene needs it, and the denoiser works
 in tiles, so a render that would not fit says so instead of closing the app.
 
+**Languages**: English, Simplified and Traditional Chinese, Japanese, Korean,
+Spanish, French, German and Russian, chosen in Preferences ▸ Translation ▸
+Language as in Blender (Automatic follows the iPad, or the language set for the
+app in Settings). Every Blender term comes from Blender's own translation for
+that language, so menus read as Blender's do; the app's own text is translated
+alongside (`l10n/`, see `l10n/TRANSLATING.md`). Names of objects and other data
+stay as they are, as Blender keeps them.
+
 **More**
 - UV editing: unwrap, Smart UV Project, seams and packing.
 - Texture paint.

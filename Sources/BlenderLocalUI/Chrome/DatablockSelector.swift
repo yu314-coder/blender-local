@@ -33,7 +33,7 @@ struct BDatablockSelector: View {
                 .background(BTheme.topbar)
             }
 
-            Text(name)
+            Text(verbatim: name)
                 .font(BTheme.Font.ui(11))
                 .foregroundStyle(BTheme.text)
                 .padding(.horizontal, 10)

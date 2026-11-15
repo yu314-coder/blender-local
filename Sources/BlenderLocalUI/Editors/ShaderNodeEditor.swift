@@ -48,7 +48,7 @@ struct ShaderNodeEditor: View {
             .menuStyle(BlenderMenuStyle())
             Spacer()
             if let obj = scene.active {
-                Text(obj.material.name)
+                Text(verbatim: obj.material.name)
                     .font(BTheme.Font.ui(11)).foregroundStyle(BTheme.textDim)
             }
         }

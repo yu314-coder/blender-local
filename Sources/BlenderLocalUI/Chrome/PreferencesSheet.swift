@@ -19,10 +19,24 @@ struct PreferencesSheet: View {
     @Environment(\.dismiss) private var dismiss
     @State private var showSelfTest = false
     @State private var showFeatureTest = false
+    @State private var language = Translation.chosen
 
     var body: some View {
         NavigationStack {
             Form {
+                // Blender's Preferences ▸ Interface ▸ Translation.
+                Section {
+                    Picker("Language", selection: $language) {
+                        ForEach(Translation.languages, id: \.code) { lang in
+                            Text(verbatim: lang.code.isEmpty ? Translation.iface(lang.name) : lang.name).tag(lang.code)
+                        }
+                    }
+                    .onChange(of: language) { _, code in Translation.chosen = code }
+                } header: {
+                    Text("Translation")
+                } footer: {
+                    Text("Automatic uses the iPad's language, or the one set for Blender Local in Settings. Blender's own names come from Blender's translations.")
+                }
                 Section("About") {
                     HStack {
                         Text("Version")

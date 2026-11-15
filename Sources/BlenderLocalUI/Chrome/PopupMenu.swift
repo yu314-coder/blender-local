@@ -85,6 +85,10 @@ struct PopupItem {
 
     /// The title with the accelerator `key` underlined where Blender draws it.
     static func titled(_ title: String, key: Character?) -> Text {
+        // In another language the English letter is not in the title: the
+        // key still works, unmarked.
+        let shown = Translation.iface(title)
+        if shown != title { return Text(verbatim: shown) }
         guard let key, let range = MenuAccelerators.underline(key, in: title) else { return Text(title) }
         var text = AttributedString(title)
         if let lower = AttributedString.Index(range.lowerBound, within: text),

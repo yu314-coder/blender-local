@@ -99,7 +99,7 @@ struct GreasePencilDataPanels: View {
             } label: {
                 HStack(spacing: 6) {
                     Image(systemName: "square.3.layers.3d").font(.system(size: 12))
-                    Text(layer.name).font(BTheme.Font.ui(13)).lineLimit(1)
+                    Text(verbatim: layer.name).font(BTheme.Font.ui(13)).lineLimit(1)
                     Spacer(minLength: 0)
                 }
                 .foregroundStyle(active ? Color.white : BTheme.text)

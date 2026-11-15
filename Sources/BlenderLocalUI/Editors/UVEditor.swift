@@ -51,7 +51,7 @@ struct UVEditor: View {
             if let obj = scene.active, Self.map(of: obj).hasUVs {
                 let map = Self.map(of: obj)
                 if !map.uvMapName.isEmpty {
-                    Text(map.uvMapName).font(BTheme.Font.ui(11)).foregroundStyle(BTheme.textDim)
+                    Text(verbatim: map.uvMapName).font(BTheme.Font.ui(11)).foregroundStyle(BTheme.textDim)
                 }
                 let stretch = UVUnwrap.averageStretch(map)
                 Text(String(format: "stretch %.0f%%", stretch * 100))

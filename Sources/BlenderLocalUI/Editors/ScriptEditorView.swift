@@ -36,7 +36,7 @@ struct ScriptEditorView: View {
             BHeader {
                 Image(systemName: "doc.text").font(.system(size: 11)).foregroundStyle(BTheme.textDim)
                 Text("Text Editor").font(BTheme.Font.ui(12)).foregroundStyle(BTheme.text)
-                Text(documentName).font(BTheme.Font.ui(11)).foregroundStyle(BTheme.textDim)
+                Text(verbatim: documentName).font(BTheme.Font.ui(11)).foregroundStyle(BTheme.textDim)
                 Spacer()
                 Menu {
                     ForEach(ScriptExample.allCases) { example in

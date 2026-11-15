@@ -1,0 +1,16 @@
+[
+ "User Perspective",
+ "User Orthographic",
+ "Camera Perspective",
+ "Camera Orthographic",
+ "Local",
+ "Scene Collection",
+ "XYZ Euler",
+ "XZY Euler",
+ "YXZ Euler",
+ "YZX Euler",
+ "ZXY Euler",
+ "ZYX Euler",
+ "Quaternion (WXYZ)",
+ "Axis Angle"
+]
