@@ -11,6 +11,10 @@ struct RootView: View {
     /// Every interface action goes through here as Python. See BpyBridge:
     /// bpy owns the scene, and BKScene is the display cache it fills.
     @State private var bridge: BpyBridge?
+    /// False until Blender and the recovery file are loaded (`finishLaunch`).
+    @State private var launched = false
+    @State private var launchBegun = false
+    @State private var frames: FrameCounter?
     /// Keeps the scene on disk as the work happens. See `Autosave` for why the
     /// scene-phase hook on its own was not enough.
     @State private var autosave = Autosave(url: SceneDocument.autosaveURL)
@@ -556,10 +560,119 @@ struct RootView: View {
         }
         #endif
         do {
+            LaunchTrace.mark("starting Python")
+            defer { LaunchTrace.mark("Python started") }
             return try EmbeddedBpyRuntime()
         } catch {
             return StubBpyRuntime(fallbackReason: "\(error)")
         }
+    }
+
+    /// Starts the launch's second half once the app is active, which is when
+    /// the system takes its launch screen away for the app's first frame; a
+    /// moment later, so that frame is on screen before the main thread is
+    /// held: counted in the display's own frames, since no time after the
+    /// view appears is right for every device (50 ms and 150 ms were too
+    /// soon as a Mac's iPad app: the window came up only once Blender had
+    /// loaded).
+    private func finishLaunchOnceShown() {
+        guard scenePhase == .active, !launchBegun, frames == nil else { return }
+        LaunchTrace.mark("active")
+        var wanted = 3
+        #if DEBUG
+        let args = ProcessInfo.processInfo.arguments
+        if let i = args.firstIndex(of: "-launch-frames"), i + 1 < args.count, let n = Int(args[i + 1]) { wanted = n }
+        #endif
+        frames = FrameCounter(wanted) {
+            frames = nil
+            beginFinishingLaunch()
+        }
+    }
+
+    private func beginFinishingLaunch() {
+        guard !launchBegun else { return }
+        launchBegun = true
+        finishLaunch()
+    }
+
+    /// The launch's second half, after the first frame: Blender, the scene
+    /// the app was closed with, and the Debug launch hooks.
+    private func finishLaunch() {
+        // Restore whatever was on screen when the app was last closed,
+        // then bind undo so the first operator is undoable.
+        LaunchTrace.mark("first frame shown; loading Blender")
+        #if DEBUG
+        // `-launch-hold <seconds>`: the main thread held that long first, as a
+        // slow load would, so the cover can be photographed.
+        let launchArgs = ProcessInfo.processInfo.arguments
+        if let i = launchArgs.firstIndex(of: "-launch-hold"), i + 1 < launchArgs.count,
+           let seconds = Double(launchArgs[i + 1]) {
+            Thread.sleep(forTimeInterval: seconds)
+        }
+        #endif
+        if !session.usesRealBlender { try? SceneDocument.read(SceneDocument.autosaveURL, into: scene) }
+        session.bind(scene: scene, undo: undo)
+        // From here on the scene keeps itself on disk as it changes, rather
+        // than only when the app is put away.
+        session.autosave = autosave
+        bridge = BpyBridge(session: session, scene: scene, undo: undo)
+        if session.usesRealBlender {
+            let recovery = SceneDocument.documentsURL.appendingPathComponent("autosave.blend")
+            if FileManager.default.fileExists(atPath: recovery.path) {
+                // Read recovery before the first checkpoint replaces it:
+                // as saved while it is as the app wrote it, else priced as
+                // a script's load (a script can write it, `RecoveryRecord`).
+                let call = "bpy.ops.wm.open_mainfile(filepath=\(Bpy.quote(recovery.path)), load_ui=False)"
+                let load = RecoveryRecord.verdict(recovery.path) == .changed
+                    ? Bpy.changedRecovery(call)
+                    : Bpy.appLoad(call)
+            LaunchTrace.mark("importing bpy and loading the recovery file")
+                let output = session.evaluate(load, scene: scene)
+                // A refusal of a changed recovery file (`Bpy.changedRecovery`)
+                // is said where the top bar shows what the last run did, not
+                // only in the console.
+                if let last = output.last(where: { $0.kind == .error })?.text {
+                    let said = last.hasPrefix("RuntimeError: ") ? String(last.dropFirst("RuntimeError: ".count)) : last
+                    session.lastRun = .init(lines: 0, duration: 0, error: "Recovery: \(said)",
+                                            objectsBefore: scene.objects.count, objectsAfter: scene.objects.count)
+                    #if DEBUG
+                    print("[bk-recovery] said: \(said)")
+                    fflush(stdout)
+                    #endif
+                }
+            }
+        }
+        LaunchTrace.mark("recovery file loaded")
+        DispatchQueue.main.async { LaunchTrace.mark("main thread free") }
+        runLaunchScriptIfRequested()
+        runLaunchOperatorIfRequested()
+        runImageToModelIfRequested()
+        runModifierStepsIfRequested()
+        runProbesIfRequested()
+        #if DEBUG
+        // `-timeline` opens the docked Timeline at launch. It is shown from
+        // the More menu, which the simulator's command line cannot tap.
+        if ProcessInfo.processInfo.arguments.contains("-timeline") {
+            scene.animation.showsTimeline = true
+        }
+        FocusLog.startIfRequested()
+        // `-ui-audit <tag>`: every labelled element's frame, 7 s in, after
+        // `-panel` and `-object-ops` have done their part
+        // (`AccessibilityDump.audit`).
+        let args = ProcessInfo.processInfo.arguments
+        if let i = args.firstIndex(of: "-ui-audit"), i + 1 < args.count {
+            let tag = args[i + 1]
+            // SwiftUI builds its accessibility tree only once something
+            // asks for it; in a simulator nothing does, and the walk finds
+            // no elements. Automation mode is what a UI test turns on.
+            if let ax = dlopen("/usr/lib/libAccessibility.dylib", RTLD_NOW),
+               let sym = dlsym(ax, "_AXSSetAutomationEnabled") {
+                unsafeBitCast(sym, to: (@convention(c) (Int32) -> Void).self)(1)
+            }
+            DispatchQueue.main.asyncAfter(deadline: .now() + 7) { AccessibilityDump.audit(tag) }
+        }
+        #endif
+                launched = true
     }
 
     var body: some View {
@@ -733,69 +846,27 @@ struct RootView: View {
             }
         }
         #endif
+        // Blender's engine loads once the interface is on screen: its
+        // import and the recovery file's read hold the main thread (about a
+        // second on an M4), and held before the first frame they kept the
+        // launch screen up for all of it. The interface shows first, under a
+        // cover that says what it is waiting for and takes the touches.
+        .overlay { if !launched { LaunchCover() } }
         .onAppear {
-            // Restore whatever was on screen when the app was last closed,
-            // then bind undo so the first operator is undoable.
-            if !session.usesRealBlender { try? SceneDocument.read(SceneDocument.autosaveURL, into: scene) }
-            session.bind(scene: scene, undo: undo)
-            // From here on the scene keeps itself on disk as it changes, rather
-            // than only when the app is put away.
-            session.autosave = autosave
-            bridge = BpyBridge(session: session, scene: scene, undo: undo)
-            if session.usesRealBlender {
-                let recovery = SceneDocument.documentsURL.appendingPathComponent("autosave.blend")
-                if FileManager.default.fileExists(atPath: recovery.path) {
-                    // Read recovery before the first checkpoint replaces it:
-                    // as saved while it is as the app wrote it, else priced as
-                    // a script's load (a script can write it, `RecoveryRecord`).
-                    let call = "bpy.ops.wm.open_mainfile(filepath=\(Bpy.quote(recovery.path)), load_ui=False)"
-                    let load = RecoveryRecord.verdict(recovery.path) == .changed
-                        ? Bpy.changedRecovery(call)
-                        : Bpy.appLoad(call)
-                    let output = session.evaluate(load, scene: scene)
-                    // A refusal of a changed recovery file (`Bpy.changedRecovery`)
-                    // is said where the top bar shows what the last run did, not
-                    // only in the console.
-                    if let last = output.last(where: { $0.kind == .error })?.text {
-                        let said = last.hasPrefix("RuntimeError: ") ? String(last.dropFirst("RuntimeError: ".count)) : last
-                        session.lastRun = .init(lines: 0, duration: 0, error: "Recovery: \(said)",
-                                                objectsBefore: scene.objects.count, objectsAfter: scene.objects.count)
-                        #if DEBUG
-                        print("[bk-recovery] said: \(said)")
-                        fflush(stdout)
-                        #endif
-                    }
-                }
+            LaunchTrace.mark("interface built")
+            // The scene the app was closed with is about to replace this one:
+            // nothing of the startup scene is shown under the cover meanwhile.
+            if session.usesRealBlender,
+               FileManager.default.fileExists(atPath: SceneDocument.documentsURL.appendingPathComponent("autosave.blend").path) {
+                scene.objects = []
+                scene.selection = []
+                scene.activeID = nil
             }
-            runLaunchScriptIfRequested()
-            runLaunchOperatorIfRequested()
-            runImageToModelIfRequested()
-            runModifierStepsIfRequested()
-            runProbesIfRequested()
-            #if DEBUG
-            // `-timeline` opens the docked Timeline at launch. It is shown from
-            // the More menu, which the simulator's command line cannot tap.
-            if ProcessInfo.processInfo.arguments.contains("-timeline") {
-                scene.animation.showsTimeline = true
-            }
-            FocusLog.startIfRequested()
-            // `-ui-audit <tag>`: every labelled element's frame, 7 s in, after
-            // `-panel` and `-object-ops` have done their part
-            // (`AccessibilityDump.audit`).
-            let args = ProcessInfo.processInfo.arguments
-            if let i = args.firstIndex(of: "-ui-audit"), i + 1 < args.count {
-                let tag = args[i + 1]
-                // SwiftUI builds its accessibility tree only once something
-                // asks for it; in a simulator nothing does, and the walk finds
-                // no elements. Automation mode is what a UI test turns on.
-                if let ax = dlopen("/usr/lib/libAccessibility.dylib", RTLD_NOW),
-                   let sym = dlsym(ax, "_AXSSetAutomationEnabled") {
-                    unsafeBitCast(sym, to: (@convention(c) (Int32) -> Void).self)(1)
-                }
-                DispatchQueue.main.asyncAfter(deadline: .now() + 7) { AccessibilityDump.audit(tag) }
-            }
-            #endif
+            finishLaunchOnceShown()
+            // A launch that never becomes active still gets Blender.
+            DispatchQueue.main.asyncAfter(deadline: .now() + 4) { beginFinishingLaunch() }
         }
+        .onChange(of: scenePhase) { _, _ in finishLaunchOnceShown() }
         .onChange(of: workspace) { _, ws in
             // Blender's workspaces each carry an object_mode and switch into it.
             switch ws {
@@ -846,3 +917,47 @@ private struct DebugFrame: ViewModifier {
     }
 }
 #endif
+
+/// What covers the interface while Blender's engine loads at launch.
+private struct LaunchCover: View {
+    var body: some View {
+        ZStack {
+            Color.black.opacity(0.35)
+            HStack(spacing: 10) {
+                ProgressView().controlSize(.small).tint(BTheme.text)
+                Text("Loading Blender…").font(BTheme.Font.ui(13)).foregroundStyle(BTheme.text)
+            }
+            .padding(.horizontal, 16).padding(.vertical, 12)
+            .background(BTheme.menuBack, in: RoundedRectangle(cornerRadius: 8))
+        }
+        .ignoresSafeArea()
+        .contentShape(Rectangle())
+        .accessibilityLabel("Loading Blender")
+    }
+}
+
+/// Calls `done` on the main thread once the display has shown `count` frames.
+@MainActor
+private final class FrameCounter: NSObject {
+    private var left: Int
+    private var link: CADisplayLink?
+    private let done: () -> Void
+
+    init(_ count: Int, done: @escaping () -> Void) {
+        left = count
+        self.done = done
+        super.init()
+        let link = CADisplayLink(target: self, selector: #selector(tick))
+        link.add(to: .main, forMode: .common)
+        self.link = link
+    }
+
+    @objc private func tick() {
+        LaunchTrace.mark("frame")
+        left -= 1
+        guard left <= 0 else { return }
+        link?.invalidate()
+        link = nil
+        done()
+    }
+}

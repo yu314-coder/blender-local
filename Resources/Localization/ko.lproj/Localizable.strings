@@ -1307,6 +1307,8 @@
 "Linked Flat Faces" = "연결된 플랫 페이스";
 "Link…" = "연결…";
 "Load Factory Settings" = "최초 설정을 불러오기";
+"Loading Blender" = "Blender 불러오는 중";
+"Loading Blender…" = "Blender 불러오는 중…";
 "Local" = "로컬";
 "Local View" = "로컬 뷰";
 "Location" = "위치";

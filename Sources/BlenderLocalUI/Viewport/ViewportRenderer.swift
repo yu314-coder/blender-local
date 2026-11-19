@@ -158,6 +158,8 @@ final class ViewportRenderer: NSObject, MTKViewDelegate {
     #endif
 
     init?(device: MTLDevice, scene: BKScene, camera: ViewportCamera) {
+        LaunchTrace.once("viewport renderer: making")
+        defer { LaunchTrace.once("viewport renderer: made") }
         guard let queue = device.makeCommandQueue() else { return nil }
         self.device = device
         self.queue = queue
@@ -639,6 +641,8 @@ final class ViewportRenderer: NSObject, MTKViewDelegate {
     }
 
     func draw(in view: MTKView) {
+        LaunchTrace.once("viewport: first draw")
+        defer { LaunchTrace.once("viewport: first draw done") }
         if skipsWhileRendering(view) { return }
         guard let drawable = view.currentDrawable,
               let descriptor = view.currentRenderPassDescriptor,

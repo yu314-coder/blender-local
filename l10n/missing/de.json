@@ -99,6 +99,7 @@
  "NormalEdit",
  "Page Up/Down",
  "Py_InitializeFromConfig failed (%@)",
+ "Python started",
  "Render %@.png",
  "RuntimeError: ",
  "SFMono-Regular",

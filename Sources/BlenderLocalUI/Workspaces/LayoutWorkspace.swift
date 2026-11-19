@@ -311,6 +311,7 @@ struct LayoutWorkspace: View {
     }
 
     var body: some View {
+        let _ = LaunchTrace.once("layout workspace body")
         VStack(spacing: 0) {
             headerRow
 

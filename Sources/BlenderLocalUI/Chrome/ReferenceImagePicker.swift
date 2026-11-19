@@ -46,6 +46,14 @@ struct ReferenceImagePicker: ViewModifier {
     @State private var kind: ReferenceImages.Kind = .reference
     @State private var selection: PhotosPickerItem?
 
+    /// Whether the Photos picker has been asked for yet.
+    @State private var photosWanted = false
+
+    private func showPhotos() {
+        photosWanted = true
+        DispatchQueue.main.async { photos = true }
+    }
+
     func body(content: Content) -> some View {
         content
             .onChange(of: request) { _, now in
@@ -55,21 +63,38 @@ struct ReferenceImagePicker: ViewModifier {
                 request = nil
             }
             .confirmationDialog(kind.label.replacingOccurrences(of: "...", with: ""), isPresented: $asking) {
-                Button("Photos") { photos = true }
+                Button("Photos") { showPhotos() }
                 Button("Files") { files = true }
                 Button("Cancel", role: .cancel) {}
             }
-            .photosPicker(isPresented: $photos, selection: $selection, matching: .images)
-            .onChange(of: selection) { _, item in
-                guard let item else { return }
-                selection = nil
-                let chosen = kind
-                Task { @MainActor in
-                    guard let data = try? await item.loadTransferable(type: Data.self) else { return }
-                    let ext = item.supportedContentTypes.first?.preferredFilenameExtension ?? "png"
-                    picked(chosen, data, "Photo.\(ext)")
+            // The Photos picker is attached the first time it is asked for:
+            // attached from the start, it opens the photo library (a call to
+            // another process) while the interface is first being drawn.
+            .background {
+                if photosWanted {
+                    Color.clear
+                    .photosPicker(isPresented: $photos, selection: $selection, matching: .images)
+                    .onChange(of: selection) { _, item in
+                        guard let item else { return }
+                        selection = nil
+                        let chosen = kind
+                        Task { @MainActor in
+                            guard let data = try? await item.loadTransferable(type: Data.self) else { return }
+                            let ext = item.supportedContentTypes.first?.preferredFilenameExtension ?? "png"
+                            picked(chosen, data, "Photo.\(ext)")
+                        }
+                    }
                 }
             }
+            #if DEBUG
+            // `-reference-photos`: the Photos picker opened 3 s after launch,
+            // to be photographed.
+            .onAppear {
+                if ProcessInfo.processInfo.arguments.contains("-reference-photos") {
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 3) { showPhotos() }
+                }
+            }
+            #endif
             .fileImporter(isPresented: $files, allowedContentTypes: [.image]) { result in
                 guard case .success(let url) = result else { return }
                 let scoped = url.startAccessingSecurityScopedResource()

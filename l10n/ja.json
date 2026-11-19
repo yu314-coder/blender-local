@@ -467,6 +467,8 @@
  "Level Viewport": "ビューポートのレベル",
  "Levels Viewport %@ to 3: %@": "ビューポートのレベル %@ → 3: %@",
  "Link/Transfer Data: Blender found nothing selected to copy onto.": "リンク/データ転送: コピー先の選択物が見つかりません。",
+ "Loading Blender": "Blender を読み込み中",
+ "Loading Blender…": "Blender を読み込み中…",
  "Lock %@": "%@ をロック",
  "Lock Weight": "ウェイトをロック",
  "Looking through %@. Move the view to leave it.": "%@ から見ています。ビューを動かすと解除されます。",

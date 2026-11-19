@@ -474,6 +474,8 @@
  "Level Viewport": "视图层级",
  "Levels Viewport %@ to 3: %@": "视图层级 %@ 改为 3：%@",
  "Link/Transfer Data: Blender found nothing selected to copy onto.": "关联/传递数据：Blender 没有找到可复制到的选中项。",
+ "Loading Blender": "正在加载 Blender",
+ "Loading Blender…": "正在加载 Blender…",
  "Lock %@": "锁定 %@",
  "Lock Weight": "锁定权重",
  "Looking through %@. Move the view to leave it.": "正在透过 %@ 观察。移动视图即可离开。",

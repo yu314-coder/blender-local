@@ -22,6 +22,10 @@ char *bk_python_run(const char *source, int *ok);
 /// "3.14.0 (…) [Clang …]" — whatever the embedded interpreter reports.
 const char *bk_python_version(void);
 
+/// Imports `module` on the calling thread and drops it or its error: for a
+/// module a later import needs, started early beside the launch.
+void bk_python_preimport(const char *module);
+
 void bk_python_stop(void);
 // Cooperative cancellation, checked at Python trace boundaries.
 void bk_python_request_interrupt(void);

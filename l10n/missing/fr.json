@@ -64,6 +64,7 @@
  "Mac",
  "Monaco",
  "Py_InitializeFromConfig failed (%@)",
+ "Python started",
  "Render %@.png",
  "RuntimeError: ",
  "SFMono-Regular",

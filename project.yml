@@ -95,7 +95,7 @@ targets:
         # not continue BenchCode's build numbering.
         MARKETING_VERSION: "1.1"
         # Build numbers restart with each version: 1.1 starts at build 1.
-        CURRENT_PROJECT_VERSION: "4"
+        CURRENT_PROJECT_VERSION: "5"
 
         # ITMS-90683. bpy links FFmpeg's libavdevice, whose AVFoundation input
         # backend references AVCaptureDevice/AVCaptureSession. Blender Local
@@ -154,3 +154,9 @@ targets:
         basedOnDependencyAnalysis: false
         script: |
           "$SRCROOT/scripts/fix-bpy-dylib-refs.sh"
+      # Every staged .py compiled, so a launch does not compile Blender's
+      # startup scripts from source each time. After the last staging step.
+      - name: Compile Python
+        basedOnDependencyAnalysis: false
+        script: |
+          "$SRCROOT/scripts/compile-python.sh"

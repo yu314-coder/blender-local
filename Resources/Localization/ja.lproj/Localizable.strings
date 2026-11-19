@@ -1268,6 +1268,8 @@
 "Linked Flat Faces" = "リンクするフラットな面";
 "Link…" = "リンク…";
 "Load Factory Settings" = "初期設定を読み込む";
+"Loading Blender" = "Blender を読み込み中";
+"Loading Blender…" = "Blender を読み込み中…";
 "Local" = "ローカル";
 "Local View" = "ローカル表示";
 "Location" = "位置";

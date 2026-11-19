@@ -1278,6 +1278,8 @@
 "Linked Flat Faces" = "相连的平展面";
 "Link…" = "关联…";
 "Load Factory Settings" = "加载初始设置";
+"Loading Blender" = "正在加载 Blender";
+"Loading Blender…" = "正在加载 Blender…";
 "Local" = "局部";
 "Local View" = "局部视图";
 "Location" = "位置";

@@ -1554,6 +1554,15 @@ fail:
 
 const char *bk_python_version(void) { return g_version; }
 
+void bk_python_preimport(const char *module)
+{
+    if (!g_started) return;
+    PyGILState_STATE gil = PyGILState_Ensure();
+    PyObject *imported = PyImport_ImportModule(module);
+    if (imported) Py_DECREF(imported); else PyErr_Clear();
+    PyGILState_Release(gil);
+}
+
 /// Whether the convenience imports have been run for this session.
 static int g_prelude_done = 0;
 

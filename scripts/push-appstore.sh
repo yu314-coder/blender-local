@@ -125,6 +125,11 @@ SCAN="$(mktemp -d)"; unzip -q "$IPA" -d "$SCAN"
 STRAY=$(find "$SCAN/Payload" -maxdepth 1 -type f | wc -l | tr -d ' ')
 BAK=$(find "$SCAN/Payload" \( -name '*.bak' -o -name '*.so.*' \) | wc -l | tr -d ' ')
 LINK=$(find "$SCAN/Payload" -type l | wc -l | tr -d ' ')
+# The app's Python compiled (scripts/compile-python.sh): without the .pyc the
+# app works and launches slower, which nothing else would show.
+PYC=$(find "$SCAN/Payload" -name '*.pyc' | wc -l | tr -d ' ')
+echo "  compiled Python files: $PYC"
+[ "$PYC" -gt 1000 ] || { echo "the app's Python is not compiled: is python3.14 on this Mac? (scripts/compile-python.sh)"; exit 1; }
 echo "  loose files beside the app: $STRAY   .bak/.so.N: $BAK   symlinks: $LINK"
 rm -rf "$SCAN"
 [ "$STRAY" = 0 ] && [ "$BAK" = 0 ] || { echo "payload is not clean"; exit 1; }

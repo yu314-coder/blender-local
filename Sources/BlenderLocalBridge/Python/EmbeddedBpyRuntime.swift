@@ -340,8 +340,17 @@ public final class EmbeddedBpyRuntime: BpyRuntime {
                     .joined(separator: ":")
                 setenv("PXR_PLUGINPATH_NAME", plugins, 0)
             }
-            Self.keepCyclesKernelsInCaches(fm)
-            CyclesMemory.fit()
+            // Cycles reads what these two set when a render starts, never
+            // at launch, and asking the volume for its free space and Metal
+            // for its device costs about 0.2 s; so that runs beside the
+            // launch. The cache's place is set here, before Python starts.
+            if let caches = fm.urls(for: .cachesDirectory, in: .userDomainMask).first {
+                setenv("XDG_CACHE_HOME", caches.path, 1)
+            }
+            Thread.detachNewThread {
+                Self.keepCyclesKernelsInCaches(FileManager.default)
+                CyclesMemory.fit()
+            }
         }
 
         // site-packages precedes the shim, so the real bpy wins when present
@@ -360,6 +369,20 @@ public final class EmbeddedBpyRuntime: BpyRuntime {
         guard rc == 0 else { throw StartupError.initFailed(rc) }
         version = String(cString: bk_python_version())
         bk_install_pump_request()
+        var numpyAhead = usingRealBlender
+        #if DEBUG || LAUNCH_TRACE
+        if ProcessInfo.processInfo.arguments.contains("-no-numpy-prewarm") { numpyAhead = false }
+        #endif
+        if numpyAhead {
+            // Blender's audio module imports numpy as bpy loads (0.3 s of
+            // `import bpy`, sampled). It needs no main thread, so it starts
+            // now, while the interface is built; bpy's import finds it there.
+            Thread.detachNewThread {
+                LaunchTrace.mark("prewarm: importing numpy")
+                bk_python_preimport("numpy")
+                LaunchTrace.mark("prewarm: numpy imported")
+            }
+        }
     }
 
     /// Where Cycles keeps the Metal kernels it compiles: Library/Caches.
